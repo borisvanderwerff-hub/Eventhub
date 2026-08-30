@@ -926,17 +926,25 @@ class TrendChart(QWidget):
     """
 
     PALETTE = [
-        "#6c2cff", "#00a3b4", "#e2761b", "#2e7d32", "#c2185b",
-        "#0277bd", "#7b5e00", "#5d4037", "#455a64", "#8e24aa",
+        "#8b6cff", "#22c8dd", "#ff9f45", "#3ecf8e", "#ff6f9c",
+        "#4da3ff", "#d4b74a", "#c98a6b", "#8fa3bd", "#c07de0",
     ]
+
+    # EventHub draait standaard donker; de grafiek tekent zelf en kan de
+    # stylesheet dus niet volgen.
+    dark = True
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.series = {"groups": [], "points": [], "metric": "aangemeld"}
-        self.setMinimumHeight(300)
+        self.setMinimumHeight(360)
 
     def set_series(self, series: dict):
         self.series = series or {"groups": [], "points": [], "metric": "aangemeld"}
+        self.update()
+
+    def set_dark_mode(self, dark: bool):
+        self.dark = bool(dark)
         self.update()
 
     def _formatted(self, value: float) -> str:
@@ -944,17 +952,38 @@ class TrendChart(QWidget):
             return f"{value:g}%"
         return f"{value:g}"
 
+    @staticmethod
+    def _nice_step(span: float) -> float:
+        """Een ronde stapgrootte, zodat de as 20/40/60 toont in plaats van 17,2."""
+        if span <= 0:
+            return 1.0
+        rough = span / 4
+        magnitude = 1.0
+        while magnitude * 10 <= rough:
+            magnitude *= 10
+        while magnitude > rough and magnitude > 1e-9:
+            magnitude /= 10
+        for multiplier in (1, 2, 2.5, 5, 10):
+            if rough <= magnitude * multiplier:
+                return magnitude * multiplier
+        return magnitude * 10
+
     def paintEvent(self, event):
         del event
+        surface = QColor("#111827" if self.dark else "#ffffff")
+        grid = QColor("#26334a" if self.dark else "#e3e7ee")
+        text = QColor("#f5f7fb" if self.dark else "#17233a")
+        muted = QColor("#93a4ba" if self.dark else "#7b6d82")
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#ffffff"))
+        painter.fillRect(self.rect(), surface)
         painter.setFont(QFont("Segoe UI", 9))
 
         points = self.series.get("points") or []
         groups = self.series.get("groups") or []
         if not points or not groups:
-            painter.setPen(QColor("#7b6d82"))
+            painter.setPen(muted)
             painter.drawText(
                 self.rect(), Qt.AlignmentFlag.AlignCenter,
                 "Nog geen cijfers beschikbaar.\nEvenementen krijgen cijfers zodra hun datum is geweest.",
@@ -964,27 +993,29 @@ class TrendChart(QWidget):
         # De legenda krijgt een eigen strook; zonder die extra ruimte valt hij
         # bij meerdere groepen buiten de widget.
         legend_rows = 0 if len(groups) <= 1 else (len(groups[:8]) + 3) // 4
-        left, top, right = 62, 18, 20
+        left, top, right = 66, 22, 24
         bottom = 34 + legend_rows * 20
         width = max(1, self.width() - left - right)
         height = max(1, self.height() - top - bottom)
-        highest = max(
-            [value for point in points for value in point["values"].values()] + [0.0]
-        )
-        highest = highest or 1.0
 
-        # Assen en hulplijnen.
-        painter.setPen(QColor("#e3e7ee"))
-        for step in range(5):
-            y = top + height - round(height * step / 4)
+        values = [value for point in points for value in point["values"].values()]
+        highest = max(values + [0.0]) or 1.0
+        step = self._nice_step(highest)
+        top_value = step * (int(highest / step) + (1 if highest % step else 0)) or step
+
+        painter.setPen(grid)
+        ticks = int(round(top_value / step))
+        for index in range(ticks + 1):
+            value = step * index
+            y = top + height - round(height * value / top_value)
             painter.drawLine(left, y, left + width, y)
-            painter.setPen(QColor("#7b6d82"))
+            painter.setPen(muted)
             painter.drawText(
-                0, y - 9, left - 8, 18,
+                0, y - 9, left - 10, 18,
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                self._formatted(round(highest * step / 4, 1)),
+                self._formatted(round(value, 1)),
             )
-            painter.setPen(QColor("#e3e7ee"))
+            painter.setPen(grid)
 
         count = len(points)
         spacing = width / max(1, count - 1) if count > 1 else 0
@@ -992,49 +1023,68 @@ class TrendChart(QWidget):
         def x_for(index):
             return left + (width / 2 if count == 1 else index * spacing)
 
+        def y_for(value):
+            return top + height - (height * value / top_value)
+
         for group_index, group in enumerate(groups):
             colour = QColor(self.PALETTE[group_index % len(self.PALETTE)])
             painter.setPen(QPen(colour, 2))
             previous = None
             for index, point in enumerate(points):
-                value = point["values"].get(group, 0.0)
-                x = x_for(index)
-                y = top + height - (height * value / highest)
+                x, y = x_for(index), y_for(point["values"].get(group, 0.0))
                 if previous is not None:
                     painter.drawLine(int(previous[0]), int(previous[1]), int(x), int(y))
                 previous = (x, y)
             painter.setBrush(colour)
+            painter.setPen(QPen(colour, 1))
             for index, point in enumerate(points):
+                x, y = x_for(index), y_for(point["values"].get(group, 0.0))
+                painter.drawEllipse(int(x) - 4, int(y) - 4, 8, 8)
+
+        # Waarden bij de punten: zonder deze labels is de tabel eronder nodig om
+        # te zien waar een lijn precies staat.
+        label_every = max(1, count // max(1, int(width / 70)))
+        painter.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
+        for group_index, group in enumerate(groups):
+            painter.setPen(QColor(self.PALETTE[group_index % len(self.PALETTE)]))
+            for index, point in enumerate(points):
+                if index % label_every and index != count - 1:
+                    continue
                 value = point["values"].get(group, 0.0)
-                x = x_for(index)
-                y = top + height - (height * value / highest)
-                painter.drawEllipse(int(x) - 3, int(y) - 3, 6, 6)
+                x, y = x_for(index), y_for(value)
+                box_x = min(max(2, int(x) - 34), self.width() - 70)
+                painter.drawText(
+                    box_x, max(2, int(y) - 22), 68, 16,
+                    Qt.AlignmentFlag.AlignCenter, self._formatted(value),
+                )
+        painter.setFont(QFont("Segoe UI", 9))
 
         # Puntlabels onder de as, gedund zodat ze niet over elkaar vallen.
-        painter.setPen(QColor("#4a5568"))
-        every = max(1, count // max(1, int(width / 90)))
+        painter.setPen(muted)
+        every = max(1, count // max(1, int(width / 110)))
         for index, point in enumerate(points):
             if index % every and index != count - 1:
                 continue
             x = x_for(index)
+            box_x = min(max(2, int(x) - 60), self.width() - 122)
             painter.drawText(
-                int(x) - 55, top + height + 2, 110, 14,
-                Qt.AlignmentFlag.AlignCenter, str(point["label"])[:22],
+                box_x, top + height + 4, 120, 15,
+                Qt.AlignmentFlag.AlignCenter, str(point["label"])[:24],
             )
 
         # Legenda alleen bij een echte uitsplitsing, in rijen van vier zodat hij
-        # ook bij smalle vensters binnen de widget blijft.
+        # ook bij smalle vensters binnen beeld blijft.
         if legend_rows:
             column_width = width / 4
             for group_index, group in enumerate(groups[:8]):
                 row, column = divmod(group_index, 4)
                 x = left + column * column_width
-                y = top + height + 16 + row * 20
+                y = top + height + 20 + row * 20
                 colour = QColor(self.PALETTE[group_index % len(self.PALETTE)])
                 painter.setBrush(colour)
                 painter.setPen(colour)
                 painter.drawEllipse(int(x), int(y) + 4, 8, 8)
-                painter.setPen(QColor("#4a5568"))
+                painter.setPen(text)
                 painter.drawText(
                     int(x) + 14, int(y), int(column_width) - 20, 16,
                     Qt.AlignmentFlag.AlignLeft, str(group)[:20],
@@ -1106,8 +1156,12 @@ class TrendPanel(QWidget):
         self.table.setObjectName("dashboardTable")
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setMaximumHeight(150)
+        value_header = self.table.horizontalHeader()
+        value_header.setStretchLastSection(False)
+        value_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        value_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        value_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setMaximumHeight(122)
         layout.addWidget(self.table)
 
         self.empty_message = "Nog geen cijfers beschikbaar."
@@ -4240,12 +4294,8 @@ class BezoekerslijstWindow(QMainWindow):
         layout.setContentsMargins(18, 4, 18, 18)
         layout.setSpacing(10)
 
-        heading = QLabel("Trends")
-        heading.setObjectName("sectionTitle")
-        layout.addWidget(heading)
         intro = QLabel(
-            "Ontwikkeling over evenementen heen, berekend op geanonimiseerde cijfers per evenement. "
-            "Die blijven ook beschikbaar nadat de persoonsgegevens door de bewaartermijn zijn verwijderd."
+            "Berekend op geanonimiseerde cijfers per evenement, die ook na de bewaartermijn beschikbaar blijven."
         )
         intro.setObjectName("hintLabel")
         intro.setWordWrap(True)
@@ -4316,8 +4366,12 @@ class BezoekerslijstWindow(QMainWindow):
         self.trend_source_list.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.trend_source_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.trend_source_list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.trend_source_list.horizontalHeader().setStretchLastSection(True)
-        self.trend_source_list.setMaximumHeight(104)
+        header = self.trend_source_list.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.trend_source_list.setMaximumHeight(92)
         loose_layout.addWidget(self.trend_source_list)
 
         self.loose_trend_panel = TrendPanel(self._loose_trend_summaries)
@@ -6255,6 +6309,11 @@ class BezoekerslijstWindow(QMainWindow):
         self.setStyleSheet(build_stylesheet(self.dark_mode_enabled))
         if hasattr(self, "neon_edge_overlay"):
             self.neon_edge_overlay.set_dark_mode(self.dark_mode_enabled)
+        # De grafieken tekenen zelf en volgen het thema niet via de stylesheet.
+        for panel_name in ("own_trend_panel", "loose_trend_panel"):
+            panel = getattr(self, panel_name, None)
+            if panel is not None:
+                panel.chart.set_dark_mode(self.dark_mode_enabled)
         return
 
         light_style = """
