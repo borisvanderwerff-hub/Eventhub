@@ -39,8 +39,10 @@ class StubWindow:
     _capture_event_statistics = BezoekerslijstWindow._capture_event_statistics
     _refresh_past_event_statistics = BezoekerslijstWindow._refresh_past_event_statistics
     _event_visitors = BezoekerslijstWindow._event_visitors
+    _grouped_counts = BezoekerslijstWindow._grouped_counts
     _field_counts = BezoekerslijstWindow._field_counts
     _age_counts = BezoekerslijstWindow._age_counts
+    _age_label = BezoekerslijstWindow._age_label
     _age_from_text = BezoekerslijstWindow._age_from_text
 
     def __init__(self, events, records):
@@ -75,7 +77,8 @@ class SnapshotContentTests(unittest.TestCase):
         """Jan was 17 op 02-04-2026 maar is inmiddels 18: de peildatum telt."""
         self.assertEqual(self.snapshot["peildatum"], "02-04-2026")
         self.assertEqual(
-            self.snapshot["verdeling"]["Leeftijdsgroep"],
+            {group: bucket["aangemeld"]
+             for group, bucket in self.snapshot["verdeling"]["Leeftijdsgroep"].items()},
             {"Jonger dan 18": 1, "18–20": 1, "21–24": 1, "25–29": 1},
         )
         self.assertEqual(self.window._age_from_text("01-06-2008", EVENT_DATE), 17)
@@ -83,10 +86,22 @@ class SnapshotContentTests(unittest.TestCase):
 
     def test_distributions_are_complete_and_not_truncated(self):
         self.assertEqual(
-            self.snapshot["verdeling"]["Opleidingsniveau"],
+            {group: bucket["aangemeld"]
+             for group, bucket in self.snapshot["verdeling"]["Opleidingsniveau"].items()},
             {"HAVO": 2, "MBO": 1, "VMBO Basis": 1},
         )
-        self.assertEqual(self.snapshot["verdeling"]["Geslacht"], {"Man": 2, "Vrouw": 2})
+
+    def test_distributions_split_attendance_so_noshows_stay_traceable(self):
+        """Schema 2: zonder deze splitsing is niet meer te zien wie wegbleef."""
+        self.assertEqual(self.snapshot["schema"], 2)
+        opleiding = self.snapshot["verdeling"]["Opleidingsniveau"]
+        self.assertEqual(opleiding["HAVO"], {"aangemeld": 2, "aanwezig": 2})
+        self.assertEqual(opleiding["MBO"], {"aangemeld": 1, "aanwezig": 0})
+        self.assertEqual(opleiding["VMBO Basis"], {"aangemeld": 1, "aanwezig": 1})
+
+        geslacht = self.snapshot["verdeling"]["Geslacht"]
+        self.assertEqual(geslacht["Man"], {"aangemeld": 2, "aanwezig": 1})
+        self.assertEqual(geslacht["Vrouw"], {"aangemeld": 2, "aanwezig": 2})
 
     def test_snapshot_holds_no_personal_data(self):
         """Niets in de momentopname mag naar een persoon herleidbaar zijn."""
