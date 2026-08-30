@@ -135,6 +135,16 @@ from bezoekerslijst_core import (
     set_present,
     visitor_type,
 )
+from emt_retention import (
+    RETENTION_CHOICES,
+    RETENTION_DEFAULT_DAYS,
+    RETENTION_MAX_DAYS,
+    apply_retention_cleanup,
+    clamp_retention_days,
+    has_work,
+    plan_retention_cleanup,
+    scrub_payload,
+)
 from theme.styles import build_stylesheet
 
 
@@ -1487,6 +1497,33 @@ class ApplicationSettingsDialog(QDialog):
         save_layout.addRow(storage_button, recovery_button)
         content_layout.addWidget(save_group)
 
+        privacy_group = QGroupBox("Bewaartermijn persoonsgegevens")
+        privacy_layout = QFormLayout(privacy_group)
+        self.retention_days = QComboBox()
+        for days in RETENTION_CHOICES:
+            label = f"{days} dagen na het evenement"
+            if days == RETENTION_DEFAULT_DAYS:
+                label += "  (standaard)"
+            self.retention_days.addItem(label, days)
+        self.retention_days.setCurrentIndex(
+            max(0, self.retention_days.findData(clamp_retention_days(preferences["retention_days"])))
+        )
+        privacy_note = QLabel(
+            "Na deze termijn worden de deelnemersgegevens van een evenement onomkeerbaar verwijderd "
+            "uit het dossier, de reservekopieën en de livesessiegegevens. De opkomstcijfers en "
+            "verdelingen blijven als geanonimiseerd overzicht bij het evenement bewaard. "
+            f"Langer dan {RETENTION_MAX_DAYS} dagen is niet mogelijk."
+        )
+        privacy_note.setObjectName("hintLabel")
+        privacy_note.setWordWrap(True)
+        privacy_layout.addRow("Verwijderen na:", self.retention_days)
+        privacy_layout.addRow(privacy_note)
+        review_button = _make_button_compact(QPushButton("Nu controleren zonder te wissen"))
+        review_button.setObjectName("secondaryButton")
+        review_button.clicked.connect(parent.review_retention_cleanup)
+        privacy_layout.addRow(review_button)
+        content_layout.addWidget(privacy_group)
+
         appearance_group = QGroupBox("Weergave")
         appearance_layout = QFormLayout(appearance_group)
         self.dark_mode = QCheckBox("☾ Dark mode")
@@ -1512,6 +1549,7 @@ class ApplicationSettingsDialog(QDialog):
             "autosave_delay_seconds": int(self.autosave_delay.currentData() or 3),
             "backups_enabled": self.backups_enabled.isChecked(),
             "backup_count": int(self.backup_count.currentData() or 5),
+            "retention_days": clamp_retention_days(self.retention_days.currentData()),
             "dark_mode": self.dark_mode.isChecked(),
         }
 
@@ -6908,6 +6946,7 @@ class BezoekerslijstWindow(QMainWindow):
             "autosave_delay_seconds": self._autosave_delay_seconds(),
             "backups_enabled": self._backups_enabled(),
             "backup_count": self._backup_count(),
+            "retention_days": self._retention_days(),
             "dark_mode": self.dark_mode_enabled,
         }
         dialog = ApplicationSettingsDialog(self, preferences)
@@ -6961,7 +7000,228 @@ class BezoekerslijstWindow(QMainWindow):
             count = 5
         return count if count in {3, 5, 10} else 5
 
+    def _retention_days(self):
+        return clamp_retention_days(
+            self.settings.value("retention_days", RETENTION_DEFAULT_DAYS)
+        )
+
+    def _retention_plan(self):
+        return plan_retention_cleanup(self.events, self.records, self._retention_days())
+
+    def _retention_summary_html(self, plan: dict) -> str:
+        lines = [
+            f"<p>Bewaartermijn: <b>{plan['retention_days']} dagen</b> na de evenementdatum. "
+            f"Peildatum {plan['peildatum']}.</p>",
+            "<p>Van de volgende evenementen zijn de deelnemersgegevens verlopen:</p><ul>",
+        ]
+        for summary in plan["events"]:
+            lines.append(
+                f"<li><b>{escape(str(summary['name']))}</b> ({escape(str(summary['date']))}) — "
+                f"verlopen op {escape(str(summary['expires_on']))}, "
+                f"{summary['records_removed']} van {summary['records']} deelnemer(s) worden verwijderd</li>"
+            )
+        lines.append("</ul>")
+        lines.append(
+            f"<p>In totaal worden <b>{plan['records_removed']} deelnemer(s)</b> onomkeerbaar verwijderd "
+            "uit het dossier, de reservekopieën, de herstelkopie en de livesessiegegevens.</p>"
+        )
+        if plan["records_kept_upcoming"]:
+            lines.append(
+                f"<p>{plan['records_kept_upcoming']} deelnemer(s) blijven staan omdat zij ook op een "
+                "nog komend evenement zijn ingeschreven.</p>"
+            )
+        if plan["records_kept_unknown"]:
+            lines.append(
+                f"<p>{plan['records_kept_unknown']} deelnemer(s) blijven staan omdat zij gekoppeld zijn "
+                "aan een evenement dat niet in dit dossier voorkomt; de termijn is daar niet vast te stellen.</p>"
+            )
+        lines.append(
+            "<p>De opkomstcijfers en verdelingen blijven als geanonimiseerd overzicht bij het "
+            "evenement bewaard. Namen, geboortedatums en contactgegevens niet.</p>"
+        )
+        return "".join(lines)
+
+    def review_retention_cleanup(self):
+        """Dry-run: toon wat er zou verdwijnen zonder iets te wijzigen."""
+        plan = self._retention_plan()
+        if not has_work(plan):
+            QMessageBox.information(
+                self,
+                "Niets te verwijderen",
+                f"Er zijn geen evenementen ouder dan {plan['retention_days']} dagen waarvan de "
+                "deelnemersgegevens nog aanwezig zijn.",
+            )
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Controle bewaartermijn")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText("<b>Dit is een controle. Er wordt nu niets verwijderd.</b>")
+        box.setInformativeText(self._retention_summary_html(plan))
+        box.setStandardButtons(QMessageBox.StandardButton.Close)
+        box.exec()
+
+    def maybe_apply_retention(self):
+        """Vraag bij het openen van een dossier of verlopen gegevens gewist worden."""
+        if not self.events or not self.project_path:
+            return
+        plan = self._retention_plan()
+        if not has_work(plan) or not plan["records_removed"]:
+            return
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Bewaartermijn verstreken")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(
+            f"<b>Van {plan['records_removed']} deelnemer(s) is de bewaartermijn verstreken.</b>"
+        )
+        box.setInformativeText(
+            self._retention_summary_html(plan)
+            + "<p><b>Verwijderen kan niet ongedaan worden gemaakt.</b> Exporteer eerst wat u nodig heeft.</p>"
+        )
+        remove = box.addButton("Definitief verwijderen", QMessageBox.ButtonRole.DestructiveRole)
+        export = box.addButton("Eerst exporteren", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Nu niet", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(export)
+        box.exec()
+
+        if box.clickedButton() is export:
+            self.export_excel()
+            return
+        if box.clickedButton() is not remove:
+            return
+        self.apply_retention_cleanup_now(plan)
+
+    def apply_retention_cleanup_now(self, plan: dict | None = None):
+        """Verwijder verlopen persoonsgegevens uit alle opslaglocaties."""
+        retention_days = self._retention_days()
+        # De cijfers moeten vastliggen vóór de bron verdwijnt; daarna is de
+        # momentopname de enige overgebleven bron.
+        self._refresh_past_event_statistics()
+
+        plan = apply_retention_cleanup(self.events, self.records, retention_days, plan=plan)
+        self._mark_dirty()
+        self.save_project()
+
+        copies = self._scrub_stored_copies(retention_days)
+        sessions = self._scrub_live_session_data(retention_days)
+
+        self._render_all()
+        self._add_recent_activity(f"Bewaartermijn toegepast: {plan['records_removed']} deelnemer(s) verwijderd")
+        QMessageBox.information(
+            self,
+            "Persoonsgegevens verwijderd",
+            f"{plan['records_removed']} deelnemer(s) zijn onomkeerbaar verwijderd.\n\n"
+            f"Opgeschoonde reserve- en herstelkopieën: {copies}\n"
+            f"Opgeschoonde livesessies: {sessions}\n\n"
+            "De opkomstcijfers en verdelingen blijven bij de evenementen bewaard.",
+        )
+
+    def _scrub_stored_copies(self, retention_days: int) -> int:
+        """Pas de bewaartermijn ook toe op reservekopieën en de herstelkopie.
+
+        Zonder deze stap blijven de persoonsgegevens gewoon op schijf staan en
+        heeft het opschonen van het hoofddossier geen effect.
+        """
+        targets = list(self._backup_files())
+        recovery = self._recovery_path()
+        if recovery.is_file():
+            targets.append(recovery)
+        cleaned = 0
+        for path in targets:
+            try:
+                payload = json.loads(Path(path).read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            result = scrub_payload(payload, retention_days)
+            if not result["records_removed"]:
+                continue
+            try:
+                self._write_payload_atomic(Path(path), payload)
+                cleaned += 1
+            except Exception:
+                self._write_error_log("Bewaartermijn op kopie toepassen", traceback.format_exc())
+        return cleaned
+
+    def _scrub_live_session_data(self, retention_days: int) -> int:
+        """Verwijder deelnemers uit verlopen livesessies, inclusief sessieback-ups.
+
+        De sessiedatabase bevat naast de deelnemerstabel ook een audit- en een
+        calamiteitenregistratie met namen erin; die gaan mee.
+        """
+        try:
+            from server.paths import backups_directory, events_directory
+            from server.services import session_service as live_session_service
+        except Exception:
+            return 0
+
+        scrubbed = [event for event in self.events if event.get("persoonsgegevens_gewist")]
+        if not scrubbed:
+            return 0
+        wanted_ids = {str(event.get("id", "") or "").strip() for event in scrubbed} - {""}
+        wanted_legacy = {
+            (str(event.get("name", "") or "").strip().casefold(), str(event.get("date", "") or "").strip())
+            for event in scrubbed
+        }
+
+        try:
+            sessions = live_session_service.list_recent_sessions()
+        except Exception:
+            return 0
+
+        # Eén evenement kan meerdere livesessies hebben gehad; ze gaan allemaal mee.
+        session_ids = set()
+        for session in sessions:
+            linked = str(session.get("source_event_id", "") or "").strip()
+            legacy = (
+                str(session.get("name", "") or "").strip().casefold(),
+                str(session.get("date", "") or "").strip(),
+            )
+            if (linked and linked in wanted_ids) or (not linked and legacy in wanted_legacy):
+                session_id = str(session.get("id", "") or "").strip()
+                if session_id:
+                    session_ids.add(session_id)
+
+        cleaned = 0
+        for session_id in session_ids:
+            if self._scrub_session_database(events_directory() / session_id / "event.db"):
+                cleaned += 1
+            for backup in backups_directory().glob(f"{session_id}-*.db"):
+                self._scrub_session_database(backup)
+        return cleaned
+
+    def _scrub_session_database(self, database: Path) -> bool:
+        if not Path(database).is_file():
+            return False
+        connection = None
+        try:
+            connection = sqlite3.connect(str(database))
+            existing = {
+                row[0] for row in
+                connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            }
+            for table in ("participant", "audit_log", "emergency_status", "emergency_incident"):
+                if table in existing:
+                    connection.execute(f"DELETE FROM {table}")
+            connection.commit()
+            # VACUUM haalt de verwijderde rijen ook fysiek uit het bestand;
+            # zonder deze stap blijven ze met een editor leesbaar.
+            connection.execute("VACUUM")
+            connection.commit()
+            return True
+        except Exception:
+            self._write_error_log("Livesessiegegevens opschonen", traceback.format_exc())
+            return False
+        finally:
+            if connection is not None:
+                connection.close()
+
     def _save_profile_preferences(self, preferences: dict):
+        if "retention_days" in preferences:
+            self.settings.setValue("retention_days", clamp_retention_days(preferences["retention_days"]))
         self.settings.setValue("startup_welcome_mode", preferences.get("mode", "relevant"))
         self.settings.setValue("startup_upcoming_days", int(preferences.get("upcoming_days", 30) or 30))
         self.settings.setValue("autosave_enabled", bool(preferences.get("autosave_enabled", True)))
@@ -7042,6 +7302,9 @@ class BezoekerslijstWindow(QMainWindow):
         if self.maybe_require_initial_profile():
             self.maybe_show_changelog()
             self.maybe_show_startup_welcome()
+        # Pas na de opstartschermen: de vraag om onomkeerbaar te verwijderen
+        # hoort niet achter een welkomstvenster te verdwijnen.
+        self.maybe_apply_retention()
         self._schedule_daily_refresh()
 
     def _schedule_daily_refresh(self):
