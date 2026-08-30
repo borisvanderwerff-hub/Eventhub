@@ -147,6 +147,18 @@ from emt_retention import (
     retention_notifications,
     scrub_payload,
 )
+from emt_trends import (
+    EVENT_DIMENSIONS as TREND_EVENT_DIMENSIONS,
+    GROUP_DIMENSIONS as TREND_GROUP_DIMENSIONS,
+    METRICS as TREND_METRICS,
+    PERIODS as TREND_PERIODS,
+    anonymous_bundle as anonymous_trend_bundle,
+    build_series as build_trend_series,
+    collect_summaries as collect_trend_summaries,
+    describe_change as describe_trend_change,
+    read_bundle as read_trend_bundle,
+    series_totals as trend_series_totals,
+)
 from theme.styles import build_stylesheet
 
 
@@ -164,6 +176,8 @@ SIDEBAR_ICON_PATHS = {
     "events": SIDEBAR_ICON_DIR / "evenementen.png",
     "tasks": SIDEBAR_ICON_DIR / "taken.png",
     "event_control": SIDEBAR_ICON_DIR / "event_control.png",
+    # Nog geen eigen asset; valt terug op een Qt-standaardicoon.
+    "trends": SIDEBAR_ICON_DIR / "trends.png",
     "callbacks": SIDEBAR_ICON_DIR / "nazorg.png",
     "file": SIDEBAR_ICON_DIR / "bestanden.png",
     "profile": SIDEBAR_ICON_DIR / "profiel.png",
@@ -900,6 +914,121 @@ class StatisticsChart(QWidget):
                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                 metrics.elidedText(text, Qt.TextElideMode.ElideRight, legend_width - 22),
             )
+
+
+class TrendChart(QWidget):
+    """Verloop over tijd, met één lijn per groep.
+
+    StatisticsChart tekent categorieën naast elkaar; voor een ontwikkeling is
+    de volgorde van de punten juist de betekenis, vandaar een eigen widget.
+    """
+
+    PALETTE = [
+        "#6c2cff", "#00a3b4", "#e2761b", "#2e7d32", "#c2185b",
+        "#0277bd", "#7b5e00", "#5d4037", "#455a64", "#8e24aa",
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.series = {"groups": [], "points": [], "metric": "aangemeld"}
+        self.setMinimumHeight(300)
+
+    def set_series(self, series: dict):
+        self.series = series or {"groups": [], "points": [], "metric": "aangemeld"}
+        self.update()
+
+    def _formatted(self, value: float) -> str:
+        if self.series.get("metric") == "opkomst_percentage":
+            return f"{value:g}%"
+        return f"{value:g}"
+
+    def paintEvent(self, event):
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#ffffff"))
+        painter.setFont(QFont("Segoe UI", 9))
+
+        points = self.series.get("points") or []
+        groups = self.series.get("groups") or []
+        if not points or not groups:
+            painter.setPen(QColor("#7b6d82"))
+            painter.drawText(
+                self.rect(), Qt.AlignmentFlag.AlignCenter,
+                "Nog geen cijfers beschikbaar.\nEvenementen krijgen cijfers zodra hun datum is geweest.",
+            )
+            return
+
+        left, top, right, bottom = 62, 18, 16, 58
+        width = max(1, self.width() - left - right)
+        height = max(1, self.height() - top - bottom)
+        highest = max(
+            [value for point in points for value in point["values"].values()] + [0.0]
+        )
+        highest = highest or 1.0
+
+        # Assen en hulplijnen.
+        painter.setPen(QColor("#e3e7ee"))
+        for step in range(5):
+            y = top + height - round(height * step / 4)
+            painter.drawLine(left, y, left + width, y)
+            painter.setPen(QColor("#7b6d82"))
+            painter.drawText(
+                0, y - 9, left - 8, 18,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                self._formatted(round(highest * step / 4, 1)),
+            )
+            painter.setPen(QColor("#e3e7ee"))
+
+        count = len(points)
+        spacing = width / max(1, count - 1) if count > 1 else 0
+
+        def x_for(index):
+            return left + (width / 2 if count == 1 else index * spacing)
+
+        for group_index, group in enumerate(groups):
+            colour = QColor(self.PALETTE[group_index % len(self.PALETTE)])
+            painter.setPen(QPen(colour, 2))
+            previous = None
+            for index, point in enumerate(points):
+                value = point["values"].get(group, 0.0)
+                x = x_for(index)
+                y = top + height - (height * value / highest)
+                if previous is not None:
+                    painter.drawLine(int(previous[0]), int(previous[1]), int(x), int(y))
+                previous = (x, y)
+            painter.setBrush(colour)
+            for index, point in enumerate(points):
+                value = point["values"].get(group, 0.0)
+                x = x_for(index)
+                y = top + height - (height * value / highest)
+                painter.drawEllipse(int(x) - 3, int(y) - 3, 6, 6)
+
+        # Puntlabels onder de as, gedund zodat ze niet over elkaar vallen.
+        painter.setPen(QColor("#4a5568"))
+        every = max(1, count // max(1, int(width / 90)))
+        for index, point in enumerate(points):
+            if index % every and index != count - 1:
+                continue
+            x = x_for(index)
+            painter.drawText(
+                int(x) - 55, top + height + 6, 110, 16,
+                Qt.AlignmentFlag.AlignCenter, str(point["label"])[:22],
+            )
+
+        # Legenda alleen bij een echte uitsplitsing.
+        if len(groups) > 1:
+            x = left
+            y = top + height + 28
+            for group_index, group in enumerate(groups[:6]):
+                colour = QColor(self.PALETTE[group_index % len(self.PALETTE)])
+                painter.setBrush(colour)
+                painter.setPen(colour)
+                painter.drawEllipse(int(x), int(y) + 4, 8, 8)
+                painter.setPen(QColor("#4a5568"))
+                label = str(group)[:18]
+                painter.drawText(int(x) + 13, int(y), 130, 16, Qt.AlignmentFlag.AlignLeft, label)
+                x += 26 + min(130, 7 * len(label))
 
 
 class StatisticsCard(QFrame):
@@ -2911,6 +3040,7 @@ class BezoekerslijstWindow(QMainWindow):
         self._build_open_tasks_page()
         self._build_standard_tasks_page()
         self._build_event_control_page()
+        self._build_trends_page()
         self._build_profile_page()
 
         self.event_page = QWidget()
@@ -3467,6 +3597,8 @@ class BezoekerslijstWindow(QMainWindow):
              "Bellen, WhatsApp-contact en vervolgafspraken"),
             ("event_control", "Event Control", QStyle.StandardPixmap.SP_ComputerIcon, self.show_event_control_page,
              "Presentie, live sessies en Rudder"),
+            ("trends", "Trends", QStyle.StandardPixmap.SP_FileDialogDetailedView, self.show_trends_page,
+             "Ontwikkeling over evenementen heen: opkomst, no-shows en doelgroep"),
         ]
         for key, label, pixmap, handler, tooltip in navigation:
             button = QPushButton(label)
@@ -3558,7 +3690,7 @@ class BezoekerslijstWindow(QMainWindow):
             self.sidebar_workspace_label.setVisible(expanded)
         if hasattr(self, "sidebar_manage_label"):
             self.sidebar_manage_label.setVisible(expanded)
-        labels = {"events": "Evenementen", "tasks": "Taken", "callbacks": "After sales", "event_control": "Event Control", "profile": "Mijn profiel"}
+        labels = {"events": "Evenementen", "tasks": "Taken", "callbacks": "After sales", "event_control": "Event Control", "trends": "Trends", "profile": "Mijn profiel"}
         for key, button in self.sidebar_buttons.items():
             button.setText(labels[key] if expanded else "")
             button.setProperty("collapsed", not expanded)
@@ -3974,6 +4106,92 @@ class BezoekerslijstWindow(QMainWindow):
         self.event_control_tabs.addTab(rudder_tab, "Rudder")
 
         layout.addWidget(self.event_control_tabs, 1)
+        self.page_stack.addWidget(page)
+
+    def _build_trends_page(self):
+        page = QWidget()
+        self.trends_page = page
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(18, 4, 18, 18)
+        layout.setSpacing(10)
+
+        heading_row = QHBoxLayout()
+        heading = QLabel("Trends")
+        heading.setObjectName("sectionTitle")
+        heading_row.addWidget(heading)
+        heading_row.addStretch()
+        import_button = _make_button_compact(QPushButton("Gegevens toevoegen"))
+        import_button.setObjectName("secondaryButton")
+        import_button.setToolTip(
+            "Voeg cijfers toe van een ander EventHub-dossier of trendbestand, bijvoorbeeld van een collega."
+        )
+        import_button.clicked.connect(self.import_trend_data)
+        heading_row.addWidget(import_button)
+        share_button = _make_button_compact(QPushButton("Delen"))
+        share_button.setObjectName("secondaryButton")
+        share_button.setToolTip("Exporteer de eigen cijfers als anoniem trendbestand, zonder persoonsgegevens.")
+        share_button.clicked.connect(self.export_trend_data)
+        heading_row.addWidget(share_button)
+        layout.addLayout(heading_row)
+
+        intro = QLabel(
+            "Ontwikkeling over evenementen heen, berekend op de geanonimiseerde cijfers per evenement. "
+            "Deze blijven ook beschikbaar nadat de persoonsgegevens door de bewaartermijn zijn verwijderd."
+        )
+        intro.setObjectName("hintLabel")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        controls = QFrame()
+        controls.setObjectName("toolbar")
+        controls_layout = QHBoxLayout(controls)
+        controls_layout.setContentsMargins(14, 10, 14, 10)
+        controls_layout.setSpacing(10)
+
+        self.trend_metric = QComboBox()
+        for label, value in TREND_METRICS:
+            self.trend_metric.addItem(label, value)
+        self.trend_dimension = QComboBox()
+        for label, value in TREND_EVENT_DIMENSIONS:
+            self.trend_dimension.addItem(label, value)
+        for label in TREND_GROUP_DIMENSIONS:
+            self.trend_dimension.addItem(label, label)
+        self.trend_period = QComboBox()
+        for label, value in TREND_PERIODS:
+            self.trend_period.addItem(label, value)
+        self.trend_period.setCurrentIndex(2)
+        self.trend_source = QComboBox()
+        self.trend_source.addItem("Alle gegevens", "")
+
+        for label, widget in (
+            ("Meetwaarde:", self.trend_metric),
+            ("Uitsplitsen naar:", self.trend_dimension),
+            ("Periode:", self.trend_period),
+            ("Bron:", self.trend_source),
+        ):
+            caption = QLabel(label)
+            caption.setObjectName("hintLabel")
+            controls_layout.addWidget(caption)
+            widget.setMinimumWidth(150)
+            widget.currentIndexChanged.connect(self._render_trends)
+            controls_layout.addWidget(widget)
+        controls_layout.addStretch()
+        layout.addWidget(controls)
+
+        self.trend_summary = QLabel("")
+        self.trend_summary.setObjectName("statusLabel")
+        self.trend_summary.setWordWrap(True)
+        layout.addWidget(self.trend_summary)
+
+        self.trend_chart = TrendChart()
+        layout.addWidget(self.trend_chart, 1)
+
+        self.trend_table = self._new_table(["Periode", "Groep", "Waarde"])
+        self.trend_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.trend_table.setMaximumHeight(190)
+        layout.addWidget(self.trend_table)
+
+        self.trend_sources: list[dict] = []
         self.page_stack.addWidget(page)
 
     def _build_profile_page(self):
@@ -4993,6 +5211,7 @@ class BezoekerslijstWindow(QMainWindow):
             "events": ("Evenementen", "Planning, deelnemers en dossiers"),
             "tasks": ("Openstaande taken", "Alle onafgeronde acties"),
             "callbacks": ("After sales", "Bellen, WhatsApp en vervolgafspraken"),
+            "trends": ("Trends", "Ontwikkeling over evenementen heen"),
             "event_control": ("Event Control", "Presentie en gedeelde live sessies"),
             "profile": ("Mijn profiel", "Persoonlijke gegevens voor documentexports"),
         }
@@ -7103,6 +7322,148 @@ class BezoekerslijstWindow(QMainWindow):
             self.settings.value("retention_days", RETENTION_DEFAULT_DAYS)
         )
 
+    def show_trends_page(self):
+        self.page_stack.setCurrentWidget(self.trends_page)
+        self._set_project_context_ui(False)
+        self._set_navigation_active("trends")
+        self._render_trends()
+        self.status_label.setText("Trends — ontwikkeling over evenementen heen.")
+
+    def _trend_summaries(self):
+        """Eigen cijfers plus alles wat is toegevoegd, gefilterd op bron."""
+        own = collect_trend_summaries(self.events, source="Eigen dossier")
+        combined = list(own)
+        for source in getattr(self, "trend_sources", []):
+            combined.extend(source["summaries"])
+        wanted = str(self.trend_source.currentData() or "")
+        if wanted:
+            combined = [item for item in combined if item.get("source") == wanted]
+        return combined
+
+    def _sync_trend_sources(self):
+        current = str(self.trend_source.currentData() or "")
+        self.trend_source.blockSignals(True)
+        self.trend_source.clear()
+        self.trend_source.addItem("Alle gegevens", "")
+        self.trend_source.addItem("Eigen dossier", "Eigen dossier")
+        for source in getattr(self, "trend_sources", []):
+            self.trend_source.addItem(source["label"], source["label"])
+        index = self.trend_source.findData(current)
+        self.trend_source.setCurrentIndex(index if index >= 0 else 0)
+        self.trend_source.blockSignals(False)
+
+    def _render_trends(self, *_):
+        if not hasattr(self, "trend_chart"):
+            return
+        summaries = self._trend_summaries()
+        series = build_trend_series(
+            summaries,
+            metric=str(self.trend_metric.currentData() or "aangemeld"),
+            dimension=str(self.trend_dimension.currentData() or ""),
+            period=str(self.trend_period.currentData() or "event"),
+        )
+        self.trend_chart.set_series(series)
+
+        totals = trend_series_totals(series)
+        self.trend_table.setRowCount(sum(len(point["values"]) for point in series["points"]))
+        row = 0
+        for point in series["points"]:
+            for group, value in point["values"].items():
+                for column, text in enumerate((point["label"], group, self._trend_value_text(series, value))):
+                    item = QTableWidgetItem(str(text))
+                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                    self.trend_table.setItem(row, column, item)
+                row += 1
+
+        if not summaries:
+            self.trend_summary.setText(
+                "Nog geen cijfers. Een evenement krijgt cijfers zodra de datum is geweest; "
+                "cijfers van anderen voegt u toe met Gegevens toevoegen."
+            )
+            return
+        parts = [f"{series['events']} evenement(en)"]
+        if len(series["groups"]) > 1:
+            biggest = max(totals, key=lambda item: item[1], default=None)
+            if biggest:
+                parts.append(f"grootste groep: {biggest[0]} ({self._trend_value_text(series, biggest[1])})")
+        parts.append(describe_trend_change(series))
+        if series.get("incomplete"):
+            parts.append(
+                "Let op: voor een deel van de evenementen is de aanwezigheid per groep niet vastgelegd; "
+                "die tellen niet mee."
+            )
+        self.trend_summary.setText("  ·  ".join(parts))
+
+    def _trend_value_text(self, series: dict, value: float) -> str:
+        return f"{value:g}%" if series.get("metric") == "opkomst_percentage" else f"{value:g}"
+
+    def import_trend_data(self):
+        """Voeg cijfers toe uit een ander dossier of trendbestand."""
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "Trendgegevens toevoegen", "",
+            "EventHub-gegevens (*.bvp *.json);;Alle bestanden (*)",
+        )
+        if not file_name:
+            return
+        path = Path(file_name)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            QMessageBox.critical(self, "Toevoegen mislukt", str(exc))
+            return
+        label = str(payload.get("label", "") or path.stem)
+        summaries = read_trend_bundle(payload, label)
+        if not summaries:
+            QMessageBox.information(
+                self,
+                "Geen cijfers gevonden",
+                "Dit bestand bevat geen evenementen met vastgelegde cijfers. Cijfers ontstaan pas "
+                "nadat de datum van een evenement is geweest.",
+            )
+            return
+        self.trend_sources = [
+            source for source in getattr(self, "trend_sources", []) if source["label"] != label
+        ]
+        self.trend_sources.append({"label": label, "summaries": summaries})
+        self._sync_trend_sources()
+        self._render_trends()
+        QMessageBox.information(
+            self,
+            "Cijfers toegevoegd",
+            f"{len(summaries)} evenement(en) toegevoegd als bron '{label}'.\n\n"
+            "Alleen geanonimiseerde cijfers zijn overgenomen; eventuele deelnemersgegevens "
+            "in het bronbestand zijn genegeerd.",
+        )
+
+    def export_trend_data(self):
+        """Exporteer de eigen cijfers als deelbaar, anoniem trendbestand."""
+        bundle = anonymous_trend_bundle(self.events, self.profile.get("name") or "EventHub")
+        if not bundle["events"]:
+            QMessageBox.information(
+                self,
+                "Niets te delen",
+                "Er zijn nog geen evenementen met vastgelegde cijfers.",
+            )
+            return
+        default = exports_directory() / f"EventHub trendgegevens {date.today():%Y-%m-%d}.json"
+        file_name, _ = QFileDialog.getSaveFileName(
+            self, "Trendgegevens opslaan", str(default), "Trendbestand (*.json)"
+        )
+        if not file_name:
+            return
+        try:
+            self._write_payload_atomic(Path(file_name), bundle)
+        except Exception as exc:
+            QMessageBox.critical(self, "Opslaan mislukt", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "Trendgegevens opgeslagen",
+            f"{len(bundle['events'])} evenement(en) opgeslagen.\n\n"
+            "Het bestand bevat uitsluitend aantallen en verdelingen — geen namen, "
+            "geboortedatums of contactgegevens.",
+        )
+
     def _retention_plan(self):
         return plan_retention_cleanup(self.events, self.records, self._retention_days())
 
@@ -8736,6 +9097,9 @@ class BezoekerslijstWindow(QMainWindow):
         attended = len(present)
         registered = len(records)
         return {
+            # 2: verdelingen splitsen aangemeld en aanwezig, zodat achteraf nog
+            # te zien is bij welke groep de no-shows zaten.
+            "schema": 2,
             "vastgelegd_op": datetime.now().isoformat(timespec="seconds"),
             "peildatum": reference.strftime("%d-%m-%Y"),
             "aangemeld": registered,
@@ -8744,12 +9108,24 @@ class BezoekerslijstWindow(QMainWindow):
             "introducees": registered - len(regular),
             "opkomst_percentage": round(attended / registered * 100, 1) if registered else 0.0,
             "verdeling": {
-                "Opleidingsniveau": dict(self._field_counts("Opleiding", limit=99, records=records)),
-                "Profiel": dict(self._field_counts("Profiel", limit=99, records=records)),
-                "Geslacht": dict(self._field_counts("Geslacht", limit=99, records=records)),
-                "Leeftijdsgroep": dict(self._age_counts(records, reference=reference)),
+                dimension: self._grouped_counts(records, event_name, labeller)
+                for dimension, labeller in (
+                    ("Opleidingsniveau", lambda record: str(record.get("Opleiding", "") or "").strip() or "Onbekend"),
+                    ("Profiel", lambda record: str(record.get("Profiel", "") or "").strip() or "Onbekend"),
+                    ("Geslacht", lambda record: str(record.get("Geslacht", "") or "").strip() or "Onbekend"),
+                    ("Leeftijdsgroep", lambda record: self._age_label(record, reference)),
+                )
             },
         }
+
+    def _grouped_counts(self, records, event_name: str, labeller) -> dict:
+        """Aangemeld en aanwezig per groep, zodat no-shows per groep afleidbaar zijn."""
+        grouped: dict[str, dict] = {}
+        for record in records:
+            bucket = grouped.setdefault(labeller(record), {"aangemeld": 0, "aanwezig": 0})
+            bucket["aangemeld"] += 1
+            bucket["aanwezig"] += is_present(record, event_name)
+        return dict(sorted(grouped.items(), key=lambda item: (-item[1]["aangemeld"], normalize(item[0]))))
 
     def _capture_event_statistics(self, event: dict) -> bool:
         """Werk de cijfers bij zolang de persoonsgegevens er nog zijn.
@@ -8814,6 +9190,25 @@ class BezoekerslijstWindow(QMainWindow):
             except ValueError:
                 continue
         return None
+
+    AGE_LABELS = ["Jonger dan 18", "18–20", "21–24", "25–29", "30–39", "40 en ouder", "Onbekend"]
+
+    def _age_label(self, record: dict, reference: date | None = None) -> str:
+        """Leeftijdsgroep van één deelnemer op de peildatum."""
+        age = self._age_from_text(record.get("Geboortedatum", ""), reference)
+        if age is None:
+            return "Onbekend"
+        if age < 18:
+            return "Jonger dan 18"
+        if age <= 20:
+            return "18–20"
+        if age <= 24:
+            return "21–24"
+        if age <= 29:
+            return "25–29"
+        if age <= 39:
+            return "30–39"
+        return "40 en ouder"
 
     def _age_counts(self, records=None, reference: date | None = None):
         source = self.records if records is None else records
