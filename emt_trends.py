@@ -50,6 +50,116 @@ MONTH_NAMES = [
 ]
 
 
+AGE_GROUPS = ("Jonger dan 18", "18–20", "21–24", "25–29", "30–39", "40 en ouder", "Onbekend")
+
+
+def age_on(birth_text, reference: date | None = None) -> int | None:
+    """Leeftijd in jaren op de peildatum, of None bij een onbruikbare datum."""
+    born = parse_date(birth_text)
+    if born is None:
+        return None
+    reference = reference or date.today()
+    age = reference.year - born.year - ((reference.month, reference.day) < (born.month, born.day))
+    return age if 0 <= age <= 120 else None
+
+
+def age_group(age: int | None) -> str:
+    """Eén definitie van de leeftijdsgroepen.
+
+    Eigen en ingeladen gegevens moeten dezelfde indeling gebruiken; anders
+    worden in een trend groepen vergeleken die niet hetzelfde betekenen.
+    """
+    if age is None:
+        return "Onbekend"
+    if age < 18:
+        return "Jonger dan 18"
+    if age <= 20:
+        return "18–20"
+    if age <= 24:
+        return "21–24"
+    if age <= 29:
+        return "25–29"
+    if age <= 39:
+        return "30–39"
+    return "40 en ouder"
+
+
+def summarise_records(records: list[dict], event_name: str, event_date=None) -> dict:
+    """Reken een bezoekerslijst om naar geaggregeerde cijfers.
+
+    Wordt gebruikt bij het inladen van losse bezoekerslijsten. De
+    deelnemersrijen worden hierna weggegooid: de trendanalyse werkt uitsluitend
+    op aantallen, zodat het inladen van een lijst geen nieuwe verzameling
+    persoonsgegevens oplevert die buiten de bewaartermijn valt.
+    """
+    from bezoekerslijst_core import is_introducee, is_present
+
+    reference = parse_date(event_date) or date.today()
+    registered = len(records)
+    attended = sum(is_present(record, event_name) for record in records)
+
+    def grouped(labeller):
+        buckets: dict[str, dict] = {}
+        for record in records:
+            bucket = buckets.setdefault(labeller(record), {"aangemeld": 0, "aanwezig": 0})
+            bucket["aangemeld"] += 1
+            bucket["aanwezig"] += is_present(record, event_name)
+        return dict(sorted(buckets.items(), key=lambda item: (-item[1]["aangemeld"], normalize(item[0]))))
+
+    def field(name):
+        return lambda record: str(record.get(name, "") or "").strip() or "Onbekend"
+
+    return {
+        "schema": 2,
+        "vastgelegd_op": date.today().isoformat(),
+        "peildatum": reference.strftime("%d-%m-%Y"),
+        "aangemeld": registered,
+        "aanwezig": attended,
+        "noshows": registered - attended,
+        "introducees": sum(is_introducee(record) for record in records),
+        "opkomst_percentage": round(attended / registered * 100, 1) if registered else 0.0,
+        "verdeling": {
+            "Opleidingsniveau": grouped(field("Opleiding")),
+            "Profiel": grouped(field("Profiel")),
+            "Geslacht": grouped(field("Geslacht")),
+            "Leeftijdsgroep": grouped(
+                lambda record: age_group(age_on(record.get("Geboortedatum", ""), reference))
+            ),
+        },
+    }
+
+
+def summaries_from_records(records: list[dict], dates: dict | None = None, source: str = "") -> list[dict]:
+    """Groepeer een ingeladen bezoekerslijst per evenement en vat elk groepje samen.
+
+    Eén bestand kan deelnemers van meerdere evenementen bevatten; het veld
+    Evenement is leidend. ``dates`` koppelt een evenementnaam aan een datum,
+    want een bezoekerslijst bevat die zelf niet.
+    """
+    from bezoekerslijst_core import record_events
+
+    dates = dates or {}
+    grouped: dict[str, list] = {}
+    for record in records:
+        for name in record_events(record) or ["Onbekend evenement"]:
+            grouped.setdefault(name, []).append(record)
+
+    summaries = []
+    for name, group in grouped.items():
+        event_date = dates.get(name) or dates.get(normalize(name)) or ""
+        summaries.append({
+            "id": f"import:{normalize(name)}",
+            "name": name,
+            "date": str(event_date or ""),
+            "event_type": "Onbekend",
+            "place": "Onbekend",
+            "location": "Onbekend",
+            "source": source,
+            "statistiek": summarise_records(group, name, event_date),
+        })
+    return sorted(summaries, key=lambda item: normalize(item["name"]))
+
+
 def event_summary(event: dict, source: str = "") -> dict | None:
     """Reduceer een evenement tot wat een trendanalyse nodig heeft.
 

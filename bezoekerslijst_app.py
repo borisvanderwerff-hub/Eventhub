@@ -30,6 +30,7 @@ from PySide6.QtGui import (
     QDesktopServices,
     QFont,
     QIcon,
+    QImage,
     QPageLayout,
     QPageSize,
     QPainter,
@@ -152,12 +153,13 @@ from emt_trends import (
     GROUP_DIMENSIONS as TREND_GROUP_DIMENSIONS,
     METRICS as TREND_METRICS,
     PERIODS as TREND_PERIODS,
-    anonymous_bundle as anonymous_trend_bundle,
+    age_group as trend_age_group,
     build_series as build_trend_series,
     collect_summaries as collect_trend_summaries,
     describe_change as describe_trend_change,
     read_bundle as read_trend_bundle,
     series_totals as trend_series_totals,
+    summaries_from_records as trend_summaries_from_records,
 )
 from theme.styles import build_stylesheet
 
@@ -4120,16 +4122,16 @@ class BezoekerslijstWindow(QMainWindow):
         heading.setObjectName("sectionTitle")
         heading_row.addWidget(heading)
         heading_row.addStretch()
-        import_button = _make_button_compact(QPushButton("Gegevens toevoegen"))
+        import_button = _make_button_compact(QPushButton("Bezoekerslijsten inladen"))
         import_button.setObjectName("secondaryButton")
         import_button.setToolTip(
-            "Voeg cijfers toe van een ander EventHub-dossier of trendbestand, bijvoorbeeld van een collega."
+            "Laad één of meer bezoekerslijsten in (Excel) of een EventHub-dossier van een collega."
         )
         import_button.clicked.connect(self.import_trend_data)
         heading_row.addWidget(import_button)
-        share_button = _make_button_compact(QPushButton("Delen"))
+        share_button = _make_button_compact(QPushButton("Exporteren naar PDF"))
         share_button.setObjectName("secondaryButton")
-        share_button.setToolTip("Exporteer de eigen cijfers als anoniem trendbestand, zonder persoonsgegevens.")
+        share_button.setToolTip("Exporteer het huidige trendbeeld als PDF, zonder persoonsgegevens.")
         share_button.clicked.connect(self.export_trend_data)
         heading_row.addWidget(share_button)
         layout.addLayout(heading_row)
@@ -7398,71 +7400,226 @@ class BezoekerslijstWindow(QMainWindow):
         return f"{value:g}%" if series.get("metric") == "opkomst_percentage" else f"{value:g}"
 
     def import_trend_data(self):
-        """Voeg cijfers toe uit een ander dossier of trendbestand."""
-        file_name, _ = QFileDialog.getOpenFileName(
-            self, "Trendgegevens toevoegen", "",
-            "EventHub-gegevens (*.bvp *.json);;Alle bestanden (*)",
+        """Laad één of meer bezoekerslijsten in en reken ze om naar cijfers.
+
+        De deelnemersrijen worden na het samenvatten weggegooid. Zo levert het
+        inladen van een lijst geen tweede verzameling persoonsgegevens op die
+        buiten de bewaartermijn zou vallen.
+        """
+        file_names, _ = QFileDialog.getOpenFileNames(
+            self, "Bezoekerslijsten inladen", "",
+            "Bezoekerslijsten en dossiers (*.xlsx *.xlsm *.csv *.bvp *.json);;"
+            "Excel-bestanden (*.xlsx *.xlsm *.csv);;EventHub-gegevens (*.bvp *.json);;Alle bestanden (*)",
         )
-        if not file_name:
+        if not file_names:
             return
-        path = Path(file_name)
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            QMessageBox.critical(self, "Toevoegen mislukt", str(exc))
-            return
-        label = str(payload.get("label", "") or path.stem)
-        summaries = read_trend_bundle(payload, label)
-        if not summaries:
-            QMessageBox.information(
-                self,
-                "Geen cijfers gevonden",
-                "Dit bestand bevat geen evenementen met vastgelegde cijfers. Cijfers ontstaan pas "
-                "nadat de datum van een evenement is geweest.",
+
+        spreadsheets = [name for name in file_names if Path(name).suffix.lower() in {".xlsx", ".xlsm", ".csv"}]
+        payloads = [name for name in file_names if name not in spreadsheets]
+        added, problems = [], []
+
+        for name in payloads:
+            try:
+                payload = json.loads(Path(name).read_text(encoding="utf-8"))
+            except Exception as exc:
+                problems.append(f"{Path(name).name}: {exc}")
+                continue
+            label = str(payload.get("label", "") or Path(name).stem)
+            summaries = read_trend_bundle(payload, label)
+            if summaries:
+                added.append((label, summaries))
+            else:
+                problems.append(f"{Path(name).name}: geen evenementen met vastgelegde cijfers")
+
+        if spreadsheets:
+            result = import_registration_files(spreadsheets, existing_records=[])
+            problems.extend(result.get("errors", []))
+            records = result.get("records", [])
+            if records:
+                label = (
+                    Path(spreadsheets[0]).stem if len(spreadsheets) == 1
+                    else f"{len(spreadsheets)} bezoekerslijsten"
+                )
+                dates = self._ask_trend_event_dates(records)
+                if dates is None:
+                    return
+                summaries = trend_summaries_from_records(records, dates, source=label)
+                if summaries:
+                    added.append((label, summaries))
+
+        if not added:
+            QMessageBox.warning(
+                self, "Niets ingeladen",
+                "Er zijn geen bruikbare gegevens gevonden.\n\n" + "\n".join(problems[:8]),
             )
             return
-        self.trend_sources = [
-            source for source in getattr(self, "trend_sources", []) if source["label"] != label
-        ]
-        self.trend_sources.append({"label": label, "summaries": summaries})
+
+        events_added = 0
+        for label, summaries in added:
+            self.trend_sources = [
+                source for source in getattr(self, "trend_sources", []) if source["label"] != label
+            ]
+            self.trend_sources.append({"label": label, "summaries": summaries})
+            events_added += len(summaries)
         self._sync_trend_sources()
         self._render_trends()
-        QMessageBox.information(
-            self,
-            "Cijfers toegevoegd",
-            f"{len(summaries)} evenement(en) toegevoegd als bron '{label}'.\n\n"
-            "Alleen geanonimiseerde cijfers zijn overgenomen; eventuele deelnemersgegevens "
-            "in het bronbestand zijn genegeerd.",
+
+        message = (
+            f"{events_added} evenement(en) toegevoegd uit {len(file_names)} bestand(en).\n\n"
+            "Van bezoekerslijsten zijn alleen de aantallen en verdelingen bewaard; de "
+            "deelnemersgegevens zelf zijn niet opgeslagen."
         )
+        if problems:
+            message += "\n\nOvergeslagen:\n" + "\n".join(problems[:6])
+        QMessageBox.information(self, "Bezoekerslijsten ingeladen", message)
+
+    def _ask_trend_event_dates(self, records):
+        """Vraag per gevonden evenement een datum; een bezoekerslijst bevat die niet.
+
+        Zonder datum belandt een evenement op de tijdlijn onder 'Zonder datum'
+        en is er geen ontwikkeling uit af te lezen.
+        """
+        names = []
+        for record in records:
+            for name in record_events(record) or ["Onbekend evenement"]:
+                if name not in names:
+                    names.append(name)
+        if not names:
+            return {}
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Datums van de ingeladen evenementen")
+        _fit_dialog_to_screen(dialog, 640, 420, 520, 260)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(
+            "Een bezoekerslijst bevat geen evenementdatum. Vul de datum in om het evenement op "
+            "de tijdlijn te kunnen plaatsen. Laat leeg om alleen in totalen mee te tellen."
+        )
+        intro.setObjectName("hintLabel")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        form = QFormLayout()
+        fields = {}
+        for name in names:
+            field = QLineEdit()
+            field.setPlaceholderText("dd-mm-jjjj")
+            # Staat het evenement al in het dossier, dan is de datum bekend.
+            known = self._event_by_name(name)
+            if known and known.get("date"):
+                field.setText(str(known["date"]))
+            fields[name] = field
+            form.addRow(f"{name}:", field)
+        container = QWidget()
+        container.setLayout(form)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(container)
+        layout.addWidget(scroll, 1)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        dates = {}
+        for name, field in fields.items():
+            value = field.text().strip()
+            if value and parse_date(value):
+                dates[name] = value
+        return dates
 
     def export_trend_data(self):
-        """Exporteer de eigen cijfers als deelbaar, anoniem trendbestand."""
-        bundle = anonymous_trend_bundle(self.events, self.profile.get("name") or "EventHub")
-        if not bundle["events"]:
+        """Exporteer het huidige trendbeeld als PDF."""
+        summaries = self._trend_summaries()
+        if not summaries:
             QMessageBox.information(
-                self,
-                "Niets te delen",
-                "Er zijn nog geen evenementen met vastgelegde cijfers.",
+                self, "Niets te exporteren",
+                "Er zijn nog geen cijfers om te tonen.",
             )
             return
-        default = exports_directory() / f"EventHub trendgegevens {date.today():%Y-%m-%d}.json"
+        default = exports_directory() / f"EventHub trends {date.today():%Y-%m-%d}.pdf"
         file_name, _ = QFileDialog.getSaveFileName(
-            self, "Trendgegevens opslaan", str(default), "Trendbestand (*.json)"
+            self, "Trends exporteren", str(default), "PDF-bestand (*.pdf)"
         )
         if not file_name:
             return
+        if not file_name.lower().endswith(".pdf"):
+            file_name += ".pdf"
         try:
-            self._write_payload_atomic(Path(file_name), bundle)
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+            printer.setOutputFileName(file_name)
+            printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+            printer.setPageOrientation(QPageLayout.Orientation.Landscape)
+            printer.setPageMargins(QMarginsF(16, 16, 16, 16), QPageLayout.Unit.Millimeter)
+            self._trend_pdf_document().print_(printer)
+            self.status_label.setText(f"Trends geëxporteerd als PDF: {file_name}")
+            QMessageBox.information(self, "Export gereed", f"De trendanalyse is geëxporteerd naar:\n{file_name}")
         except Exception as exc:
-            QMessageBox.critical(self, "Opslaan mislukt", str(exc))
-            return
-        QMessageBox.information(
-            self,
-            "Trendgegevens opgeslagen",
-            f"{len(bundle['events'])} evenement(en) opgeslagen.\n\n"
-            "Het bestand bevat uitsluitend aantallen en verdelingen — geen namen, "
-            "geboortedatums of contactgegevens.",
+            self._show_runtime_error("Trends exporteren", exc)
+
+    def _trend_pdf_document(self) -> QTextDocument:
+        series = self.trend_chart.series
+        metric = self.trend_metric.currentText()
+        dimension = self.trend_dimension.currentText()
+        period = self.trend_period.currentText()
+        source = self.trend_source.currentText()
+
+        document = QTextDocument(self)
+        document.setDefaultFont(QFont("Segoe UI", 9))
+
+        # De grafiek als afbeelding meenemen; een tabel alleen leest slecht.
+        chart_image = QImage(1000, 380, QImage.Format.Format_RGB32)
+        chart_image.fill(QColor("#ffffff"))
+        painter_target = TrendChart()
+        painter_target.set_series(series)
+        painter_target.resize(1000, 380)
+        painter_target.render(chart_image)
+        document.addResource(
+            QTextDocument.ResourceType.ImageResource, QUrl("trend://chart"), chart_image
         )
+
+        rows = []
+        for point in series.get("points", []):
+            for group, value in point["values"].items():
+                rows.append(
+                    f"<tr><td>{escape(str(point['label']))}</td><td>{escape(str(group))}</td>"
+                    f"<td class='num'>{escape(self._trend_value_text(series, value))}</td></tr>"
+                )
+
+        document.setHtml(f"""
+            <html><head><style>
+            body {{ color: #17233a; font-family: 'Segoe UI'; }}
+            h1 {{ font-size: 17pt; margin-bottom: 2px; }}
+            p.meta {{ color: #55637a; font-size: 9pt; margin-top: 0; }}
+            p.summary {{ background: #f2f4f9; padding: 7px; font-size: 9.5pt; }}
+            table {{ border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 9pt; }}
+            th {{ background: #071a33; color: #ffffff; text-align: left; padding: 5px 7px; }}
+            td {{ border-bottom: 1px solid #dde3ec; padding: 4px 7px; }}
+            td.num {{ text-align: right; }}
+            p.footer {{ color: #7b8798; font-size: 8pt; margin-top: 12px; }}
+            </style></head><body>
+            <h1>Trends — {escape(metric)}</h1>
+            <p class="meta">Uitgesplitst naar {escape(dimension)} · {escape(period)} · bron: {escape(source)}
+            · {series.get('events', 0)} evenement(en) · opgesteld op {date.today():%d-%m-%Y}
+            door {escape(str(self.profile.get('name') or 'EventHub'))}</p>
+            <p class="summary">{escape(self.trend_summary.text())}</p>
+            <img src="trend://chart" width="960" />
+            <table>
+              <tr><th>Periode</th><th>Groep</th><th>{escape(metric)}</th></tr>
+              {''.join(rows)}
+            </table>
+            <p class="footer">Berekend op geanonimiseerde cijfers per evenement. Dit overzicht bevat
+            geen namen, geboortedatums of contactgegevens.</p>
+            </body></html>
+        """)
+        return document
 
     def _retention_plan(self):
         return plan_retention_cleanup(self.events, self.records, self._retention_days())
@@ -9191,24 +9348,14 @@ class BezoekerslijstWindow(QMainWindow):
                 continue
         return None
 
-    AGE_LABELS = ["Jonger dan 18", "18–20", "21–24", "25–29", "30–39", "40 en ouder", "Onbekend"]
-
     def _age_label(self, record: dict, reference: date | None = None) -> str:
-        """Leeftijdsgroep van één deelnemer op de peildatum."""
-        age = self._age_from_text(record.get("Geboortedatum", ""), reference)
-        if age is None:
-            return "Onbekend"
-        if age < 18:
-            return "Jonger dan 18"
-        if age <= 20:
-            return "18–20"
-        if age <= 24:
-            return "21–24"
-        if age <= 29:
-            return "25–29"
-        if age <= 39:
-            return "30–39"
-        return "40 en ouder"
+        """Leeftijdsgroep van één deelnemer op de peildatum.
+
+        Gebruikt bewust dezelfde indeling als ingeladen bezoekerslijsten; twee
+        definities zouden groepen opleveren die in een trend niet vergelijkbaar
+        zijn.
+        """
+        return trend_age_group(self._age_from_text(record.get("Geboortedatum", ""), reference))
 
     def _age_counts(self, records=None, reference: date | None = None):
         source = self.records if records is None else records
