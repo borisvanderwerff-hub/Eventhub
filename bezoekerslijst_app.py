@@ -501,6 +501,17 @@ STATISTICS_CHART_DEFAULTS = {
     "gender": "donut",
     "age": "vertical",
 }
+# Kiest de gebruiker deze, dan bepaalt EventHub de status zelf op basis van
+# datum en openstaande taken; elke andere keuze blijft staan.
+AUTOMATIC_STATUS = "Automatisch bepalen"
+
+EVENT_SORT_MODES = [
+    ("Slim: eerst wat komt", "smart"),
+    ("Datum — oudste eerst", "date_asc"),
+    ("Datum — nieuwste eerst", "date_desc"),
+    ("Naam A–Z", "name"),
+]
+
 STATISTICS_PRESENCE_FILTERS = [
     ("Alle bezoekers", "all"),
     ("Alleen aanwezig geweest", "present"),
@@ -2027,8 +2038,21 @@ class NewProjectDialog(QDialog):
                 str(self.project_data.get("external_contact_reachability", "") or "")
             )
             self.status = QComboBox()
-            self.status.addItems(EVENT_STATUSES)
-            self.status.setCurrentText(str(self.project_data.get("status", "In voorbereiding") or "In voorbereiding"))
+            # Zonder deze keuze kon een handmatige status niet blijven staan: de
+            # automatische bepaling zette hem bij de eerstvolgende weergave terug.
+            self.status.addItem(AUTOMATIC_STATUS, AUTOMATIC_STATUS)
+            for value in EVENT_STATUSES:
+                self.status.addItem(value, value)
+            if self.project_data.get("status_manual"):
+                self.status.setCurrentText(
+                    str(self.project_data.get("status", "In voorbereiding") or "In voorbereiding")
+                )
+            else:
+                self.status.setCurrentText(AUTOMATIC_STATUS)
+            self.status.setToolTip(
+                "Automatisch bepalen volgt de datum en de openstaande taken. Kies een vaste "
+                "status om die te laten staan."
+            )
             self.description = QPlainTextEdit()
             self.description.setPlainText(str(self.project_data.get("description", "") or ""))
             self.description.setMaximumHeight(90)
@@ -2146,7 +2170,12 @@ class NewProjectDialog(QDialog):
                 "place": self.place.text().strip(),
                 "external_contact": self.external_contact.text().strip(),
                 "external_contact_reachability": self.external_contact_reachability.text().strip(),
-                "status": self.status.currentText(),
+                "status": (
+                    str(self.project_data.get("status", "") or "Concept")
+                    if self.status.currentText() == AUTOMATIC_STATUS
+                    else self.status.currentText()
+                ),
+                "status_manual": self.status.currentText() != AUTOMATIC_STATUS,
                 "description": self.description.toPlainText().strip(),
                 "target_audience": self.target_audience.toPlainText().strip(),
                 "location_instructions": self.location_instructions.toPlainText().strip(),
@@ -4090,6 +4119,20 @@ class BezoekerslijstWindow(QMainWindow):
         self.event_status_filter.setCurrentIndex(0)
         self.event_status_filter.currentIndexChanged.connect(self._filter_events)
         search_row.addWidget(self.event_status_filter)
+        sort_caption = QLabel("Sorteren:")
+        sort_caption.setObjectName("hintLabel")
+        search_row.addWidget(sort_caption)
+        self.event_sort_mode = QComboBox()
+        for label, value in EVENT_SORT_MODES:
+            self.event_sort_mode.addItem(label, value)
+        stored = str(self.settings.value("event_sort_mode", "smart") or "smart")
+        self.event_sort_mode.setCurrentIndex(max(0, self.event_sort_mode.findData(stored)))
+        self.event_sort_mode.setToolTip(
+            "Slim zet eerst wat eraan komt en daarna het verleden; de datumopties sorteren "
+            "de hele lijst doorlopend."
+        )
+        self.event_sort_mode.currentIndexChanged.connect(self._event_sort_changed)
+        search_row.addWidget(self.event_sort_mode)
         self.event_filter_summary = QLabel("")
         self.event_filter_summary.setObjectName("hintLabel")
         search_row.addWidget(self.event_filter_summary)
@@ -4134,6 +4177,10 @@ class BezoekerslijstWindow(QMainWindow):
         self.home_event_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.home_event_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.home_event_table.cellDoubleClicked.connect(lambda *_: self.activate_selected_event())
+        # De status stond alleen onderaan een lang formulier; hier is hij met
+        # twee klikken te wijzigen.
+        self.home_event_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.home_event_table.customContextMenuRequested.connect(self._show_event_context_menu)
         upcoming_layout.addWidget(self.home_event_table)
         home_content_layout.addWidget(upcoming_box, 1)
         home_layout.addWidget(home_content, 1)
@@ -6483,6 +6530,75 @@ class BezoekerslijstWindow(QMainWindow):
         # Negatief sorteert het verleden aflopend: het meest recente eerst.
         return (1, -event_date.toordinal(), name)
 
+    def _show_event_context_menu(self, position):
+        table = self.home_event_table
+        row = table.rowAt(position.y())
+        if row < 0 or table.isRowHidden(row):
+            return
+        table.selectRow(row)
+        event = self._event_by_id(self._event_id_for_row(row))
+        if not event:
+            return
+
+        menu = QMenu(table)
+        menu.addAction("Openen", self.activate_selected_event)
+        menu.addAction("Aanpassen", self.edit_selected_event)
+        status_menu = menu.addMenu("Status")
+        current = str(event.get("status", "") or "")
+        automatic = not event.get("status_manual")
+        for label in [AUTOMATIC_STATUS, *EVENT_STATUSES]:
+            action = status_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(automatic if label == AUTOMATIC_STATUS else (not automatic and label == current))
+            action.triggered.connect(
+                lambda _checked=False, value=label, target=event: self._set_event_status(target, value)
+            )
+        menu.addSeparator()
+        menu.addAction("Verwijderen", self.remove_selected_event)
+        menu.exec(table.viewport().mapToGlobal(position))
+
+    def _set_event_status(self, event: dict, status: str):
+        """Zet de status vanuit het overzicht, of geef hem terug aan de automatiek."""
+        if status == AUTOMATIC_STATUS:
+            event.pop("status_manual", None)
+            self._sync_event_status_from_tasks(event)
+            message = f"Status van {event.get('name', 'evenement')} wordt weer automatisch bepaald."
+        else:
+            event["status"] = status
+            event["status_manual"] = True
+            message = f"Status van {event.get('name', 'evenement')} staat op {status}."
+        self._mark_dirty()
+        self._render_all()
+        self.status_label.setText(message)
+
+    def _events_in_display_order(self):
+        """De evenementen zoals ze in het overzicht moeten staan.
+
+        Klikken op de kolomkop kan hier niet: de kolom Evenement gebruikt een
+        cel-widget, en die verhuist niet mee wanneer Qt de rijen omwisselt.
+        Daarom sorteren we de gegevens en bouwen we de tabel opnieuw op.
+        """
+        mode = "smart"
+        if hasattr(self, "event_sort_mode"):
+            mode = str(self.event_sort_mode.currentData() or "smart")
+        if mode == "name":
+            return sorted(self.events, key=lambda event: normalize(event.get("name", "")))
+        if mode in {"date_asc", "date_desc"}:
+            def key(event):
+                event_date = parse_date(event.get("date", ""))
+                # Evenementen zonder datum blijven onderaan, in beide richtingen.
+                return (event_date is None, event_date or date.min, normalize(event.get("name", "")))
+            dated = [event for event in self.events if parse_date(event.get("date", ""))]
+            undated = [event for event in self.events if not parse_date(event.get("date", ""))]
+            dated.sort(key=key, reverse=(mode == "date_desc"))
+            undated.sort(key=lambda event: normalize(event.get("name", "")))
+            return dated + undated
+        return sorted(self.events, key=self._event_sort_key)
+
+    def _event_sort_changed(self, *_):
+        self.settings.setValue("event_sort_mode", str(self.event_sort_mode.currentData() or "smart"))
+        self._render_management()
+
     def _filter_events(self, *_):
         """Filter het evenementenoverzicht op zoektekst en status."""
         table = getattr(self, "home_event_table", None)
@@ -6592,7 +6708,7 @@ class BezoekerslijstWindow(QMainWindow):
             self._sync_event_combo(self.event_control_event_combo)
         if hasattr(self, "after_sales_event_combo"):
             self._sync_event_combo(self.after_sales_event_combo)
-        events = sorted(self.events, key=self._event_sort_key)
+        events = self._events_in_display_order()
         profile_name = self.profile.get("name") or "collega"
         self.home_welcome.setText(f"Evenementen · {profile_name}")
         if hasattr(self, "start_welcome"):
@@ -8561,6 +8677,9 @@ class BezoekerslijstWindow(QMainWindow):
         een expliciete eindstatus en wordt nooit automatisch overschreven.
         """
         if not event or event.get("status") == "Geannuleerd":
+            return False
+        if event.get("status_manual"):
+            # De gebruiker heeft bewust een status gekozen; die is leidend.
             return False
         current = str(event.get("status", "") or "Concept")
         event_date = parse_date(event.get("date", ""))
