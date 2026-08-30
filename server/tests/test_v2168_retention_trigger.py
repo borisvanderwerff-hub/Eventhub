@@ -1,4 +1,4 @@
-"""Wanneer verschijnt de vraag om verlopen gegevens te verwijderen."""
+"""Wanneer de bewaartermijn automatisch wordt gehandhaafd."""
 from datetime import date, timedelta
 from pathlib import Path
 import sys
@@ -16,7 +16,7 @@ SOON = (date.today() + timedelta(days=30)).strftime("%d-%m-%Y")
 
 
 class TriggerWindow:
-    """Roept de echte methode aan; de dialoog zelf wordt vervangen."""
+    """Draait de echte beslislogica; het daadwerkelijk wissen wordt vervangen."""
 
     maybe_apply_retention = BezoekerslijstWindow.maybe_apply_retention
     _retention_plan = BezoekerslijstWindow._retention_plan
@@ -25,11 +25,14 @@ class TriggerWindow:
         self.events = events
         self.records = records
         self.project_path = project_path
-        self.prompted = False
-        self._retention_days = lambda: 21
+        self.cleaned_with = None
 
-    def _prompt(self, plan):
-        self.prompted = True
+    def _retention_days(self):
+        return 21
+
+    def apply_retention_cleanup_now(self, plan=None, announce=True):
+        self.cleaned_with = plan
+        return plan
 
 
 def expired_scenario():
@@ -39,47 +42,50 @@ def expired_scenario():
     )
 
 
-class PromptConditionTests(unittest.TestCase):
-    """maybe_apply_retention slaat over zolang er niets te verwijderen valt."""
+class AutomaticCleanupTests(unittest.TestCase):
+    """Er wordt niet om bevestiging gevraagd: verlopen is verlopen."""
 
-    def _returns_early(self, window):
-        # Zonder QMessageBox eindigt de methode in een AttributeError zodra hij
-        # de dialoog bereikt; komt hij daar niet, dan is er niets te doen.
-        try:
-            window.maybe_apply_retention()
-        except Exception:
-            return False
-        return True
+    def test_expired_records_are_cleaned_without_asking(self):
+        window = TriggerWindow(*expired_scenario())
+        window.maybe_apply_retention()
 
-    def test_prompts_when_records_have_expired(self):
+        self.assertIsNotNone(window.cleaned_with, "er had gewist moeten worden")
+        self.assertEqual(window.cleaned_with["records_removed"], 1)
+
+    def test_the_plan_is_handed_over_so_it_is_not_computed_twice(self):
+        window = TriggerWindow(*expired_scenario())
+        window.maybe_apply_retention()
+        self.assertIn("_removable", window.cleaned_with)
+
+
+class NoWorkTests(unittest.TestCase):
+    """Zonder verlopen gegevens gebeurt er niets."""
+
+    def _stays_quiet(self, window):
+        window.maybe_apply_retention()
+        return window.cleaned_with is None
+
+    def test_quiet_without_an_opened_dossier(self):
         events, records = expired_scenario()
-        window = TriggerWindow(events, records)
-        self.assertFalse(self._returns_early(window), "er had een vraag moeten komen")
+        self.assertTrue(self._stays_quiet(TriggerWindow(events, records, project_path=None)))
 
-    def test_silent_without_an_opened_dossier(self):
-        events, records = expired_scenario()
-        window = TriggerWindow(events, records, project_path=None)
-        self.assertTrue(self._returns_early(window))
+    def test_quiet_without_events(self):
+        self.assertTrue(self._stays_quiet(TriggerWindow([], [])))
 
-    def test_silent_without_events(self):
-        window = TriggerWindow([], [])
-        self.assertTrue(self._returns_early(window))
-
-    def test_silent_when_nothing_has_expired_yet(self):
+    def test_quiet_when_nothing_has_expired_yet(self):
         window = TriggerWindow(
             [{"id": "e1", "name": "Open dag", "date": SOON}],
             [{"_id": "r1", "Evenement": "Open dag", "Voornaam": "Lisa"}],
         )
-        self.assertTrue(self._returns_early(window))
+        self.assertTrue(self._stays_quiet(window))
 
-    def test_silent_when_the_event_was_already_cleared(self):
+    def test_quiet_when_the_event_was_already_cleared(self):
         events, records = expired_scenario()
         events[0]["persoonsgegevens_gewist"] = "01-01-2026"
-        window = TriggerWindow(events, records)
-        self.assertTrue(self._returns_early(window))
+        self.assertTrue(self._stays_quiet(TriggerWindow(events, records)))
 
-    def test_silent_when_only_visitors_of_upcoming_events_would_match(self):
-        """Wie ook nog moet komen levert geen verwijdervraag op."""
+    def test_quiet_when_only_visitors_of_upcoming_events_would_match(self):
+        """Wie ook nog moet komen, blijft volledig bewaard."""
         window = TriggerWindow(
             [
                 {"id": "e1", "name": "Voorlichting", "date": LONG_AGO},
@@ -87,11 +93,11 @@ class PromptConditionTests(unittest.TestCase):
             ],
             [{"_id": "r1", "Evenement": "Voorlichting; Open dag", "Voornaam": "Sanne"}],
         )
-        self.assertTrue(self._returns_early(window))
+        self.assertTrue(self._stays_quiet(window))
 
 
 class TriggerPointTests(unittest.TestCase):
-    """De controle hangt aan elk geopend dossier, niet alleen aan het opstarten."""
+    """De handhaving hangt aan drie momenten, niet alleen aan het opstarten."""
 
     def setUp(self):
         self.source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
@@ -101,23 +107,43 @@ class TriggerPointTests(unittest.TestCase):
         end = self.source.index("\n    def ", start + 1)
         return self.source[start:end]
 
-    def test_opening_any_dossier_runs_the_check(self):
+    def test_opening_any_dossier_enforces_the_term(self):
         block = self._block("_open_project_path")
         self.assertIn("self.maybe_apply_retention()", block)
         self.assertIn('getattr(self, "_starting_up", False)', block)
 
-    def test_startup_defers_the_check_until_after_the_welcome_screens(self):
+    def test_startup_enforces_after_the_welcome_screens(self):
         block = self._block("run_post_startup")
         self.assertIn("self._starting_up = True", block)
-        self.assertIn("self._starting_up = False", block)
-        # De vraag komt ná het herstellen en de opstartschermen.
         self.assertGreater(
             block.index("self.maybe_apply_retention()"),
             block.index("maybe_show_startup_welcome"),
         )
 
+    def test_an_app_left_open_enforces_at_the_date_rollover(self):
+        self.assertIn("self.maybe_apply_retention()", self._block("_daily_refresh_tick"))
+
     def test_startup_flag_is_cleared_even_when_a_screen_fails(self):
         self.assertIn("finally:\n            self._starting_up = False", self.source)
+
+
+class AuditTrailTests(unittest.TestCase):
+    """Automatisch wissen zonder spoor is niet te verantwoorden."""
+
+    def test_cleanup_writes_a_log_entry(self):
+        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        start = source.index("def apply_retention_cleanup_now(self")
+        block = source[start:source.index("\n    def ", start + 1)]
+        self.assertIn("self._write_retention_log(", block)
+        self.assertIn("self._add_recent_activity(", block)
+
+    def test_log_records_counts_but_no_names(self):
+        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        start = source.index("def _write_retention_log(self")
+        block = source[start:source.index("\n    def ", start + 1)]
+        self.assertIn("records_removed", block)
+        self.assertNotIn("Voornaam", block)
+        self.assertNotIn("Achternaam", block)
 
 
 if __name__ == "__main__":

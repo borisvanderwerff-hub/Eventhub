@@ -139,10 +139,12 @@ from emt_retention import (
     RETENTION_CHOICES,
     RETENTION_DEFAULT_DAYS,
     RETENTION_MAX_DAYS,
+    RETENTION_WARNING_DAYS,
     apply_retention_cleanup,
     clamp_retention_days,
     has_work,
     plan_retention_cleanup,
+    retention_notifications,
     scrub_payload,
 )
 from theme.styles import build_stylesheet
@@ -1509,11 +1511,14 @@ class ApplicationSettingsDialog(QDialog):
             max(0, self.retention_days.findData(clamp_retention_days(preferences["retention_days"])))
         )
         privacy_note = QLabel(
-            "Na deze termijn worden de deelnemersgegevens van een evenement onomkeerbaar verwijderd "
-            "uit het dossier, de reservekopieën en de livesessiegegevens. De opkomstcijfers en "
-            "verdelingen blijven als geanonimiseerd overzicht bij het evenement bewaard. "
-            f"Langer dan {RETENTION_MAX_DAYS} dagen is niet mogelijk."
+            "Na deze termijn worden de deelnemersgegevens van een evenement <b>automatisch en onomkeerbaar</b> "
+            "verwijderd uit het dossier, de reservekopieën en de livesessiegegevens. Er wordt niet om "
+            f"bevestiging gevraagd. Het meldingenoverzicht (🔔) kondigt dit {RETENTION_WARNING_DAYS} dagen "
+            "van tevoren aan, zodat u op tijd kunt exporteren. De opkomstcijfers en verdelingen blijven als "
+            f"geanonimiseerd overzicht bij het evenement bewaard. Langer dan {RETENTION_MAX_DAYS} dagen is "
+            "niet mogelijk."
         )
+        privacy_note.setTextFormat(Qt.TextFormat.RichText)
         privacy_note.setObjectName("hintLabel")
         privacy_note.setWordWrap(True)
         privacy_layout.addRow("Verwijderen na:", self.retention_days)
@@ -6184,7 +6189,7 @@ class BezoekerslijstWindow(QMainWindow):
             self.home_event_table.setCellWidget(row_index, 1, cell)
             self.home_event_table.setRowHeight(row_index, 44)
 
-        notifications = task_notifications(self.events)
+        notifications = self._all_notifications()
         active_events = sum(event.get("status") in {"Concept", "In voorbereiding"} for event in events)
         self.home_event_count[1].setText(str(len(events)))
         self.home_event_count[2].setText(f"{active_events} in voorbereiding")
@@ -6471,13 +6476,15 @@ class BezoekerslijstWindow(QMainWindow):
         self._edit_event(event)
 
     def show_notifications(self):
-        notifications = task_notifications(self.events)
+        notifications = self._all_notifications()
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Meldingen ({len(notifications)})")
         _fit_dialog_to_screen(dialog, 900, 480, 620, 340)
         layout = QVBoxLayout(dialog)
         intro = QLabel(
-            "Taken van alle evenementen die verlopen zijn, vandaag moeten gebeuren of binnen de ingestelde meldingstermijn vallen."
+            "Taken van alle evenementen die verlopen zijn, vandaag moeten gebeuren of binnen de ingestelde "
+            f"meldingstermijn vallen. Paars gemarkeerd: evenementen waarvan de persoonsgegevens binnen "
+            f"{RETENTION_WARNING_DAYS} dagen automatisch worden verwijderd — exporteer vóór die datum wat u nodig heeft."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -6486,7 +6493,7 @@ class BezoekerslijstWindow(QMainWindow):
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
 
         def render_notifications():
-            current = task_notifications(self.events)
+            current = self._all_notifications()
             table.setRowCount(len(current))
             for row_index, notification in enumerate(current):
                 values = [
@@ -6495,7 +6502,8 @@ class BezoekerslijstWindow(QMainWindow):
                 ]
                 color = {
                     "overdue": QColor("#fde1e1"), "today": QColor("#fff0c7"), "soon": QColor("#edf5ff"),
-                }[notification["severity"]]
+                    "retention": QColor("#efe3fb"),
+                }.get(notification["severity"], QColor("#edf5ff"))
                 for column, value in enumerate(values):
                     item = QTableWidgetItem(str(value))
                     item.setData(
@@ -6530,6 +6538,15 @@ class BezoekerslijstWindow(QMainWindow):
         def complete_selected():
             event_id, task_id = selected_ids()
             event = self._event_by_id(event_id)
+            if event_id and not task_id:
+                QMessageBox.information(
+                    dialog,
+                    "Bewaartermijn",
+                    "Een aankondiging van de bewaartermijn kan niet worden afgevinkt. "
+                    "Exporteer wat u nodig heeft; op de genoemde datum worden de "
+                    "persoonsgegevens automatisch verwijderd.",
+                )
+                return
             task = next((item for item in event.get("tasks", []) if item.get("id") == task_id), None) if event else None
             if not task:
                 QMessageBox.information(dialog, "Geen melding gekozen", "Selecteer eerst een melding.")
@@ -6577,14 +6594,14 @@ class BezoekerslijstWindow(QMainWindow):
         mode = self._startup_welcome_mode()
         if mode == "never":
             return
-        notifications = task_notifications(self.events)
+        notifications = self._all_notifications()
         upcoming = self._upcoming_events()
         first_tutorial_invitation = not self.settings.value("tutorial_invitation_seen", False, type=bool)
         if mode == "always" or notifications or upcoming or first_tutorial_invitation:
             self.show_startup_welcome(notifications, upcoming)
 
     def show_startup_welcome(self, notifications=None, upcoming=None):
-        notifications = list(task_notifications(self.events) if notifications is None else notifications)
+        notifications = list(self._all_notifications() if notifications is None else notifications)
         upcoming = list(self._upcoming_events() if upcoming is None else upcoming)
         self.settings.setValue("tutorial_invitation_seen", True)
 
@@ -6648,7 +6665,8 @@ class BezoekerslijstWindow(QMainWindow):
                 ]
                 color = {
                     "overdue": QColor("#fde1e1"), "today": QColor("#fff0c7"), "soon": QColor("#edf5ff"),
-                }[notification["severity"]]
+                    "retention": QColor("#efe3fb"),
+                }.get(notification["severity"], QColor("#edf5ff"))
                 for column, value in enumerate(values):
                     item = QTableWidgetItem(str(value))
                     item.setData(Qt.ItemDataRole.UserRole, (notification["event_id"], notification["task_id"]))
@@ -7008,6 +7026,16 @@ class BezoekerslijstWindow(QMainWindow):
     def _retention_plan(self):
         return plan_retention_cleanup(self.events, self.records, self._retention_days())
 
+    def _all_notifications(self):
+        """Taakmeldingen plus aankondigingen van de bewaartermijn, samen gesorteerd."""
+        combined = list(task_notifications(self.events))
+        combined.extend(retention_notifications(self.events, self.records, self._retention_days()))
+        order = {"retention": 0, "overdue": 1, "today": 2, "soon": 3}
+        return sorted(
+            combined,
+            key=lambda item: (order.get(item["severity"], 9), item["due"], item["event_name"]),
+        )
+
     def _retention_summary_html(self, plan: dict) -> str:
         lines = [
             f"<p>Bewaartermijn: <b>{plan['retention_days']} dagen</b> na de evenementdatum. "
@@ -7062,38 +7090,21 @@ class BezoekerslijstWindow(QMainWindow):
         box.exec()
 
     def maybe_apply_retention(self):
-        """Vraag bij het openen van een dossier of verlopen gegevens gewist worden."""
+        """Handhaaf de bewaartermijn automatisch; verlopen is verlopen.
+
+        Er wordt niet om bevestiging gevraagd: een bewaartermijn die op een
+        klik wacht wordt in de praktijk niet nageleefd. De aankondiging in het
+        meldingenoverzicht is het moment om nog te exporteren; die verschijnt
+        RETENTION_WARNING_DAYS dagen voordat de gegevens verdwijnen.
+        """
         if not self.events or not self.project_path:
             return
         plan = self._retention_plan()
         if not has_work(plan) or not plan["records_removed"]:
             return
-
-        box = QMessageBox(self)
-        box.setWindowTitle("Bewaartermijn verstreken")
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setTextFormat(Qt.TextFormat.RichText)
-        box.setText(
-            f"<b>Van {plan['records_removed']} deelnemer(s) is de bewaartermijn verstreken.</b>"
-        )
-        box.setInformativeText(
-            self._retention_summary_html(plan)
-            + "<p><b>Verwijderen kan niet ongedaan worden gemaakt.</b> Exporteer eerst wat u nodig heeft.</p>"
-        )
-        remove = box.addButton("Definitief verwijderen", QMessageBox.ButtonRole.DestructiveRole)
-        export = box.addButton("Eerst exporteren", QMessageBox.ButtonRole.ActionRole)
-        box.addButton("Nu niet", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(export)
-        box.exec()
-
-        if box.clickedButton() is export:
-            self.export_excel()
-            return
-        if box.clickedButton() is not remove:
-            return
         self.apply_retention_cleanup_now(plan)
 
-    def apply_retention_cleanup_now(self, plan: dict | None = None):
+    def apply_retention_cleanup_now(self, plan: dict | None = None, announce: bool = True):
         """Verwijder verlopen persoonsgegevens uit alle opslaglocaties."""
         retention_days = self._retention_days()
         # De cijfers moeten vastliggen vóór de bron verdwijnt; daarna is de
@@ -7102,21 +7113,50 @@ class BezoekerslijstWindow(QMainWindow):
 
         plan = apply_retention_cleanup(self.events, self.records, retention_days, plan=plan)
         self._mark_dirty()
+        # Direct wegschrijven: een verwijdering die alleen in het geheugen
+        # staat is bij het afsluiten zonder opslaan gewoon weer terug.
         self.save_project()
 
         copies = self._scrub_stored_copies(retention_days)
         sessions = self._scrub_live_session_data(retention_days)
 
         self._render_all()
-        self._add_recent_activity(f"Bewaartermijn toegepast: {plan['records_removed']} deelnemer(s) verwijderd")
-        QMessageBox.information(
-            self,
-            "Persoonsgegevens verwijderd",
-            f"{plan['records_removed']} deelnemer(s) zijn onomkeerbaar verwijderd.\n\n"
-            f"Opgeschoonde reserve- en herstelkopieën: {copies}\n"
-            f"Opgeschoonde livesessies: {sessions}\n\n"
-            "De opkomstcijfers en verdelingen blijven bij de evenementen bewaard.",
+        names = ", ".join(summary["name"] for summary in plan["events"]) or "—"
+        self._add_recent_activity(
+            f"Bewaartermijn toegepast: {plan['records_removed']} deelnemer(s) gewist ({names})"
         )
+        self._write_retention_log(plan, copies, sessions)
+        if announce:
+            self.status_label.setText(
+                f"Bewaartermijn toegepast: {plan['records_removed']} deelnemer(s) definitief verwijderd "
+                f"uit {names}."
+            )
+        return plan
+
+    def _write_retention_log(self, plan: dict, copies: int, sessions: int):
+        """Leg vast dát er gewist is, zonder vast te leggen wie.
+
+        Voor verantwoording achteraf: automatisch verwijderen zonder spoor is
+        niet uit te leggen, maar het logboek mag zelf geen persoonsgegevens
+        bevatten.
+        """
+        try:
+            log_path = self._app_data_root() / "bewaartermijn.log"
+            stamp = datetime.now().strftime("%d-%m-%Y %H:%M")
+            lines = [
+                f"[{stamp}] termijn {plan['retention_days']} dagen · "
+                f"{plan['records_removed']} deelnemer(s) verwijderd · "
+                f"{copies} kopie(ën) · {sessions} livesessie(s)"
+            ]
+            for summary in plan["events"]:
+                lines.append(
+                    f"    {summary['name']} ({summary['date']}) — verlopen {summary['expires_on']} — "
+                    f"{summary['records_removed']} van {summary['records']} deelnemer(s)"
+                )
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+        except Exception:
+            self._write_error_log("Bewaartermijn loggen", traceback.format_exc())
 
     def _scrub_stored_copies(self, retention_days: int) -> int:
         """Pas de bewaartermijn ook toe op reservekopieën en de herstelkopie.
@@ -7338,6 +7378,9 @@ class BezoekerslijstWindow(QMainWindow):
             self._render_management()
             if hasattr(self, "_update_event_workspace_header"):
                 self._update_event_workspace_header()
+            # Een dossier dat dagenlang open blijft staan moet de termijn ook
+            # halen; zonder deze stap wacht het wissen tot de volgende start.
+            self.maybe_apply_retention()
         except Exception:
             # Een mislukte verversing mag de timer nooit stoppen.
             pass

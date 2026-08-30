@@ -123,6 +123,63 @@ def has_work(plan: dict) -> bool:
     return bool(plan.get("records_removed") or plan.get("events"))
 
 
+# Zoveel dagen vooraf verschijnt de aankondiging in het meldingenoverzicht.
+RETENTION_WARNING_DAYS = 7
+
+
+def retention_notifications(
+    events: list[dict],
+    records: list[dict],
+    retention_days: int,
+    today: date | None = None,
+    warning_days: int = RETENTION_WARNING_DAYS,
+) -> list[dict]:
+    """Kondig aan welke evenementen hun persoonsgegevens binnenkort verliezen.
+
+    Verwijderen gebeurt automatisch; deze meldingen zijn het moment waarop nog
+    geëxporteerd kan worden. Alleen evenementen die daadwerkelijk deelnemers
+    kwijtraken worden gemeld: een aankondiging zonder gevolgen is ruis.
+    """
+    today = today or date.today()
+    retention_days = clamp_retention_days(retention_days)
+    horizon = today + timedelta(days=max(0, warning_days))
+
+    counts: dict[str, int] = {}
+    known = {normalize(event.get("name", "")) for event in events}
+    for record in records:
+        linked = {normalize(name) for name in record_events(record)}
+        if not linked or not linked <= known:
+            continue
+        for name in linked:
+            counts[name] = counts.get(name, 0) + 1
+
+    notifications = []
+    for event in events:
+        if event.get("persoonsgegevens_gewist"):
+            continue
+        expiry = event_expiry_date(event, retention_days)
+        if not expiry or expiry > horizon or expiry <= today:
+            continue
+        affected = counts.get(normalize(event.get("name", "")), 0)
+        if not affected:
+            continue
+        days_until = (expiry - today).days
+        notifications.append({
+            "event_id": event.get("id", ""),
+            "event_name": event.get("name", "Onbenoemd evenement"),
+            "task_id": "",
+            "task_title": "Persoonsgegevens worden gewist",
+            "due": expiry,
+            "severity": "retention",
+            "message": (
+                f"Morgen: {affected} deelnemer(s) worden verwijderd"
+                if days_until == 1
+                else f"Over {days_until} dagen: {affected} deelnemer(s) worden verwijderd"
+            ),
+        })
+    return sorted(notifications, key=lambda item: (item["due"], item["event_name"]))
+
+
 def apply_retention_cleanup(
     events: list[dict],
     records: list[dict],
