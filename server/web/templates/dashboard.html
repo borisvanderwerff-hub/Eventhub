@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}EventHub — Live dashboard{% endblock %}
+{% block body_class %}page-dashboard {{ 'fullscreen' if fullscreen else '' }}{% endblock %}
+{% block content %}
+<header class="masthead">
+    <div class="brand">
+        <img class="brand-logo" src="{{ url_for('static', filename='icons/eventhub-logo-transparent.png') }}" alt="EventHub">
+        <div class="brand-copy"><span class="brand-title">EventHub</span>
+        <span class="live-indicator">● LIVE</span></div>
+    </div>
+    {% if event %}
+    <div class="event-info">
+        <strong>{{ event.name }}</strong>
+        <span>{{ event.date }} — {{ event.location }}</span>
+    </div>
+    {% endif %}
+    {% if not fullscreen %}
+    <nav class="dashboard-nav">
+        <a class="dashboard-back" href="{{ url_for('page_connect') }}">← Terug naar sessie</a>
+        <a href="{{ url_for('page_dashboard_fullscreen') }}" target="_blank">Volledig scherm</a>
+        <label class="toggle-introducees">
+            <input type="checkbox" id="insideOnlyToggle">
+            Alleen mensen binnen
+        </label>
+        <label class="toggle-introducees">
+            <input type="checkbox" id="includeIntroduceesToggle" checked>
+            Introducees meetellen
+        </label>
+    </nav>
+    {% endif %}
+</header>
+
+<div id="sessionStatusWindow" class="session-status-window state-success" role="status" aria-live="polite" aria-atomic="true">
+    <span class="session-status-dot" aria-hidden="true"></span>
+    <div>
+        <small>Actuele sessiestatus</small>
+        <strong id="sessionStatusText">Inchecken actief</strong>
+        <span id="sessionElapsedTime" class="session-elapsed-time">00:00:00</span>
+    </div>
+</div>
+
+<main class="container dashboard-grid">
+    <section class="kpi-row">
+        <div class="kpi-card">
+            <span class="kpi-value" id="kpiRegistered">–</span>
+            <span class="kpi-label">Ingeschreven</span>
+        </div>
+        <div class="kpi-card">
+            <span class="kpi-value" id="kpiPresent">–</span>
+            <span class="kpi-label">Aanwezig</span>
+        </div>
+        <div class="kpi-card">
+            <span class="kpi-value" id="kpiExpected">–</span>
+            <span class="kpi-label">Nog verwacht</span>
+        </div>
+        <div class="kpi-card kpi-accent">
+            <span class="kpi-value" id="kpiInside">–</span>
+            <span class="kpi-label">Nog binnen</span>
+        </div>
+        <div class="kpi-card kpi-accent">
+            <span class="kpi-value" id="kpiTurnout">–</span>
+            <span class="kpi-label">Opkomst</span>
+        </div>
+    </section>
+
+    <section class="chart-card">
+        <h3>Check-ins door de tijd</h3>
+        <div id="chartTimeline" class="chart-area"></div>
+    </section>
+
+    <section class="chart-card">
+        <h3>Aanwezig versus nog niet ingecheckt</h3>
+        <div id="chartAttendance" class="chart-area"></div>
+    </section>
+
+    <section class="chart-card">
+        <h3>Opleidingsniveau</h3>
+        <div id="chartEducation" class="chart-area"></div>
+    </section>
+
+    <section class="chart-card">
+        <h3>Profiel</h3>
+        <div id="chartProfile" class="chart-area"></div>
+    </section>
+
+    <section class="chart-card">
+        <h3>Geslacht</h3>
+        <div id="chartGender" class="chart-area"></div>
+    </section>
+
+    <section class="chart-card">
+        <h3>Leeftijd</h3>
+        <div id="chartAge" class="chart-area"></div>
+    </section>
+
+    {% if not fullscreen %}
+    <section class="chart-card">
+        <h3>Check-ins per balie</h3>
+        <div id="chartClients" class="chart-area"></div>
+    </section>
+    {% endif %}
+
+    <footer class="dashboard-footer">
+        <span id="onlineClients">0 clients online</span>
+        <span id="lastCheckin">Laatste check-in: —</span>
+    </footer>
+</main>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}

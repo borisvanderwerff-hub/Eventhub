@@ -1,0 +1,36 @@
+#eventhub-rudder-launcher, #eventhub-rudder-event-launcher {
+  position: fixed; right: 22px; bottom: 22px; z-index: 2147483640;
+  border: 0; border-radius: 10px; padding: 13px 17px; cursor: pointer;
+  background: linear-gradient(135deg,#6c2cff,#386bff); color: #fff;
+  box-shadow: 0 12px 32px rgba(13,17,23,.35); font: 700 14px/1.2 Arial,sans-serif;
+}
+#eventhub-rudder-event-launcher.eventhub-rudder-ready { animation:eventhub-rudder-pulse 1.45s ease-in-out 2; }
+#eventhub-rudder-event-launcher.eventhub-rudder-busy { opacity:.78; cursor:wait; }
+#eventhub-rudder-event-launcher.eventhub-rudder-success { background:#1fb77a; }
+@keyframes eventhub-rudder-pulse {
+  0%,100% { transform:scale(1); box-shadow:0 12px 32px rgba(13,17,23,.35); }
+  50% { transform:scale(1.045); box-shadow:0 12px 38px rgba(108,44,255,.62); }
+}
+#eventhub-rudder-toast {
+  position:fixed; right:22px; bottom:82px; z-index:2147483643; max-width:min(420px,calc(100vw - 44px));
+  padding:12px 15px; border-radius:10px; background:#1fb77a; color:#fff;
+  box-shadow:0 12px 32px rgba(13,17,23,.35); font:700 14px/1.35 Arial,sans-serif;
+}
+#eventhub-rudder-toast.ready { background:#386bff; }
+#eventhub-rudder-toast.error { background:#c9385a; }
+#eventhub-rudder-overlay { position:fixed; inset:0; z-index:2147483645; display:flex; align-items:center; justify-content:center; padding:20px; background:rgba(7,13,24,.72); font-family:Arial,sans-serif; }
+.eventhub-rudder-panel { width:min(720px,100%); max-height:86vh; overflow:auto; padding:24px; border-radius:14px; background:#fff; color:#172235; box-shadow:0 24px 70px rgba(0,0,0,.4); }
+.eventhub-rudder-panel h2 { margin:0 0 8px; color:#6c2cff; }
+.eventhub-rudder-panel p { line-height:1.45; }
+.eventhub-rudder-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:8px; margin:16px 0; }
+.eventhub-rudder-stat { padding:11px; border:1px solid #d8e0eb; border-radius:9px; background:#f3f6fb; }
+.eventhub-rudder-stat strong { display:block; font-size:1.3rem; color:#386bff; }
+.eventhub-rudder-warning { padding:11px; border:1px solid #e6c76a; border-radius:9px; background:#fff3cd; color:#754f00; }
+.eventhub-rudder-details { margin:12px 0; padding:10px; border:1px solid #d8e0eb; border-radius:9px; background:#f8fafc; }
+.eventhub-rudder-details summary { cursor:pointer; font-weight:700; }
+.eventhub-rudder-details ul { margin:9px 0 0; padding-left:21px; }
+.eventhub-rudder-actions { display:flex; flex-wrap:wrap; gap:9px; justify-content:flex-end; margin-top:18px; }
+.eventhub-rudder-action { border:1px solid #d8e0eb; border-radius:8px; padding:10px 14px; cursor:pointer; font-weight:700; background:#eef3f9; color:#172235; }
+.eventhub-rudder-action.primary { border-color:#6c2cff; background:#6c2cff; color:#fff; }
+.eventhub-rudder-action.danger { border-color:#c9385a; color:#c9385a; background:#fff0f3; }
+tr.eventhub-rudder-changed { outline:2px solid #6c2cff; outline-offset:-2px; background:#f0eaff !important; }

@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}EventHub — Inchecken{% endblock %}
+{% block body_class %}page-connect{% endblock %}
+{% block content %}
+<header class="masthead">
+    <div class="brand">
+        <img class="brand-logo" src="{{ url_for('static', filename='icons/eventhub-logo-transparent.png') }}" alt="EventHub">
+        <div class="brand-copy"><span class="brand-title">EventHub</span>
+        <span class="brand-subtitle">Powered by Cohentra Digital</span></div>
+    </div>
+    <div class="header-actions">
+        {% if event %}
+        <div class="event-info">
+            <strong>{{ event.name }}</strong>
+            <span>{{ event.date }} — {{ event.location }}</span>
+        </div>
+        {% endif %}
+        <div class="settings-wrap">
+            <button id="settingsButton" class="settings-button hidden" type="button" aria-label="Instellingen" aria-expanded="false">
+                <svg class="settings-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M19.14 12.94a7.43 7.43 0 0 0 .05-.94 7.43 7.43 0 0 0-.05-.94l2.03-1.58-1.92-3.32-2.39.96a7.27 7.27 0 0 0-1.63-.94L14.87 3h-3.84l-.36 3.18c-.58.24-1.12.55-1.63.94l-2.39-.96-1.92 3.32 2.03 1.58a7.43 7.43 0 0 0-.05.94c0 .32.02.63.05.94l-2.03 1.58 1.92 3.32 2.39-.96c.5.39 1.05.7 1.63.94l.36 3.18h3.84l.36-3.18a7.27 7.27 0 0 0 1.63-.94l2.39.96 1.92-3.32-2.03-1.58ZM12.95 15.5A3.5 3.5 0 1 1 12.95 8a3.5 3.5 0 0 1 0 7.5Z"/>
+                </svg>
+            </button>
+            <div id="settingsMenu" class="settings-menu hidden">
+                <h3>Apparaatinstellingen</h3>
+                <label for="settingsClientName">Naam apparaat</label>
+                <input id="settingsClientName" type="text" maxlength="80" autocomplete="off">
+                <label for="settingsRole">Huidige rol</label>
+                <input id="settingsRole" type="text" readonly>
+                <p class="settings-hint">Uw rol wordt door een eventmanager of beheerder toegewezen.</p>
+                <label for="settingsTheme">Weergave</label>
+                <select id="settingsTheme">
+                    <option value="auto">Automatisch</option>
+                    <option value="light">Licht</option>
+                    <option value="dark">Donker</option>
+                </select>
+                <div id="settingsHandednessGroup">
+                    <label for="settingsHandedness">Bediening</label>
+                    <select id="settingsHandedness">
+                        <option value="right">Rechtshandig</option>
+                        <option value="left">Linkshandig</option>
+                    </select>
+                    <p class="settings-hint">Bepaalt aan welke zijde de actieknoppen en A–Z-index staan.</p>
+                </div>
+                <label class="settings-toggle" for="settingsWakeLock">
+                    <input id="settingsWakeLock" type="checkbox">
+                    <span>Scherm wakker houden</span>
+                </label>
+                <p id="wakeLockStatus" class="settings-hint"></p>
+                <p id="settingsMessage" class="settings-message"></p>
+                <button id="saveSettingsButton" class="btn btn-primary settings-action">Instellingen opslaan</button>
+                <button id="syncNowButton" class="btn btn-secondary settings-action">Nu synchroniseren</button>
+                <button id="clearQueueButton" class="btn btn-secondary settings-action hidden">Wachtrij wissen</button>
+                <button id="logoutButton" class="btn btn-danger settings-action">Uitloggen</button>
+            </div>
+        </div>
+    </div>
+</header>
+
+<main class="container">
+    <section id="registerCard" class="card">
+        <h2>Verbinden</h2>
+        <p class="hint">Vul een herkenbare naam in voor dit apparaat (bijv. "Balie 1"), zodat organisatoren zien wie inlogt.</p>
+        <label for="clientNameInput">Naam van dit apparaat</label>
+        <input id="clientNameInput" type="text" placeholder="Balie 1" autocomplete="off">
+        <input id="clientRoleSelect" type="hidden" value="viewer">
+        <p class="hint">U start als Viewer. Een eventmanager of beheerder kan daarna de juiste rol toewijzen.</p>
+        <label for="eventCodeInput">Sessiecode</label>
+        <input id="eventCodeInput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4"
+               placeholder="0000" autocomplete="off">
+        <p class="hint">Vraag de 4-cijferige sessiecode aan de organisator.</p>
+        <div id="registerHandednessGroup">
+            <fieldset class="handedness-choice">
+                <legend>Bediening</legend>
+                <label>
+                    <input type="radio" name="handedness" value="left">
+                    <span>Linkshandig</span>
+                </label>
+                <label>
+                    <input type="radio" name="handedness" value="right" checked>
+                    <span>Rechtshandig</span>
+                </label>
+            </fieldset>
+            <p class="hint">Deze keuze wordt op dit apparaat onthouden en kan later via het tandwiel worden gewijzigd.</p>
+        </div>
+        <p class="hint" id="registerError" style="color:#c9385a;"></p>
+        <button id="connectButton" class="btn btn-primary">Verbinden</button>
+    </section>
+
+    <nav id="managerTabs" class="manager-tabs hidden" aria-label="Werkgebied kiezen">
+        <button id="managementTabButton" class="manager-tab active" type="button" aria-selected="true">Sessiebeheer</button>
+        <button id="participantsTabButton" class="manager-tab" type="button" aria-selected="false">Deelnemer zoeken</button>
+    </nav>
+
+    <section id="checkinCard" class="card hidden">
+        <div id="freezeBanner" class="freeze-banner hidden">⏸ Inchecken tijdelijk gepauzeerd</div>
+        <div id="stopBanner" class="stop-banner hidden">⛔ Inchecken is beëindigd door de beheerder</div>
+        <h2>Deelnemer zoeken</h2>
+        <input id="searchInput" type="search" placeholder="Naam, geboortedatum of geboorteplaats" autocomplete="off">
+        <div id="rosterShell" class="roster-shell hand-right">
+            <ul id="resultsList" class="results-list"></ul>
+            <nav id="alphabetIndex" class="alphabet-index" aria-label="Snel naar achternaam"></nav>
+            <output id="alphabetBubble" class="alphabet-bubble hidden" aria-live="polite"></output>
+        </div>
+        <p class="hint" id="searchHint"></p>
+    </section>
+
+    <section id="clientManagementCard" class="card management-card hidden">
+        <div class="management-heading">
+            <div>
+                <h2>Sessiebeheer</h2>
+                <p class="hint">Beheer de incheckstatus en verbonden apparaten live.</p>
+            </div>
+            <div class="management-heading-actions">
+                <a class="btn btn-primary" href="{{ url_for('page_dashboard') }}" target="_blank" rel="noopener">Live dashboard</a>
+                <button id="refreshClientsButton" class="btn btn-secondary" type="button">Vernieuwen</button>
+            </div>
+        </div>
+        <div class="management-actions">
+            <button id="freezeSessionButton" class="btn btn-secondary" type="button">Inchecken pauzeren</button>
+            <button id="stopCheckinButton" class="btn btn-danger" type="button">Inchecken stoppen</button>
+            <button id="emergencySessionButton" class="btn btn-danger" type="button">Calamiteitenmodus starten</button>
+            <a id="emergencyExportButton" class="btn btn-secondary hidden" href="/api/emergency/export">Excel exporteren</a>
+        </div>
+        <p id="managementMessage" class="settings-message"></p>
+        <div class="client-table-wrap">
+            <table class="client-table">
+                <thead><tr><th>Client</th><th>Status</th><th>Rol</th><th>Actie</th></tr></thead>
+                <tbody id="managedClientsBody"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <section id="emergencyCard" class="card emergency-card hidden" aria-live="polite">
+        <div class="emergency-heading">
+            <div>
+                <span class="emergency-kicker">CALAMITEITENMODUS ACTIEF</span>
+                <h2>Personen controleren</h2>
+                <p id="emergencyInstruction" class="emergency-instruction"></p>
+            </div>
+            <div class="emergency-heading-actions">
+                <button id="editEmergencyInstructionButton" class="btn btn-secondary hidden" type="button">Instructie aanpassen</button>
+                <button id="emergencyCardExportButton" class="btn btn-secondary hidden" type="button">Excel exporteren</button>
+                <button id="emergencyEndButton" class="btn btn-danger hidden" type="button">Calamiteitenmodus beëindigen</button>
+            </div>
+        </div>
+        <div class="emergency-counts">
+            <div><strong id="emergencyTotal">0</strong><span>Binnen bij start</span></div>
+            <div><strong id="emergencySafe">0</strong><span>Veilig gemeld</span></div>
+            <div class="emergency-unaccounted"><strong id="emergencyUnaccounted">0</strong><span>Nog te controleren</span></div>
+        </div>
+        <div class="emergency-fields">
+            <div><label for="emergencyAssemblyPoint">Verzamelplaats</label><input id="emergencyAssemblyPoint" type="text" placeholder="Bijv. Noord"></div>
+            <div><label for="emergencyTeam">Controleteam</label><input id="emergencyTeam" type="text" placeholder="Bijv. Team A"></div>
+        </div>
+        <input id="emergencySearch" type="search" placeholder="Zoeken op naam of geboortegegevens" autocomplete="off">
+        <ul id="emergencyList" class="emergency-list"></ul>
+    </section>
+
+    <div id="stopModal" class="event-modal hidden" role="dialog" aria-modal="true" aria-labelledby="stopModalTitle">
+        <div class="event-modal-card">
+            <h2 id="stopModalTitle">Inchecken beëindigd</h2>
+            <p id="stopModalMessage">De beheerder heeft het inchecken beëindigd.</p>
+            <button id="stopModalClose" class="btn btn-primary">Begrepen</button>
+        </div>
+    </div>
+
+    <div id="emergencyModal" class="event-modal emergency-modal hidden" role="dialog" aria-modal="true" aria-labelledby="emergencyModalTitle">
+        <div class="event-modal-card emergency-modal-card">
+            <div class="emergency-symbol">!</div>
+            <h2 id="emergencyModalTitle">Calamiteitenmodus actief</h2>
+            <p id="emergencyModalInstruction">Volg de instructies van de eventmanager of beheerder.</p>
+            <button id="emergencyModalClose" class="btn btn-primary">Instructie begrepen</button>
+        </div>
+    </div>
+
+    <div id="emergencyEndedModal" class="event-modal hidden" role="dialog" aria-modal="true" aria-labelledby="emergencyEndedTitle">
+        <div class="event-modal-card">
+            <h2 id="emergencyEndedTitle">Calamiteitenmodus beëindigd</h2>
+            <p>De normale functies zijn hervat.</p>
+            <button id="emergencyEndedClose" class="btn btn-primary">Sluiten</button>
+        </div>
+    </div>
+
+    <div id="queueReviewModal" class="event-modal hidden" role="dialog" aria-modal="true" aria-labelledby="queueReviewTitle">
+        <div class="event-modal-card queue-review-card">
+            <div class="queue-review-heading">
+                <div>
+                    <h2 id="queueReviewTitle">Acties die controle vereisen</h2>
+                    <p>Controleer de vastgelopen actie en probeer deze opnieuw of verwijder haar uit de lokale wachtrij.</p>
+                </div>
+                <button id="queueReviewClose" class="modal-close-button" type="button" aria-label="Sluiten">×</button>
+            </div>
+            <div id="queueReviewList" class="queue-review-list"></div>
+            <p id="queueReviewMessage" class="settings-message"></p>
+        </div>
+    </div>
+
+    <section id="statusBar" class="status-bar hidden">
+        <span id="connectionStatus">● Verbonden</span>
+        <span id="clientLabel"></span>
+    </section>
+</main>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/connect.js') }}"></script>
+{% endblock %}

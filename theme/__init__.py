@@ -1,0 +1,110 @@
+"""
+Central theme configuration for EventHub desktop application.
+This file defines all color tokens, spacing, and typography for consistent styling.
+"""
+
+# === COLOR TOKENS ===
+
+# Primary colors
+PRIMARY_COLOR = "#6c2cff"
+PRIMARY_HOVER = "#a83dff"
+PRIMARY_ACTIVE = "#5520d6"
+
+# Secondary colors
+SECONDARY_COLOR = "#386bff"
+SECONDARY_HOVER = "#5d88ff"
+SECONDARY_ACTIVE = "#244fce"
+
+# Accent colors
+ACCENT_COLOR = "#00d4ff"
+ACCENT_HOVER = "#53e2ff"
+ACCENT_ACTIVE = "#00a9cc"
+
+# Neutral colors
+NEUTRAL_50 = "#ffffff"
+NEUTRAL_100 = "#f8f6fa"
+NEUTRAL_200 = "#eee6f2"
+NEUTRAL_300 = "#d9cfe0"
+NEUTRAL_400 = "#b7a2be"
+NEUTRAL_500 = "#916da5"
+NEUTRAL_600 = "#7b6d82"
+NEUTRAL_700 = "#63576a"
+NEUTRAL_800 = "#46324f"
+NEUTRAL_900 = "#172235"
+
+# Status colors
+SUCCESS_COLOR = "#16a085"
+WARNING_COLOR = "#e8b84c"
+ERROR_COLOR = "#c9385a"
+INFO_COLOR = "#386bff"
+
+# Text colors
+TEXT_PRIMARY = NEUTRAL_900
+TEXT_SECONDARY = NEUTRAL_600
+TEXT_DISABLED = NEUTRAL_400
+
+# Background colors
+BACKGROUND_LIGHT = NEUTRAL_50
+BACKGROUND_DARK = "#0d1117"
+BACKGROUND_CARD = NEUTRAL_50
+BACKGROUND_SIDEBAR = "#0d1117"
+
+# Border colors
+BORDER_COLOR = NEUTRAL_300
+BORDER_HOVER = NEUTRAL_500
+
+# === SPACING TOKENS ===
+
+# Spacing scale (in pixels)
+SPACING_XXS = 4
+SPACING_XS = 8
+SPACING_S = 12
+SPACING_M = 16
+SPACING_L = 24
+SPACING_XL = 32
+SPACING_XXL = 48
+
+# === TYPOGRAPHY TOKENS ===
+
+# Font family
+FONT_FAMILY = "Plus Jakarta Sans"
+
+# Font sizes
+FONT_SIZE_XXXS = 10
+FONT_SIZE_XXS = 11
+FONT_SIZE_XS = 12
+FONT_SIZE_S = 13
+FONT_SIZE_M = 14
+FONT_SIZE_L = 16
+FONT_SIZE_XL = 18
+FONT_SIZE_XXL = 20
+FONT_SIZE_XXXL = 24
+
+# Font weights
+FONT_WEIGHT_NORMAL = 400
+FONT_WEIGHT_MEDIUM = 500
+FONT_WEIGHT_SEMIBOLD = 600
+FONT_WEIGHT_BOLD = 700
+
+# Line heights
+LINE_HEIGHT_S = 1.2
+LINE_HEIGHT_M = 1.4
+LINE_HEIGHT_L = 1.6
+
+# === COMPONENT STYLES ===
+
+# Card styles
+CARD_BORDER_RADIUS = 8
+CARD_SHADOW = "0 2px 8px rgba(0, 0, 0, 0.1)"
+
+# Button styles
+BUTTON_BORDER_RADIUS = 6
+BUTTON_PADDING_XS = f"{SPACING_XS}px {SPACING_S}px"
+BUTTON_PADDING_S = f"{SPACING_S}px {SPACING_M}px"
+BUTTON_PADDING_M = f"{SPACING_M}px {SPACING_L}px"
+
+# Input styles
+INPUT_BORDER_RADIUS = 6
+INPUT_PADDING_XS = f"{SPACING_XS}px {SPACING_S}px"
+INPUT_PADDING_S = f"{SPACING_S}px {SPACING_M}px"
+INPUT_PADDING_M = f"{SPACING_M}px {SPACING_L}px"

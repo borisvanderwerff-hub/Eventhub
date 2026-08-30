@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "EventHub Rudder Browserassistent",
+  "version": "1.3.0",
+  "description": "Koppelt Rudder-evenementgegevens en aanwezigheidsregistratie veilig met EventHub.",
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [
+    {
+      "matches": ["https://werkenbijdefensie.nl/rudder/event/events*"],
+      "js": ["event_list.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://werkenbijdefensie.nl/rudder/event/events/*/attendance*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://werkenbijdefensie.nl/rudder/event/events/*/edit*"],
+      "js": ["event_edit.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

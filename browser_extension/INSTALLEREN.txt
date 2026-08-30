@@ -1,0 +1,24 @@
+EVENTHUB RUDDER BROWSERASSISTENT
+
+Eenmalig installeren in Microsoft Edge:
+1. Open edge://extensions
+2. Schakel links de ontwikkelaarsmodus in.
+3. Kies Uitgepakte extensie laden.
+4. Selecteer deze volledige map Browserassistent.
+
+Gebruik:
+1. Start de gewenste actie vanuit EventHub.
+2. Voor evenementgegevens: gebruik Nieuw evenement > Importeren uit Rudder of het tabblad Rudder in een dossier.
+3. Voor presentie: gebruik Event Control > Rudder > Exporteren naar Rudder.
+4. Bij een verse import opent eerst het Rudder-evenementenoverzicht. Kies het evenement dat u wilt importeren.
+5. Op de bewerkpagina staat rechtsonder Importeren naar EventHub. Klik één keer op die knop.
+6. Bij exporteren toont de Browserassistent automatisch een controleoverzicht.
+7. Controleer de voorgestelde wijzigingen en laat de velden invullen.
+8. Controleer de Rudder-pagina en klik bij exporteren altijd zelf op de Rudder-opslagknop.
+
+Reserveoptie:
+Kies JSON-reservebestand maken en selecteer dat bestand via de paarse knop EventHub aanwezigheid.
+
+De extensie leest geen wachtwoord, cookies of beveiligingstokens. De overdracht loopt eenmalig
+via 127.0.0.1 op dezelfde laptop. Zij werkt uitsluitend op de Rudder-pagina's voor evenementbewerking
+en aanwezigheidsregistratie onder https://werkenbijdefensie.nl/rudder/event/events/.

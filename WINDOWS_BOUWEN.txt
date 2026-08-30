@@ -1,0 +1,17 @@
+EVENTHUB WINDOWS-PAKKET
+========================
+
+1. Kopieer deze hele map naar Windows.
+2. Installeer Python 3.12 en Inno Setup 6.
+3. Dubbelklik op BUILD_EVENTHUB_INSTALLER.bat.
+4. Het script bouwt de app en maakt installer\EventHub-Setup-v2.17.1.exe.
+   De installer bevat zowel EventHub als de losse EventHub Server voor gebruik als hub/back-up.
+
+Vereist:
+- Windows 10 of nieuwer
+- Python 3.12 of nieuwer
+- Inno Setup 6 voor het installatiebestand
+- Internet bij de eerste build
+
+Een echte Windows .exe wordt op Windows zelf gebouwd. PyInstaller kan geen
+betrouwbare Windows-executable maken wanneer het vanaf macOS wordt uitgevoerd.

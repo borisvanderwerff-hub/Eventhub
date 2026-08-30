@@ -1,0 +1,394 @@
+EVENTHUB 2.16.2 — CONTROLES
+
+NIEUW IN 2.16.2
+- Een verse Rudder-import opent automatisch het evenementenoverzicht om het gewenste event te kiezen.
+- De gekozen bewerkpagina neemt de tijdelijke importkoppeling over, ook bij openen in een nieuw tabblad.
+- Na de eerste import heet de EventHub-knop Bijwerken uit Rudder en opent hij direct de onthouden pagina.
+- Exporteren naar Rudder en Openen in Rudder zijn uitsluitend zichtbaar bij een echte evenementkoppeling.
+- Een aanwezigheidslink zonder evenementimport veroorzaakt niet langer een foutief Rudder gekoppeld-label.
+- Rudder vult naam, soort, datum, plaats, locatie, status en doelgroep in het EventHub-evenement.
+- De gelijknamige EventHub-template levert automatisch de taken; bestaande en afgeronde taken blijven behouden en worden niet gedupliceerd.
+
+UITGEVOERDE CONTROLES 2.16.2
+- Python-syntaxcontrole van desktopapp, modellen, documenten en servermodules.
+- JavaScript-syntaxcontrole van alle onderdelen van Browserassistent 1.3.0.
+- 51 relevante regressietests geslaagd, inclusief koppelstatus, overzichtskeuze, directe update, gegevensmapping en template-/takenovername.
+- De enige overige volledige servertest vereist Flask; dit pakket staat in de Windows-buildrequirements maar niet in deze Linux-testruntime.
+
+EERDERE CONTROLES
+
+EVENTHUB 2.16.1 — CONTROLES
+
+NIEUW IN 2.16.1
+- Iedere Rudder-editpagina toont rechtsonder Importeren naar EventHub.
+- De tijdelijke koppeling wordt pas na één bewuste knopklik gebruikt; er volgt geen extra bevestiging.
+- Bestaande Rudder-tabbladen worden via een hashwijziging opnieuw gekoppeld.
+- Een mislukte overdracht kan binnen vijf minuten opnieuw worden geprobeerd.
+- Knop en melding tonen zichtbaar of de import klaarstaat, bezig is, slaagt of faalt.
+
+UITGEVOERDE CONTROLES 2.16.1
+- Python- en JavaScript-syntaxcontrole.
+- 45 regressietests geslaagd, inclusief de handmatige importknop, tijdelijke koppelopslag en bestaande-tabbladdetectie.
+
+EERDERE CONTROLES
+
+EVENTHUB 2.16.0 — CONTROLES
+
+NIEUW IN 2.16.0
+- Nieuw evenement heeft drie duidelijke routes: leeg, EventHub-template en importeren uit Rudder.
+- Rudder-koppelingen zijn herkenbaar met een grijze synchronisatieregel onder de evenementnaam.
+- Het evenementdossier bevat een uitgebreid Rudder-tabblad met alleen de afgesproken gegevens.
+- Import en export gebruiken een eenmalige localhost-koppeling en een strikt veldfilter.
+- De Browserassistent toont een controle vooraf en slaat nooit zelfstandig op in Rudder.
+- Dynamische keuzelijsten en automatische e-mailinstellingen worden niet overschreven.
+
+UITGEVOERDE CONTROLES 2.16.0
+- Python- en JavaScript-syntaxcontrole.
+- 43 relevante regressietests geslaagd, waaronder URL-validatie, veldfilter, modelmigratie, datum-/locatiemapping en veilige browserexport.
+- De selectors zijn gecontroleerd tegen de aangeleverde Rudder-eventpagina.
+
+EERDERE CONTROLES
+
+EVENTHUB 2.15.9 — CONTROLES
+
+NIEUW IN 2.15.9
+- De kolomknop opent direct Deelnemers, Aftersales of Presentie, afhankelijk van het actieve scherm.
+- Gewijzigde Aftersales-kolommen worden direct toegepast op koppen, waarden, filters en bewerkbare werkvelden.
+- Het Aftersales-pictogram is bijgesneden tot de werkelijk zichtbare tekening en daardoor groter.
+- Sidebariconen leveren 1x-, 2x- en 3x-pixmaps voor scherpe weergave op geschaalde Windows-schermen.
+
+UITGEVOERDE CONTROLES 2.15.9
+- Python-syntaxcontrole van desktopapp en servermodules.
+- Regressietests voor menugerichte kolomkeuze, high-DPI-iconen en Aftersales-assetverhouding.
+
+EERDERE CONTROLES
+
+EVENTHUB 2.15.8 — CONTROLES
+
+NIEUW IN 2.15.8
+- Calamiteitenmodus kan door beheerders en eventmanagers worden gestart en beëindigd.
+- Browserclients krijgen een schermvullende melding met de actuele instructie en de tekst om instructies te volgen.
+- Alleen personen die bij activering nog binnen zijn komen op de calamiteitenlijst.
+- Veilig melden, verzamelplaats en controleteam worden apart van de normale presentie opgeslagen.
+- Totalen en controles synchroniseren live tussen verbonden apparaten.
+- Beëindiging meldt dat de normale functies zijn hervat; incidentgegevens blijven beschikbaar voor Excel-export.
+
+UITGEVOERDE CONTROLES 2.15.8
+- Python- en JavaScript-syntaxcontrole.
+- Regressietests voor incidentstatus, veilig melden, behoud van presentie, Excel-export en de browserinterface.
+
+EERDERE CONTROLES
+
+EVENTHUB 2.15.4 — CONTROLES
+
+NIEUW IN 2.15.4
+- Serverbeheer gebruikt tien compacte knoppen verdeeld over drie rijen.
+- Server starten/stoppen en Inchecken stoppen/hervatten rekken niet langer over de volle breedte.
+- Extra onderruimte voorkomt dat het onderste deel van Serverbeheer wordt afgesneden.
+- Evenementwerkgebieden openen standaard maximaal; de hoekknop is verwijderd.
+- Dubbele export- en saveknoppen bovenaan het evenementdossier zijn verwijderd.
+- Samenvattingskaarten staan in een 3+2-raster met doorlopende teksten.
+- Lange evenementdetails gebruiken een verticale, automatisch afbreekbare opmaak.
+- Het laadscherm gebruikt de transparante neongolven uit de EventHub-huisstijl.
+- Het dashboard gebruikt één compact live statusvenster voor actief, gepauzeerd of gestopt inchecken.
+
+UITGEVOERDE CONTROLES 2.15.4
+- Python-syntaxcontrole van desktopapp en serverbeheer: geslaagd.
+- JavaScript-syntaxcontrole van de mobiele webclient: geslaagd.
+- Regressietests controleren knoppenraster, scrollonderruimte, standaardmaximalisatie,
+  verwijderde dubbele acties, tekstomloop, splash-achtergrond en live sessiestatus.
+
+EVENTHUB 2.15.3 — CONTROLES
+
+NIEUW IN 2.15.3
+- Opstartcrash opgelost: QBitmap wordt via QRegion naar een begrenzingsvlak omgezet.
+- De iconencentrering blijft behouden zonder een niet-bestaande QBitmap-methode aan te roepen.
+
+UITGEVOERDE CONTROLES 2.15.3
+- Python-syntaxcontrole van desktopapp en serverbeheer: geslaagd.
+- Regressietest blokkeert voortaan expliciet de defecte QBitmap.boundingRect-aanroep.
+
+EERDERE CONTROLES
+
+EVENTHUB 2.15.2 — CONTROLES
+
+NIEUW IN 2.15.2
+- Alle sidebariconen worden uit transparante bronmarges gesneden en exact gecentreerd.
+- Mijn profiel gebruikt daardoor dezelfde optische positie en tekenruimte als de overige iconen.
+- Verticale actiegroepen in Event Control en Documenten gebruiken compacte tekstbreedtes.
+- Sessieaanmaak, deelnemersbeheer en serverhulpfuncties rekken niet langer onnodig uit.
+
+UITGEVOERDE CONTROLES 2.15.2
+- Python-syntaxcontrole van desktopapp en serverbeheer: geslaagd.
+- JavaScript-syntaxcontrole van de mobiele webclient: geslaagd.
+- 14 relevante regressietests inclusief iconencentrum en knopbeleid: geslaagd.
+
+EERDERE CONTROLES
+
+EVENTHUB 2.15.1 — CONTROLES
+
+NIEUW IN 2.15.1
+- Rechts- of linkshandige bediening bij het verbinden met een livesessie.
+- Apparaatgebonden opslag van de handvoorkeur en wijziging via het tandwiel.
+- Compacte A-Z-index op achternaam met tikken en slepen.
+- Gespiegelde deelnemersregels: actieknop aan de voorkeurszijde, naam daarnaast.
+- Nieuwe webcache eventhub-live-v16 zodat mobiele clients de update ophalen.
+
+UITGEVOERDE CONTROLES 2.15.1
+- JavaScript-syntaxcontrole met node --check: geslaagd.
+- 11 relevante unit- en statische regressietests: geslaagd.
+- Python-syntaxcontrole van server en desktopapp: geslaagd.
+- De volledige servertestmodule vereist de pakketten Flask en Werkzeug uit requirements.txt;
+  deze waren niet aanwezig in de huidige Linux-testruntime. Dit is een ontbrekende
+  testdependency, geen fout in de broncode of Windows-build.
+
+EERDERE CONTROLES
+
+EVENTHUB 2.15.0 — CONTROLES
+
+NIEUW IN 2.15.0
+----------------
+- Windows Mobile Hotspot/ICS-adres krijgt voorrang boven wifi-, ethernet- en virtuele adapters.
+- Hubdetectie antwoordt via de netwerkinterface die de aanvragende client werkelijk kan bereiken.
+- Browserbeheerders krijgen vóór hervatten een waarschuwing over het terugzetten van afwezigen.
+- Het dashboard toont een realtime historisch overzicht van freeze, stoppen en hervatten.
+- Het servermenu gebruikt twee compacte rijen met vier functieknoppen.
+- 'Verbindingen' en 'Verbonden clients' zijn hernoemd naar 'Verbonden apparaten'.
+
+BEHOUDEN UIT 2.14.0
+-------------------
+- Webclient kiest Automatisch, Licht of Donker en bewaart dit lokaal per apparaat.
+- Automatisch volgt live de systeeminstelling via prefers-color-scheme.
+- Screen Wake Lock wordt standaard aangevraagd tijdens een zichtbare livesessie,
+  opnieuw aangevraagd bij terugkeer en vrijgegeven bij uitloggen/afmelden.
+- Niet-ondersteunde browsers of verbindingen krijgen een duidelijke statusmelding.
+- Profiel bevat Rang (placeholder: "evt. afgekort"), Voornaam, Afdeling en de vaste
+  organisatieregel "Ministerie van Defensie".
+- WhatsApp-voorbeeld en verzendlink voegen de profielhandtekening standaard toe;
+  dit kan per wachtrij worden uitgeschakeld.
+- Bestaande profielen blijven geldig; de nieuwe handtekeningvelden zijn optioneel.
+
+UITGEVOERDE CONTROLES 2.15.0
+----------------------------
+- Python compileall: geslaagd.
+- JavaScript syntaxcontrole app.js, connect.js, dashboard.js en service-worker.js: geslaagd.
+- Statische regressietests voor profielschema, themakeuze, wake-lockbediening en
+  service-worker-cache plus de nieuwe hotspot-, hervat-, dashboard- en servermenucontroles:
+  7 van 7 geslaagd.
+- Volledige Flask-integratietest kon in de Linux-werkruimte niet worden uitgevoerd
+  omdat Flask daar niet geïnstalleerd is; de Windows-build installeert dit via
+  requirements.txt.
+
+PROFIEL EN INSTELLINGEN IN 2.14.0
+- De uitgeklapte zijbalk is 196 pixels breed; ingeklapt 66 pixels.
+- Iconen gebruiken bij ingeklapte weergave gecentreerde knopuitlijning.
+- Mijn profiel opent een zelfstandige hoofdpagina met profieloverzicht.
+- Persoonlijke gegevens worden bewerkt zonder opslag- of opstartvoorkeuren.
+- Algemene instellingen bundelt opstartscherm, thema, autosave, reservekopieën, opslaglocaties en herstelbestanden.
+
+ZIJBALKICONEN IN 2.12.3
+- Zeven pictogrammen zijn genormaliseerd naar een transparant canvas van 256 x 256 pixels.
+- De zichtbare inhoud is gecentreerd binnen maximaal 216 x 216 pixels.
+- Zijbalkknoppen gebruiken iconen van 36 x 36 pixels en een vaste hoogte van 54 pixels.
+- Rondleiding is verwijderd als losse zijbalkknop en toegevoegd aan het menu Help.
+- De merkcontainer en beide merklabels zijn expliciet transparant; titel en subtitel gebruiken vaste contrasterende zijbalkkleuren.
+- De inklapknop gebruikt alleen een richtingpijl; de beschrijving blijft als tooltip beschikbaar.
+
+NEONGOLFDECORATIE IN 2.12.2
+- Transparante neongolven omlijsten het werkgebied zonder bediening te onderscheppen.
+- Dark mode gebruikt 15% dekking; light mode gebruikt 7% dekking.
+- De decoratie schaalt automatisch mee en staat los van tabellen en gegevensopslag.
+- De Windows-build bevat de volledige map assets/backgrounds.
+
+ICONEN EN VEREENVOUDIGING IN 2.12.1
+- Home en Evenementen zijn samengevoegd tot één hoofdmenu Evenementen.
+- Alle zijbalkknoppen gebruiken de aangeleverde EventHub-iconenset.
+- Instellingen is uit de zijbalk verwijderd en blijft rechtsboven bereikbaar.
+- Help en Rondleiding hebben afzonderlijke pictogrammen en functies.
+- Nazorg gebruikt de verduidelijkte knoptekst 'Gefilterde kandidaten selecteren'.
+
+NIEUWE NAVIGATIE IN 2.12.0
+- Vaste, inklapbare zijbalk voor Home, Evenementen, Taken en Event Control.
+- Actieve sectie krijgt een duidelijke paarse markering; dark mode gebruikt dezelfde contrastregels.
+- Bestand, profiel, rondleiding en instellingen blijven onderin bereikbaar.
+- Hoofdnavigatie is uit de werkbalk verwijderd, waardoor tabellen meer verticale werkruimte krijgen.
+- De interactieve rondleiding bevat een aparte stap voor de nieuwe zijbalk.
+
+DIRECTE RUDDER-KOPPELING IN 2.11.17
+
+- De hoofdactie heet Exporteren naar Rudder.
+- EventHub opent de juiste attendance-pagina met een tijdelijke eenmalige koppelcode.
+- De extensie haalt de presentie via een achtergrondproces uitsluitend op 127.0.0.1 op.
+- De lokale server sluit na de eerste succesvolle overdracht of uiterlijk na vijf minuten.
+- De extensie controleert dat het eventnummer van de export gelijk is aan de geopende Rudder-pagina.
+- Links naar registrations en attendance worden beide geaccepteerd en genormaliseerd naar attendance.
+- JSON-reservebestand maken blijft als handmatige terugvalroute beschikbaar.
+
+RUDDER BROWSERASSISTENT IN 2.11.16
+
+- Event Control bevat een afzonderlijk tabblad Rudder.
+- De volledige link van Registratie opkomst kan per evenement worden geplakt, gevalideerd, opgeslagen en geopend.
+- De export bevat uitsluitend lokale koppelgegevens en de EventHub-aanwezigheidsstatus.
+- De browserassistent matcht eerst op registratienummer en daarna op exacte genormaliseerde naam.
+- Dubbele namen worden als onzeker gemeld en niet automatisch gewijzigd.
+- Aanwezig wordt Yes; niet-aanwezig wordt No; bestaande Canceled-statussen blijven behouden.
+- Alle resterende Unknown-statussen worden pas na een zichtbare waarschuwing als No voorgesteld.
+- De assistent vult alleen het formulier in; Aanwezigheid opslaan blijft een handmatige eindactie.
+- De extensie is beperkt tot Rudder-aanwezigheidspagina's op werkenbijdefensie.nl.
+
+IPAD-COMPATIBILITEIT IN 2.11.15
+
+- Nieuwe JavaScript controleert of het bijbehorende wachtrijvenster al in de geladen HTML aanwezig is.
+- Een oudere gecachte HTML-pagina kan daardoor de registratieknop niet meer uitschakelen.
+- Het ontbreken van een optioneel nieuw onderdeel veroorzaakt geen JavaScript-startfout meer.
+- Cacheversie v13 levert de compatibele webclient automatisch uit.
+
+WACHTRIJCONTROLE IN 2.11.14
+
+- De browserstatus ‘actie vereist controle’ is aanklikbaar en toetsenbordtoegankelijk.
+- Het controlescherm toont per conflict de deelnemer, actie en het lokale tijdstip.
+- Opnieuw proberen verwerkt uitsluitend de gekozen actie en verwijdert haar pas na succes.
+- Actie verwijderen wist uitsluitend het gekozen conflict na bevestiging.
+- Cacheversie v12 levert het controlescherm direct uit op mobiele clients.
+
+MANAGERWERKBLADEN, MOBIEL DASHBOARD EN SERVERBEHEER IN 2.11.13
+
+- Eventmanager en Beheerder zien afzonderlijke werkbladen Sessiebeheer en Deelnemer zoeken.
+- Slechts één werkgebied is tegelijk zichtbaar en gebruikt daardoor de volledige paginabreedte en -hoogte.
+- Viewer en Check-in openen nog steeds rechtstreeks Deelnemer zoeken zonder beheerwerkbladen.
+- Het live dashboard bevat een knop Terug naar sessie.
+- Cacheversie v11 levert de nieuwe navigatie direct uit.
+
+- Sessiebeheer bevat een knop Live dashboard die in een nieuw tabblad opent.
+- De knop staat binnen de rolgestuurde beheerkaart en is alleen zichtbaar voor Eventmanager en Beheerder.
+- Cacheversie v10 levert de aangepaste mobiele HTML direct uit.
+
+- Status- en back-uptimers stoppen vóór het sluiten van de sessiedatabase.
+- refresh_status negeert een late callback zodra het servervenster aan het sluiten is.
+- Sluiten gebruikt close_database voor uitsluitend de actieve sessie in plaats van close_all.
+- stop_server voert tijdens closeEvent geen laatste statusquery meer uit.
+
+- De client controleert of nieuwe sessiebeheerelementen bestaan voordat hij ze gebruikt.
+- Nieuwe JavaScript blijft werken met een oudere gecachte HTML-pagina.
+- Nieuwe HTML bevat een tijdelijke compatibiliteitswaarde voor oudere JavaScript.
+- Service-worker-cache v9 verwijdert eerdere gecachte browserbestanden.
+
+- Nieuwe browserregistraties krijgen server-side altijd de rol Viewer.
+- Browserclients kunnen hun eigen rol niet meer aanpassen.
+- Eventmanagers beheren alleen Viewer- en Check-in-clients en kunnen geen beheerrollen wijzigen of verwijderen.
+- Beheerders kunnen vanuit de browser alle rollen toewijzen.
+- Eventmanager en Beheerder zien boven de deelnemerslijst live sessiebeheer met clients, status, rollen, verwijderen, pauzeren en stoppen.
+
+- Een uitblijvende API-reactie krijgt een time-out en zet de webclient op Offline.
+- Een tijdelijke netwerkstoring verwijdert de opgeslagen clientregistratie niet.
+- Server stoppen publiceert eerst een afsluitsignaal en verwijdert daarna alle clientregistraties.
+- De webclient toont daarbij een melding en keert terug naar het aanmeldscherm.
+- Verbindingen ververst elke twee seconden; online is groen en offline is rood.
+
+- De tijdelijke lege-statusspan wordt vóór elke render verwijderd.
+- De eerste openstaande taak toont daardoor alle vier kolommen, ook nadat de tabel eerder leeg was.
+- De Windows-menupijl reserveert geen onzichtbare ruimte meer naast het instellingenicoon.
+- De browserclient gebruikt een gecentreerd SVG-tandwiel in plaats van een lettertype-afhankelijk teken.
+
+- De zichtbare applicatieteksten gebruiken consequent de naam EventHub.
+- De masthead toont alleen “Operations, connected.” en geen dubbele merkregel.
+- Rechtsonder staat een subtiel, themabewust watermerk “Powered by Cohentra Digital”.
+- Bestaande opslaginstellingen en oudere .bvp-bestanden blijven compatibel.
+- Doelgebieden worden via mapToGlobal/mapFromGlobal op dezelfde coördinatenlaag als de overlay geplaatst.
+- Alle zichtbare voorouders begrenzen het doelgebied, waardoor scrollviewports geen verschoven uitsnede meer veroorzaken.
+- Het Documenten-tabblad gebruikt zijn exacte tabRect in plaats van de volledige QTabBar.
+- De tutorialkaart heeft afzonderlijke lichte en donkere kleuren voor achtergrond, gewone tekst, subtitels en knoppen.
+- Lokale tutorialselectors voorkomen dat het algemene darkmode-stylesheet witte tekst op een witte kaart afdwingt.
+- Uitloggen en wachtrij wissen zijn vanuit de onderste statusbalk naar het tandwielmenu in de header verplaatst.
+- Browserclients kunnen hun eigen apparaatsnaam en basisrol aanpassen.
+- Zelfpromotie naar Event Manager of Beheerder wordt server-side geweigerd en in de browser uitgeschakeld.
+- De Viewer-rol schakelt check-in-, uitcheck- en ongedaan-makenacties direct uit.
+- Rol- en naamwijzigingen worden gelogd en live naar dashboard en verbonden client gepubliceerd.
+- Het instellingenmenu sluit bij klikken buiten het menu en met Escape en blijft bruikbaar op smalle schermen.
+- Browserstatus gebruikt voortaan de laatste werkelijk geslaagde of mislukte serveraanvraag, niet alleen het aantal wachtrij-items.
+- Synchronisatie is vergrendeld zodat periodieke updates op iPad niet meerdere wachtrijverwerkers tegelijk starten.
+- Online wachtrij, offline wachtrij en conflicterende acties hebben ieder een eigen statusmelding.
+- Oude of conflicterende lokale acties kunnen na bevestiging vanuit de browser worden gewist.
+- De rondleidingsspotlight herberekent zijn doelpositie iedere 80 ms en na iedere layout-/vensterwijziging.
+- Scrollgebieden worden automatisch naar het uitgelichte onderdeel gebracht en de spotlight wordt tot werkelijk zichtbare pixels begrensd.
+- Evenementverwijdering verwijdert exclusieve deelnemers en behoudt deelnemers die ook aan andere evenementen gekoppeld zijn.
+- Livesessies kunnen na bevestiging vanuit Hervatten worden verwijderd; register en sessiedatabase worden samen opgeschoond.
+- Een stabiele bron-evenement-id koppelt een livesessie voortaan duurzaam aan precies één EventHub-evenement.
+- Bestaande sessies van oudere versies worden ook via een exacte naam-/datumcombinatie herkend.
+- Bij een bestaande koppeling biedt EventHub openen/hervatten aan en maakt het niet ongemerkt een duplicaat.
+- Browserclients blijven bij een gestopte check-in als verbonden weergegeven; alleen echte netwerkfouten tonen Offline.
+- De stopmelding gebruikt een eigen modaal venster én een blijvende rode statusbalk.
+- Inchecken hervatten herstelt uitsluitend bezoekers die door de stopactie automatisch afwezig werden.
+- Een migratietest bevestigt dat reeds met 2.11.0 gestopte sessies eveneens herstelbaar zijn.
+- De stopactie activeert dossiersynchronisatie nog maar één keer om vertraging bij grote lijsten te voorkomen.
+- De volledig rode stopknop staat direct onder de serverknop; na stoppen verandert hij in Inchecken hervatten.
+- Nieuwe sessies kunnen uitcheckregistratie verplicht stellen; normale sessies gebruiken Ongedaan maken.
+- Statussen nog niet ingecheckt, binnen, uitgecheckt en afwezig zijn afzonderlijk gecontroleerd.
+- Inchecken stoppen markeert alle nog niet ingecheckte bezoekers als afwezig en publiceert een live melding.
+- Het overzicht telt afzonderlijk wie aanwezig is geweest en wie nog binnen is.
+- Live-export laat de gebruiker kolommen kiezen en exporteert Aanwezig uitsluitend als Ja of Nee.
+- Beheerders kunnen clientrollen aanpassen en afzonderlijke of alle clients afmelden.
+- Een afgemelde client kan geen heartbeat of nieuwe handeling meer uitvoeren.
+- Standalone synchronisatie maakt eerst een dossierback-up en schrijft alleen naar het gekozen evenement.
+- EventHub-record-id blijft behouden bij het kopiëren naar een geïntegreerde livesessie.
+- Check-in én check-out worden teruggeschreven naar Aanwezig.
+- Een unieke naam/geboortedatumcombinatie dient als veilige fallback voor oudere sessies.
+- Dubbele gelijknamige fallbackrecords worden bewust niet automatisch gekoppeld.
+- Wijzigingen activeren de bestaande dirty-status, schermverversing en autosave.
+- De serverbeheerder meldt statuswijzigingen iedere twee seconden en nogmaals bij afsluiten.
+
+Geautomatiseerd gecontroleerd voor 2.15.0:
+- Python- en JavaScript-syntax.
+- Databasevelden en migraties voor uitchecken en gestopt inchecken.
+- Check-in, check-out, ongedaan maken en automatisch afwezig markeren.
+- Rollen wijzigen, client verwijderen en heartbeat-blokkade na verwijderen.
+- Excel-export met gekozen kolommen en Ja/Nee-aanwezigheid.
+
+TAKEN EN NAAMVOLGORDE IN 2.10.2
+- Live deelnemers worden server-side stabiel en accentongevoelig op achternaam gesorteerd.
+- Desktop-, standalone- en browserweergave gebruiken Achternaam, Voornaam tussenvoegsel.
+- Hoofdmenu Taken bevat alleen evenementtaken waarvoor done niet waar is.
+- Afgeronde taken en taken van geannuleerde evenementen zijn uit het centrale to-do-overzicht gefilterd.
+- Standaardtaken zijn uitsluitend via Instellingen te beheren.
+
+HUISSTIJL/PWA IN 2.10.1
+- Transparant EventHub-logo toegepast in desktopapp, standalone server en browserheaders.
+- Pictogram met kader toegepast als Windows-, installer-, favicon-, Apple-touch- en PWA-pictogram.
+- Web-appmanifest, standalone-weergave, iOS-metatags en service-worker-assets gecontroleerd.
+
+NIEUW IN 2.10.0
+- Python-broncode en JavaScript syntactisch gecontroleerd.
+- Offline acties hebben unieke operation-id's; herhaalde synchronisatie wordt één keer verwerkt.
+- Browserclient bewaart deelnemers en acties lokaal in IndexedDB; service worker houdt de check-inpagina beschikbaar.
+- Native client bewaart een lokale wachtrij en synchroniseert automatisch.
+- Freeze/unfreeze, reden en auditlog getest; acties tijdens een freeze worden als conflict geweigerd.
+- UDP-hubdetectie lokaal getest.
+- SQLite online back-up getest; Serverbeheer maakt iedere minuut een back-up en bewaart de laatste 20.
+- Migratie van oudere sessiedatabases naar freeze-/operation-id-velden getest.
+- Inno Setup-detectie uitgebreid met installaties onder LOCALAPPDATA (Inno Setup 6 en 7).
+============================
+
+Uitgevoerd op 24-08-2026:
+
+- Alle Python-bronbestanden en PyInstaller-specificatie compileren zonder syntaxfouten.
+- Event Control staat als zelfstandig hoofdmenu naast Evenementen en Taken.
+- De lokale Presentie-tab is uit het evenementdossier verwijderd en staat onder
+  Event Control > Presentieregistratie.
+- Nieuwe live sessies nemen naam, datum, locatie en deelnemers van het gekozen
+  EventHub-evenement over.
+- Native EventHub-client voor verbinden, zoeken, inchecken en uitchecken aanwezig.
+- Dubbele kolom Geboortedatum/Geboorteplaats automatisch herkend.
+- Vaste Excel-deelnemerslijst geëxporteerd en opnieuw geopend.
+- Acht gelijktijdige check-ins op dezelfde deelnemer leveren precies één check-in op.
+- SQLite-persistentie en statistiekberekening gecontroleerd.
+- Windows PyInstaller-data, verborgen servermodules en Inno Setup-configuratie gecontroleerd.
+- API aangescherpt: deelnemersgegevens en check-in vereisen een geregistreerde client.
+
+De definitieve Windows-GUI en installer moeten na BUILD_EVENTHUB_INSTALLER.bat op
+een Windows-laptop worden gestart en visueel worden gecontroleerd.
+
+EventHub 2 startup hotfix:
+- Fixed f-string escaping in the shared QSS scrollbar rules.
+- This previously caused build_stylesheet() to raise at startup while the splash screen showed "Vormgeving en tabbladen laden…".
+- build_stylesheet() tested in light and dark mode.
+- Python compileall completed successfully.
