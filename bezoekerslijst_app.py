@@ -1140,6 +1140,14 @@ class TrendPanel(QWidget):
         self.export_button = _make_button_compact(QPushButton("Exporteren naar PDF"))
         self.export_button.setObjectName("secondaryButton")
         controls_layout.addWidget(self.export_button)
+        # Klein en zonder tekst: de grafiek is het onderwerp, niet deze knop.
+        self.expand_button = QPushButton("⤢")
+        self.expand_button.setObjectName("secondaryButton")
+        self.expand_button.setCheckable(True)
+        self.expand_button.setFixedWidth(38)
+        self.expand_button.setToolTip("Grafiek maximaliseren binnen het venster (F11)")
+        self.expand_button.clicked.connect(lambda: self.set_maximised(not self.maximised))
+        controls_layout.addWidget(self.expand_button)
         layout.addWidget(controls)
 
         self.summary = QLabel("")
@@ -1165,6 +1173,23 @@ class TrendPanel(QWidget):
         layout.addWidget(self.table)
 
         self.empty_message = "Nog geen cijfers beschikbaar."
+        # Widgets buiten dit paneel die bij maximaliseren mee moeten verdwijnen;
+        # de pagina vult deze aan, want het paneel kent zijn omgeving niet.
+        self.chrome: list = []
+        self.maximised = False
+
+    def set_maximised(self, maximised: bool):
+        """Verberg alles behalve de bediening en de grafiek."""
+        self.maximised = bool(maximised)
+        self.table.setVisible(not self.maximised)
+        for widget in self.chrome:
+            widget.setVisible(not self.maximised)
+        self.expand_button.setChecked(self.maximised)
+        self.expand_button.setText("⤡" if self.maximised else "⤢")
+        self.expand_button.setToolTip(
+            "Terug naar het volledige overzicht (F11)" if self.maximised
+            else "Grafiek maximaliseren binnen het venster (F11)"
+        )
 
     def current_series(self) -> dict:
         return self.chart.series
@@ -4294,12 +4319,12 @@ class BezoekerslijstWindow(QMainWindow):
         layout.setContentsMargins(18, 4, 18, 18)
         layout.setSpacing(10)
 
-        intro = QLabel(
+        self.trend_intro = QLabel(
             "Berekend op geanonimiseerde cijfers per evenement, die ook na de bewaartermijn beschikbaar blijven."
         )
-        intro.setObjectName("hintLabel")
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
+        self.trend_intro.setObjectName("hintLabel")
+        self.trend_intro.setWordWrap(True)
+        layout.addWidget(self.trend_intro)
 
         self.trend_sources: list[dict] = []
         self.trend_tabs = QTabWidget()
@@ -4320,6 +4345,7 @@ class BezoekerslijstWindow(QMainWindow):
             lambda: self.export_trend_data(self.own_trend_panel)
         )
         own_layout.addWidget(self.own_trend_panel)
+        self.own_trend_panel.chrome = [self.trend_intro, self.own_trend_panel.summary]
         self.trend_tabs.addTab(own_tab, "Eigen evenementen")
 
         # Werkgebied 2: uitsluitend wat hier is ingeladen. Bewust gescheiden van
@@ -4383,6 +4409,9 @@ class BezoekerslijstWindow(QMainWindow):
             lambda: self.export_trend_data(self.loose_trend_panel)
         )
         loose_layout.addWidget(self.loose_trend_panel, 1)
+        self.loose_trend_panel.chrome = [
+            self.trend_intro, manage, self.trend_source_list, self.loose_trend_panel.summary,
+        ]
         self.trend_tabs.addTab(loose_tab, "Losse analyse")
 
         layout.addWidget(self.trend_tabs, 1)
@@ -6924,6 +6953,16 @@ class BezoekerslijstWindow(QMainWindow):
             self.open_event(events[selected_index], self.tasks_tab)
 
     def toggle_event_focus_mode(self):
+        # Op Trends maximaliseert dezelfde sneltoets de grafiek; dat is daar het
+        # werkgebied waar je ruimte voor wilt.
+        if self.page_stack.currentWidget() is self.trends_page:
+            panel = self._active_trend_panel()
+            panel.set_maximised(not panel.maximised)
+            self.status_label.setText(
+                "Grafiek gemaximaliseerd — F11 of de knop rechtsboven zet het overzicht terug."
+                if panel.maximised else "Trends — ontwikkeling over evenementen heen."
+            )
+            return
         if self.page_stack.currentWidget() is not self.event_page:
             self.status_label.setText("Open eerst een evenement om het werkgebied te maximaliseren.")
             return
@@ -7525,6 +7564,9 @@ class BezoekerslijstWindow(QMainWindow):
         self.page_stack.setCurrentWidget(self.trends_page)
         self._set_project_context_ui(False)
         self._set_navigation_active("trends")
+        if hasattr(self, "focus_action"):
+            self.focus_action.setEnabled(True)
+            self.focus_action.setText("Grafiek maximaliseren")
         self._sync_trend_sources()
         self._render_trends()
         self.status_label.setText("Trends — ontwikkeling over evenementen heen.")
