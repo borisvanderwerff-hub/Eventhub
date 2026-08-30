@@ -961,7 +961,11 @@ class TrendChart(QWidget):
             )
             return
 
-        left, top, right, bottom = 62, 18, 16, 58
+        # De legenda krijgt een eigen strook; zonder die extra ruimte valt hij
+        # bij meerdere groepen buiten de widget.
+        legend_rows = 0 if len(groups) <= 1 else (len(groups[:8]) + 3) // 4
+        left, top, right = 62, 18, 20
+        bottom = 34 + legend_rows * 20
         width = max(1, self.width() - left - right)
         height = max(1, self.height() - top - bottom)
         highest = max(
@@ -1014,23 +1018,142 @@ class TrendChart(QWidget):
                 continue
             x = x_for(index)
             painter.drawText(
-                int(x) - 55, top + height + 6, 110, 16,
+                int(x) - 55, top + height + 2, 110, 14,
                 Qt.AlignmentFlag.AlignCenter, str(point["label"])[:22],
             )
 
-        # Legenda alleen bij een echte uitsplitsing.
-        if len(groups) > 1:
-            x = left
-            y = top + height + 28
-            for group_index, group in enumerate(groups[:6]):
+        # Legenda alleen bij een echte uitsplitsing, in rijen van vier zodat hij
+        # ook bij smalle vensters binnen de widget blijft.
+        if legend_rows:
+            column_width = width / 4
+            for group_index, group in enumerate(groups[:8]):
+                row, column = divmod(group_index, 4)
+                x = left + column * column_width
+                y = top + height + 16 + row * 20
                 colour = QColor(self.PALETTE[group_index % len(self.PALETTE)])
                 painter.setBrush(colour)
                 painter.setPen(colour)
                 painter.drawEllipse(int(x), int(y) + 4, 8, 8)
                 painter.setPen(QColor("#4a5568"))
-                label = str(group)[:18]
-                painter.drawText(int(x) + 13, int(y), 130, 16, Qt.AlignmentFlag.AlignLeft, label)
-                x += 26 + min(130, 7 * len(label))
+                painter.drawText(
+                    int(x) + 14, int(y), int(column_width) - 20, 16,
+                    Qt.AlignmentFlag.AlignLeft, str(group)[:20],
+                )
+
+
+class TrendPanel(QWidget):
+    """Bediening, grafiek, samenvatting en tabel voor één trendweergave.
+
+    Bestaat als eigen widget omdat er twee werkgebieden zijn — de eigen
+    evenementen en een losse analyse van ingeladen bezoekerslijsten — die
+    dezelfde bediening horen te hebben zonder die code te dupliceren.
+    """
+
+    def __init__(self, provider, parent=None):
+        super().__init__(parent)
+        self.provider = provider
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setSpacing(10)
+
+        controls = QFrame()
+        controls.setObjectName("toolbar")
+        controls_layout = QHBoxLayout(controls)
+        controls_layout.setContentsMargins(14, 10, 14, 10)
+        controls_layout.setSpacing(10)
+
+        self.metric = QComboBox()
+        for label, value in TREND_METRICS:
+            self.metric.addItem(label, value)
+        self.dimension = QComboBox()
+        for label, value in TREND_EVENT_DIMENSIONS:
+            self.dimension.addItem(label, value)
+        for label in TREND_GROUP_DIMENSIONS:
+            self.dimension.addItem(label, label)
+        self.period = QComboBox()
+        for label, value in TREND_PERIODS:
+            self.period.addItem(label, value)
+        self.period.setCurrentIndex(2)
+
+        for caption_text, widget in (
+            ("Meetwaarde:", self.metric),
+            ("Uitsplitsen naar:", self.dimension),
+            ("Periode:", self.period),
+        ):
+            caption = QLabel(caption_text)
+            caption.setObjectName("hintLabel")
+            controls_layout.addWidget(caption)
+            widget.setMinimumWidth(150)
+            widget.currentIndexChanged.connect(self.refresh)
+            controls_layout.addWidget(widget)
+        controls_layout.addStretch()
+        self.export_button = _make_button_compact(QPushButton("Exporteren naar PDF"))
+        self.export_button.setObjectName("secondaryButton")
+        controls_layout.addWidget(self.export_button)
+        layout.addWidget(controls)
+
+        self.summary = QLabel("")
+        self.summary.setObjectName("statusLabel")
+        self.summary.setWordWrap(True)
+        layout.addWidget(self.summary)
+
+        self.chart = TrendChart()
+        self.chart.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(self.chart, 1)
+
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Periode", "Groep", "Waarde"])
+        self.table.setObjectName("dashboardTable")
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setMaximumHeight(150)
+        layout.addWidget(self.table)
+
+        self.empty_message = "Nog geen cijfers beschikbaar."
+
+    def current_series(self) -> dict:
+        return self.chart.series
+
+    def value_text(self, value: float) -> str:
+        return f"{value:g}%" if self.chart.series.get("metric") == "opkomst_percentage" else f"{value:g}"
+
+    def refresh(self, *_):
+        summaries = self.provider() or []
+        series = build_trend_series(
+            summaries,
+            metric=str(self.metric.currentData() or "aangemeld"),
+            dimension=str(self.dimension.currentData() or ""),
+            period=str(self.period.currentData() or "event"),
+        )
+        self.chart.set_series(series)
+
+        rows = [
+            (point["label"], group, self.value_text(value))
+            for point in series["points"] for group, value in point["values"].items()
+        ]
+        self.table.setRowCount(len(rows))
+        for row_index, values in enumerate(rows):
+            for column, text in enumerate(values):
+                item = QTableWidgetItem(str(text))
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                self.table.setItem(row_index, column, item)
+
+        if not summaries:
+            self.summary.setText(self.empty_message)
+            return
+        parts = [f"{series['events']} evenement(en)"]
+        if len(series["groups"]) > 1:
+            biggest = max(trend_series_totals(series), key=lambda item: item[1], default=None)
+            if biggest:
+                parts.append(f"grootste groep: {biggest[0]} ({self.value_text(biggest[1])})")
+        parts.append(describe_trend_change(series))
+        if series.get("incomplete"):
+            parts.append(
+                "Let op: voor een deel van de evenementen is de aanwezigheid per groep niet "
+                "vastgelegd; die tellen niet mee."
+            )
+        self.summary.setText("  ·  ".join(parts))
 
 
 class StatisticsCard(QFrame):
@@ -4117,83 +4240,98 @@ class BezoekerslijstWindow(QMainWindow):
         layout.setContentsMargins(18, 4, 18, 18)
         layout.setSpacing(10)
 
-        heading_row = QHBoxLayout()
         heading = QLabel("Trends")
         heading.setObjectName("sectionTitle")
-        heading_row.addWidget(heading)
-        heading_row.addStretch()
-        import_button = _make_button_compact(QPushButton("Bezoekerslijsten inladen"))
-        import_button.setObjectName("secondaryButton")
-        import_button.setToolTip(
-            "Laad één of meer bezoekerslijsten in (Excel) of een EventHub-dossier van een collega."
-        )
-        import_button.clicked.connect(self.import_trend_data)
-        heading_row.addWidget(import_button)
-        share_button = _make_button_compact(QPushButton("Exporteren naar PDF"))
-        share_button.setObjectName("secondaryButton")
-        share_button.setToolTip("Exporteer het huidige trendbeeld als PDF, zonder persoonsgegevens.")
-        share_button.clicked.connect(self.export_trend_data)
-        heading_row.addWidget(share_button)
-        layout.addLayout(heading_row)
-
+        layout.addWidget(heading)
         intro = QLabel(
-            "Ontwikkeling over evenementen heen, berekend op de geanonimiseerde cijfers per evenement. "
-            "Deze blijven ook beschikbaar nadat de persoonsgegevens door de bewaartermijn zijn verwijderd."
+            "Ontwikkeling over evenementen heen, berekend op geanonimiseerde cijfers per evenement. "
+            "Die blijven ook beschikbaar nadat de persoonsgegevens door de bewaartermijn zijn verwijderd."
         )
         intro.setObjectName("hintLabel")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        controls = QFrame()
-        controls.setObjectName("toolbar")
-        controls_layout = QHBoxLayout(controls)
-        controls_layout.setContentsMargins(14, 10, 14, 10)
-        controls_layout.setSpacing(10)
-
-        self.trend_metric = QComboBox()
-        for label, value in TREND_METRICS:
-            self.trend_metric.addItem(label, value)
-        self.trend_dimension = QComboBox()
-        for label, value in TREND_EVENT_DIMENSIONS:
-            self.trend_dimension.addItem(label, value)
-        for label in TREND_GROUP_DIMENSIONS:
-            self.trend_dimension.addItem(label, label)
-        self.trend_period = QComboBox()
-        for label, value in TREND_PERIODS:
-            self.trend_period.addItem(label, value)
-        self.trend_period.setCurrentIndex(2)
-        self.trend_source = QComboBox()
-        self.trend_source.addItem("Alle gegevens", "")
-
-        for label, widget in (
-            ("Meetwaarde:", self.trend_metric),
-            ("Uitsplitsen naar:", self.trend_dimension),
-            ("Periode:", self.trend_period),
-            ("Bron:", self.trend_source),
-        ):
-            caption = QLabel(label)
-            caption.setObjectName("hintLabel")
-            controls_layout.addWidget(caption)
-            widget.setMinimumWidth(150)
-            widget.currentIndexChanged.connect(self._render_trends)
-            controls_layout.addWidget(widget)
-        controls_layout.addStretch()
-        layout.addWidget(controls)
-
-        self.trend_summary = QLabel("")
-        self.trend_summary.setObjectName("statusLabel")
-        self.trend_summary.setWordWrap(True)
-        layout.addWidget(self.trend_summary)
-
-        self.trend_chart = TrendChart()
-        layout.addWidget(self.trend_chart, 1)
-
-        self.trend_table = self._new_table(["Periode", "Groep", "Waarde"])
-        self.trend_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.trend_table.setMaximumHeight(190)
-        layout.addWidget(self.trend_table)
-
         self.trend_sources: list[dict] = []
+        self.trend_tabs = QTabWidget()
+        self.trend_tabs.setDocumentMode(True)
+        self.trend_tabs.currentChanged.connect(lambda _index: self._render_trends())
+
+        # Werkgebied 1: de evenementen uit het geopende dossier.
+        own_tab = QWidget()
+        own_layout = QVBoxLayout(own_tab)
+        own_layout.setContentsMargins(0, 0, 0, 0)
+        self.own_trend_panel = TrendPanel(
+            lambda: collect_trend_summaries(self.events, source="Eigen dossier")
+        )
+        self.own_trend_panel.empty_message = (
+            "Nog geen cijfers. Een evenement krijgt cijfers zodra de datum is geweest."
+        )
+        self.own_trend_panel.export_button.clicked.connect(
+            lambda: self.export_trend_data(self.own_trend_panel)
+        )
+        own_layout.addWidget(self.own_trend_panel)
+        self.trend_tabs.addTab(own_tab, "Eigen evenementen")
+
+        # Werkgebied 2: uitsluitend wat hier is ingeladen. Bewust gescheiden van
+        # het dossier, zodat een losse analyse de eigen cijfers niet vertroebelt.
+        loose_tab = QWidget()
+        loose_layout = QVBoxLayout(loose_tab)
+        loose_layout.setContentsMargins(0, 8, 0, 0)
+        loose_layout.setSpacing(8)
+
+        manage = QFrame()
+        manage.setObjectName("toolbar")
+        manage_layout = QHBoxLayout(manage)
+        manage_layout.setContentsMargins(14, 10, 14, 10)
+        manage_layout.setSpacing(10)
+        load_button = _make_button_compact(QPushButton("Bezoekerslijsten inladen"))
+        load_button.setObjectName("primaryButton")
+        load_button.setToolTip(
+            "Laad één of meer bezoekerslijsten in (Excel of CSV), of een EventHub-dossier van een collega."
+        )
+        load_button.clicked.connect(self.import_trend_data)
+        manage_layout.addWidget(load_button)
+        remove_button = _make_button_compact(QPushButton("Selectie verwijderen"))
+        remove_button.setObjectName("secondaryButton")
+        remove_button.clicked.connect(self.remove_trend_source)
+        manage_layout.addWidget(remove_button)
+        clear_button = _make_button_compact(QPushButton("Alles wissen"))
+        clear_button.setObjectName("dangerButton")
+        clear_button.clicked.connect(self.clear_trend_sources)
+        manage_layout.addWidget(clear_button)
+        manage_layout.addStretch()
+        caption = QLabel("Meetellen:")
+        caption.setObjectName("hintLabel")
+        manage_layout.addWidget(caption)
+        self.trend_source = QComboBox()
+        self.trend_source.setMinimumWidth(200)
+        self.trend_source.currentIndexChanged.connect(lambda _index: self._render_trends())
+        manage_layout.addWidget(self.trend_source)
+        loose_layout.addWidget(manage)
+
+        self.trend_source_list = QTableWidget(0, 3)
+        self.trend_source_list.setHorizontalHeaderLabels(["Ingeladen set", "Evenementen", "Deelnemers"])
+        self.trend_source_list.setObjectName("dashboardTable")
+        self.trend_source_list.verticalHeader().setVisible(False)
+        self.trend_source_list.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.trend_source_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.trend_source_list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.trend_source_list.horizontalHeader().setStretchLastSection(True)
+        self.trend_source_list.setMaximumHeight(104)
+        loose_layout.addWidget(self.trend_source_list)
+
+        self.loose_trend_panel = TrendPanel(self._loose_trend_summaries)
+        self.loose_trend_panel.empty_message = (
+            "Nog niets ingeladen. Kies Bezoekerslijsten inladen om een losse analyse te maken, "
+            "bijvoorbeeld over evenementen van een collega. De eigen evenementen tellen hier niet mee."
+        )
+        self.loose_trend_panel.export_button.clicked.connect(
+            lambda: self.export_trend_data(self.loose_trend_panel)
+        )
+        loose_layout.addWidget(self.loose_trend_panel, 1)
+        self.trend_tabs.addTab(loose_tab, "Losse analyse")
+
+        layout.addWidget(self.trend_tabs, 1)
         self.page_stack.addWidget(page)
 
     def _build_profile_page(self):
@@ -7328,76 +7466,91 @@ class BezoekerslijstWindow(QMainWindow):
         self.page_stack.setCurrentWidget(self.trends_page)
         self._set_project_context_ui(False)
         self._set_navigation_active("trends")
+        self._sync_trend_sources()
         self._render_trends()
         self.status_label.setText("Trends — ontwikkeling over evenementen heen.")
 
-    def _trend_summaries(self):
-        """Eigen cijfers plus alles wat is toegevoegd, gefilterd op bron."""
-        own = collect_trend_summaries(self.events, source="Eigen dossier")
-        combined = list(own)
-        for source in getattr(self, "trend_sources", []):
-            combined.extend(source["summaries"])
+    def _loose_trend_summaries(self):
+        """Uitsluitend de ingeladen sets; het eigen dossier telt hier niet mee."""
         wanted = str(self.trend_source.currentData() or "")
-        if wanted:
-            combined = [item for item in combined if item.get("source") == wanted]
+        combined = []
+        for source in getattr(self, "trend_sources", []):
+            if wanted and source["label"] != wanted:
+                continue
+            combined.extend(source["summaries"])
         return combined
 
+    def _active_trend_panel(self):
+        return (
+            self.loose_trend_panel if self.trend_tabs.currentIndex() == 1
+            else self.own_trend_panel
+        )
+
     def _sync_trend_sources(self):
+        """Werk de keuzelijst en het overzicht van ingeladen sets bij."""
+        if not hasattr(self, "trend_source"):
+            return
         current = str(self.trend_source.currentData() or "")
         self.trend_source.blockSignals(True)
         self.trend_source.clear()
-        self.trend_source.addItem("Alle gegevens", "")
-        self.trend_source.addItem("Eigen dossier", "Eigen dossier")
+        self.trend_source.addItem("Alle ingeladen sets", "")
         for source in getattr(self, "trend_sources", []):
             self.trend_source.addItem(source["label"], source["label"])
         index = self.trend_source.findData(current)
         self.trend_source.setCurrentIndex(index if index >= 0 else 0)
         self.trend_source.blockSignals(False)
 
+        sources = getattr(self, "trend_sources", [])
+        self.trend_source_list.setRowCount(len(sources))
+        for row, source in enumerate(sources):
+            participants = sum(
+                int(item["statistiek"].get("aangemeld", 0) or 0) for item in source["summaries"]
+            )
+            values = (source["label"], str(len(source["summaries"])), str(participants))
+            for column, text in enumerate(values):
+                item = QTableWidgetItem(str(text))
+                item.setData(Qt.ItemDataRole.UserRole, source["label"])
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                self.trend_source_list.setItem(row, column, item)
+
     def _render_trends(self, *_):
-        if not hasattr(self, "trend_chart"):
+        if not hasattr(self, "own_trend_panel"):
             return
-        summaries = self._trend_summaries()
-        series = build_trend_series(
-            summaries,
-            metric=str(self.trend_metric.currentData() or "aangemeld"),
-            dimension=str(self.trend_dimension.currentData() or ""),
-            period=str(self.trend_period.currentData() or "event"),
+        self._active_trend_panel().refresh()
+
+    def remove_trend_source(self):
+        row = self.trend_source_list.currentRow()
+        item = self.trend_source_list.item(row, 0) if row >= 0 else None
+        if item is None:
+            QMessageBox.information(
+                self, "Niets geselecteerd", "Selecteer eerst een ingeladen set in de lijst."
+            )
+            return
+        label = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        self.trend_sources = [
+            source for source in self.trend_sources if source["label"] != label
+        ]
+        self._sync_trend_sources()
+        self._render_trends()
+        self.status_label.setText(f"Set verwijderd uit de losse analyse: {label}.")
+
+    def clear_trend_sources(self):
+        if not getattr(self, "trend_sources", []):
+            return
+        confirmed = QMessageBox.question(
+            self,
+            "Losse analyse wissen",
+            f"Alle {len(self.trend_sources)} ingeladen set(s) uit de losse analyse verwijderen?\n\n"
+            "Uw eigen evenementen blijven ongemoeid; de bronbestanden worden niet aangeraakt.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        self.trend_chart.set_series(series)
-
-        totals = trend_series_totals(series)
-        self.trend_table.setRowCount(sum(len(point["values"]) for point in series["points"]))
-        row = 0
-        for point in series["points"]:
-            for group, value in point["values"].items():
-                for column, text in enumerate((point["label"], group, self._trend_value_text(series, value))):
-                    item = QTableWidgetItem(str(text))
-                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                    self.trend_table.setItem(row, column, item)
-                row += 1
-
-        if not summaries:
-            self.trend_summary.setText(
-                "Nog geen cijfers. Een evenement krijgt cijfers zodra de datum is geweest; "
-                "cijfers van anderen voegt u toe met Gegevens toevoegen."
-            )
+        if confirmed != QMessageBox.StandardButton.Yes:
             return
-        parts = [f"{series['events']} evenement(en)"]
-        if len(series["groups"]) > 1:
-            biggest = max(totals, key=lambda item: item[1], default=None)
-            if biggest:
-                parts.append(f"grootste groep: {biggest[0]} ({self._trend_value_text(series, biggest[1])})")
-        parts.append(describe_trend_change(series))
-        if series.get("incomplete"):
-            parts.append(
-                "Let op: voor een deel van de evenementen is de aanwezigheid per groep niet vastgelegd; "
-                "die tellen niet mee."
-            )
-        self.trend_summary.setText("  ·  ".join(parts))
-
-    def _trend_value_text(self, series: dict, value: float) -> str:
-        return f"{value:g}%" if series.get("metric") == "opkomst_percentage" else f"{value:g}"
+        self.trend_sources = []
+        self._sync_trend_sources()
+        self._render_trends()
+        self.status_label.setText("Losse analyse gewist.")
 
     def import_trend_data(self):
         """Laad één of meer bezoekerslijsten in en reken ze om naar cijfers.
@@ -7462,6 +7615,9 @@ class BezoekerslijstWindow(QMainWindow):
             self.trend_sources.append({"label": label, "summaries": summaries})
             events_added += len(summaries)
         self._sync_trend_sources()
+        # Ingeladen lijsten horen in het losse werkgebied; spring daarheen zodat
+        # het resultaat meteen zichtbaar is.
+        self.trend_tabs.setCurrentIndex(1)
         self._render_trends()
 
         message = (
@@ -7534,16 +7690,18 @@ class BezoekerslijstWindow(QMainWindow):
                 dates[name] = value
         return dates
 
-    def export_trend_data(self):
-        """Exporteer het huidige trendbeeld als PDF."""
-        summaries = self._trend_summaries()
-        if not summaries:
+    def export_trend_data(self, panel=None):
+        """Exporteer het trendbeeld van één werkgebied als PDF."""
+        panel = panel or self._active_trend_panel()
+        if not panel.provider():
             QMessageBox.information(
                 self, "Niets te exporteren",
                 "Er zijn nog geen cijfers om te tonen.",
             )
             return
-        default = exports_directory() / f"EventHub trends {date.today():%Y-%m-%d}.pdf"
+        loose = panel is self.loose_trend_panel
+        name = "losse analyse" if loose else "eigen evenementen"
+        default = exports_directory() / f"EventHub trends {name} {date.today():%Y-%m-%d}.pdf"
         file_name, _ = QFileDialog.getSaveFileName(
             self, "Trends exporteren", str(default), "PDF-bestand (*.pdf)"
         )
@@ -7558,18 +7716,23 @@ class BezoekerslijstWindow(QMainWindow):
             printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
             printer.setPageOrientation(QPageLayout.Orientation.Landscape)
             printer.setPageMargins(QMarginsF(16, 16, 16, 16), QPageLayout.Unit.Millimeter)
-            self._trend_pdf_document().print_(printer)
+            self._trend_pdf_document(panel).print_(printer)
             self.status_label.setText(f"Trends geëxporteerd als PDF: {file_name}")
             QMessageBox.information(self, "Export gereed", f"De trendanalyse is geëxporteerd naar:\n{file_name}")
         except Exception as exc:
             self._show_runtime_error("Trends exporteren", exc)
 
-    def _trend_pdf_document(self) -> QTextDocument:
-        series = self.trend_chart.series
-        metric = self.trend_metric.currentText()
-        dimension = self.trend_dimension.currentText()
-        period = self.trend_period.currentText()
-        source = self.trend_source.currentText()
+    def _trend_pdf_document(self, panel) -> QTextDocument:
+        series = panel.current_series()
+        metric = panel.metric.currentText()
+        dimension = panel.dimension.currentText()
+        period = panel.period.currentText()
+        if panel is self.loose_trend_panel:
+            scope = "Losse analyse"
+            source = self.trend_source.currentText() or "Alle ingeladen sets"
+        else:
+            scope = "Eigen evenementen"
+            source = str(self.project_path.name if self.project_path else "Eigen dossier")
 
         document = QTextDocument(self)
         document.setDefaultFont(QFont("Segoe UI", 9))
@@ -7590,7 +7753,7 @@ class BezoekerslijstWindow(QMainWindow):
             for group, value in point["values"].items():
                 rows.append(
                     f"<tr><td>{escape(str(point['label']))}</td><td>{escape(str(group))}</td>"
-                    f"<td class='num'>{escape(self._trend_value_text(series, value))}</td></tr>"
+                    f"<td class='num'>{escape(panel.value_text(value))}</td></tr>"
                 )
 
         document.setHtml(f"""
@@ -7606,10 +7769,10 @@ class BezoekerslijstWindow(QMainWindow):
             p.footer {{ color: #7b8798; font-size: 8pt; margin-top: 12px; }}
             </style></head><body>
             <h1>Trends — {escape(metric)}</h1>
-            <p class="meta">Uitgesplitst naar {escape(dimension)} · {escape(period)} · bron: {escape(source)}
+            <p class="meta">{escape(scope)} · uitgesplitst naar {escape(dimension)} · {escape(period)} · bron: {escape(source)}
             · {series.get('events', 0)} evenement(en) · opgesteld op {date.today():%d-%m-%Y}
             door {escape(str(self.profile.get('name') or 'EventHub'))}</p>
-            <p class="summary">{escape(self.trend_summary.text())}</p>
+            <p class="summary">{escape(panel.summary.text())}</p>
             <img src="trend://chart" width="960" />
             <table>
               <tr><th>Periode</th><th>Groep</th><th>{escape(metric)}</th></tr>
