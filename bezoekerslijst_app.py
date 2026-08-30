@@ -3736,6 +3736,29 @@ class BezoekerslijstWindow(QMainWindow):
         upcoming_layout = QVBoxLayout(upcoming_box)
         upcoming_layout.setContentsMargins(14, 14, 14, 12)
         upcoming_layout.setSpacing(8)
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
+        self.event_search_box = QLineEdit()
+        self.event_search_box.setPlaceholderText("Zoeken op naam, plaats, locatie, soort of datum…")
+        self.event_search_box.setClearButtonEnabled(True)
+        self.event_search_box.setMinimumWidth(280)
+        self.event_search_box.textChanged.connect(self._filter_events)
+        search_row.addWidget(self.event_search_box, 1)
+        self.event_status_filter = QComboBox()
+        self.event_status_filter.addItem("Alle statussen", "")
+        self.event_status_filter.addItem("Alleen lopend en gepland", "_open")
+        for status in EVENT_STATUSES:
+            self.event_status_filter.addItem(status, status)
+        # Standaard alles tonen: de nieuwe sortering zet lopende evenementen al
+        # bovenaan, dus verbergen is niet nodig en zou verwarrend zijn.
+        self.event_status_filter.setCurrentIndex(0)
+        self.event_status_filter.currentIndexChanged.connect(self._filter_events)
+        search_row.addWidget(self.event_status_filter)
+        self.event_filter_summary = QLabel("")
+        self.event_filter_summary.setObjectName("hintLabel")
+        search_row.addWidget(self.event_filter_summary)
+        upcoming_layout.addLayout(search_row)
+
         event_actions = QHBoxLayout()
         event_actions.setSpacing(8)
         event_hint = QLabel("Selecteer een evenement om het dossier te openen.")
@@ -5995,8 +6018,57 @@ class BezoekerslijstWindow(QMainWindow):
         return next((event for event in self.events if normalize(event.get("name", "")) == wanted), None)
 
     def _event_sort_key(self, event: dict):
+        """Wat eraan komt eerst, daarna het verleden van recent naar oud.
+
+        Puur chronologisch oplopend sorteren zette het oudste — en dus altijd
+        het afgeronde — bovenaan, terwijl je vrijwel altijd met de eerstvolgende
+        evenementen werkt. Afgerond en Geannuleerd horen bij het verleden, ook
+        als de datum toevallig nog in de toekomst ligt.
+        """
         event_date = parse_date(event.get("date", ""))
-        return (event_date is None, event_date or date.max, normalize(event.get("name", "")))
+        name = normalize(event.get("name", ""))
+        if event_date is None:
+            # Zonder datum onderaan: er valt niets over de actualiteit te zeggen.
+            return (2, 0, name)
+        closed = event.get("status") in {"Afgerond", "Geannuleerd"}
+        if event_date >= date.today() and not closed:
+            return (0, event_date.toordinal(), name)
+        # Negatief sorteert het verleden aflopend: het meest recente eerst.
+        return (1, -event_date.toordinal(), name)
+
+    def _filter_events(self, *_):
+        """Filter het evenementenoverzicht op zoektekst en status."""
+        table = getattr(self, "home_event_table", None)
+        if table is None or not hasattr(self, "event_search_box"):
+            return
+        needle = normalize(self.event_search_box.text())
+        wanted_status = str(self.event_status_filter.currentData() or "")
+        visible = 0
+        for row in range(table.rowCount()):
+            event = self._event_by_id(self._event_id_for_row(row))
+            if event is None:
+                table.setRowHidden(row, bool(needle) or bool(wanted_status))
+                continue
+            status = str(event.get("status", "") or "")
+            if wanted_status == "_open":
+                matches_status = status not in {"Afgerond", "Geannuleerd"}
+            else:
+                matches_status = not wanted_status or status == wanted_status
+            haystack = normalize(" ".join(str(event.get(field, "") or "") for field in (
+                "name", "date", "event_type", "place", "location", "status", "target_audience",
+            )))
+            matches_search = not needle or needle in haystack
+            hidden = not (matches_status and matches_search)
+            table.setRowHidden(row, hidden)
+            visible += not hidden
+        total = table.rowCount()
+        self.event_filter_summary.setText(
+            "" if visible == total else f"{visible} van {total} getoond"
+        )
+
+    def _event_id_for_row(self, row: int) -> str:
+        item = self.home_event_table.item(row, 0)
+        return str(item.data(Qt.ItemDataRole.UserRole) or "") if item else ""
 
     def _event_visitors(self, event: dict):
         wanted = normalize(event.get("name", ""))
@@ -6006,6 +6078,11 @@ class BezoekerslijstWindow(QMainWindow):
         table = table or self.event_table
         row = table.currentRow()
         if row < 0:
+            return None
+        # Een weggefilterde rij blijft in Qt de huidige rij. Zonder deze controle
+        # werken Openen, Aanpassen en vooral Verwijderen op een evenement dat
+        # niet in beeld staat.
+        if table.isRowHidden(row):
             return None
         item = table.item(row, 0)
         return self._event_by_id(item.data(Qt.ItemDataRole.UserRole)) if item else None
@@ -6188,6 +6265,9 @@ class BezoekerslijstWindow(QMainWindow):
             cell_layout.addWidget(status_label)
             self.home_event_table.setCellWidget(row_index, 1, cell)
             self.home_event_table.setRowHeight(row_index, 44)
+        # De tabel is opnieuw opgebouwd, dus de zoek- en statusfilters moeten
+        # opnieuw worden toegepast; anders komt alles weer zichtbaar terug.
+        self._filter_events()
 
         notifications = self._all_notifications()
         active_events = sum(event.get("status") in {"Concept", "In voorbereiding"} for event in events)
