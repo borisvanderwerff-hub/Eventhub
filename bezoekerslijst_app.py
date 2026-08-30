@@ -7297,11 +7297,17 @@ class BezoekerslijstWindow(QMainWindow):
         return True
 
     def run_post_startup(self):
-        self._restore_last_or_discovered_project()
-        self.maybe_restore_autosave()
-        if self.maybe_require_initial_profile():
-            self.maybe_show_changelog()
-            self.maybe_show_startup_welcome()
+        # Onderdrukt de controle op de bewaartermijn tijdens het herstellen van
+        # het laatste dossier; die volgt hieronder, na de opstartschermen.
+        self._starting_up = True
+        try:
+            self._restore_last_or_discovered_project()
+            self.maybe_restore_autosave()
+            if self.maybe_require_initial_profile():
+                self.maybe_show_changelog()
+                self.maybe_show_startup_welcome()
+        finally:
+            self._starting_up = False
         # Pas na de opstartschermen: de vraag om onomkeerbaar te verwijderen
         # hoort niet achter een welkomstvenster te verdwijnen.
         self.maybe_apply_retention()
@@ -9417,6 +9423,11 @@ class BezoekerslijstWindow(QMainWindow):
             self._set_project_context_ui(False)
             self.status_label.setStyleSheet("")
             self.status_label.setText(f"EventHub-bestand geopend: {self.project_path.name} ({len(self.records)} deelnemers).")
+            # Elk geopend dossier wordt op de bewaartermijn gecontroleerd. Tijdens
+            # het opstarten gebeurt dat bewust later, na de profiel- en
+            # welkomstschermen, zodat de vraag niet tussen andere vensters valt.
+            if not getattr(self, "_starting_up", False):
+                self.maybe_apply_retention()
             return True
         except Exception as exc:
             if quiet:
