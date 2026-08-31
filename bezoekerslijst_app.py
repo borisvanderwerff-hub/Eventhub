@@ -11416,7 +11416,14 @@ class BezoekerslijstWindow(QMainWindow):
         added = [prepare_record(record) for record in result["records"]]
         linked_to_active = active_event["name"]
         for record in added:
+            # De lijst wordt in dit evenement geimporteerd, dus hoort de
+            # aanwezigheid uit het bestand bij deze evenementnaam. Zonder deze
+            # verhuizing blijft die onder de naam uit de bronkolom staan, die
+            # in EventHub de datum mist, en telt iedereen als afwezig.
+            aanwezig_in_bestand = is_present(record)
             record["Evenement"] = active_event["name"]
+            record["Aanwezig"] = {}
+            set_present(record, active_event["name"], aanwezig_in_bestand)
         self.records.extend(added)
         self._ensure_events_from_records()
         enriched = int(result.get("enriched", 0))
