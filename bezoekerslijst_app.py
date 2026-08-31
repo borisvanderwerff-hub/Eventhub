@@ -7453,6 +7453,11 @@ class BezoekerslijstWindow(QMainWindow):
         def show_home():
             self.back_to_home()
 
+        def show_start_page():
+            # back_to_home opent het evenementenoverzicht; het startscherm zelf
+            # kwam in de rondleiding nooit aan bod.
+            self.show_home()
+
         def show_event_tab(tab):
             self.open_event(tutorial_event, tab)
 
@@ -7469,14 +7474,25 @@ class BezoekerslijstWindow(QMainWindow):
 
         steps = [
             {
-                "title": "De nieuwe zijbalk",
-                "body": "Alle hoofdonderdelen staan voortaan op één vaste plek. Klap de balk onderaan in voor extra werkruimte; de pictogrammen en uitlegballonnen blijven beschikbaar.",
+                "title": "Uw startscherm",
+                "body": "Hier begint u. <b>Vandaag</b> toont het evenement van vandaag of het eerstvolgende, "
+                        "<b>Verder waar je was</b> brengt u terug naar het laatst geopende dossier en "
+                        "<b>Aandacht nodig</b> verzamelt wat blijft liggen.",
+                "prepare": show_start_page,
+                "target": lambda: self.home_today_title,
+            },
+            {
+                "title": "De zijbalk",
+                "body": "Alle hoofdonderdelen staan op één vaste plek. Klap de balk onderaan in voor extra werkruimte; de pictogrammen en uitlegballonnen blijven beschikbaar.",
                 "prepare": show_home,
                 "target": lambda: self.sidebar_buttons["events"],
             },
             {
                 "title": "Evenementen en meldingen",
-                "body": "Evenementen geeft het centrale overzicht. Het <b>alarmbelletje</b> verzamelt taken die te laat zijn, vandaag moeten gebeuren of binnen hun meldingstermijn vallen.",
+                "body": "Evenementen geeft het centrale overzicht. Zoek er op naam, plaats of datum en kies zelf de "
+                        "sortering; met de rechtermuisknop past u de status van een evenement aan. Het "
+                        "<b>alarmbelletje</b> verzamelt taken die aandacht vragen en kondigt aan wanneer "
+                        "persoonsgegevens verlopen.",
                 "prepare": show_home,
                 "target": lambda: self.notification_button,
             },
@@ -7533,6 +7549,25 @@ class BezoekerslijstWindow(QMainWindow):
                 "body": "Gebruik de Rudder-koppeling om evenementgegevens te importeren of ondersteunde velden voor Rudder voor te bereiden. Controleer de configuratie, registratie, doelgroep en locatie voordat u de gegevens in Rudder opslaat.",
                 "prepare": lambda: show_event_tab(self.rudder_tab),
                 "target": lambda: self.rudder_import_button,
+            },
+            {
+                "title": "Trends",
+                "body": "Zie hoe opkomst, no-shows en doelgroep zich over evenementen heen ontwikkelen. "
+                        "Combineer zelf een meetwaarde met een uitsplitsing, bijvoorbeeld no-shows per "
+                        "opleidingsniveau. Onder <b>Losse analyse</b> laadt u bezoekerslijsten van elders in "
+                        "zonder uw eigen cijfers te vermengen.",
+                "prepare": self.show_trends_page,
+                "target": lambda: self.trend_tabs,
+            },
+            {
+                "title": "Persoonsgegevens verdwijnen vanzelf",
+                "body": f"Na de bewaartermijn van <b>{self._retention_days()} dagen</b> verwijdert EventHub de "
+                        "deelnemersgegevens van een evenement automatisch en onomkeerbaar, ook uit de "
+                        "reservekopieën. De opkomstcijfers blijven geanonimiseerd bewaard. Het meldingenoverzicht "
+                        "waarschuwt zeven dagen vooraf, zodat u op tijd kunt exporteren. Exporteert u iets, dan "
+                        "valt dat bestand buiten EventHub en ruimt u het zelf op.",
+                "prepare": show_start_page,
+                "target": lambda: self.notification_button,
             },
         ]
 
