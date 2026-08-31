@@ -4139,22 +4139,17 @@ class BezoekerslijstWindow(QMainWindow):
         search_row.addWidget(self.event_filter_summary)
         upcoming_layout.addLayout(search_row)
 
-        event_actions = QHBoxLayout()
-        event_actions.setSpacing(8)
-        event_hint = QLabel("Selecteer een evenement om het dossier te openen.")
+        # De knoppen Openen, Aanpassen en Verwijderen zijn vervallen: dubbelklikken
+        # opent een evenement en de rechtermuisknop biedt dezelfde acties plus de
+        # status. Een permanent zichtbare verwijderknop naast een lijst is
+        # bovendien een ongeluk dat op zijn beurt wacht.
+        event_hint = QLabel(
+            "Dubbelklik op een evenement om het dossier te openen. "
+            "Met de rechtermuisknop past u de status aan, of bewerkt en verwijdert u het."
+        )
         event_hint.setObjectName("hintLabel")
         event_hint.setWordWrap(True)
-        event_actions.addWidget(event_hint, 1)
-        for label, handler, object_name in [
-            ("Openen", self.activate_selected_event, "primaryButton"),
-            ("Aanpassen", self.edit_selected_event, "secondaryButton"),
-            ("Verwijderen", self.remove_selected_event, "dangerButton"),
-        ]:
-            button = QPushButton(label)
-            button.setObjectName(object_name)
-            button.clicked.connect(handler)
-            event_actions.addWidget(button)
-        upcoming_layout.addLayout(event_actions)
+        upcoming_layout.addWidget(event_hint)
         self.home_event_table = self._new_table(["Datum", "Evenement", "Soort", "Plaats / locatie", "Status", "Bezoekers"])
         self.home_event_table.setObjectName("dashboardTable")
         # Het evenementenoverzicht is het primaire werkvlak: toon op normale laptops
@@ -4570,19 +4565,18 @@ class BezoekerslijstWindow(QMainWindow):
         self.standard_tasks_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.standard_tasks_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.standard_tasks_table.cellDoubleClicked.connect(lambda *_: self.edit_standard_task())
+        self._attach_row_menu(self.standard_tasks_table, [
+            ("Taak bewerken", self.edit_standard_task),
+            (None, None),
+            ("Taak verwijderen", self.remove_standard_task),
+        ])
         layout.addWidget(self.standard_tasks_table, 1)
 
         actions = QHBoxLayout()
         add_button = QPushButton("Taak toevoegen")
         add_button.setObjectName("primaryButton")
         add_button.clicked.connect(self.add_standard_task)
-        edit_button = QPushButton("Taak bewerken")
-        edit_button.setObjectName("secondaryButton")
-        edit_button.clicked.connect(self.edit_standard_task)
-        remove_button = QPushButton("Taak verwijderen")
-        remove_button.setObjectName("dangerButton")
-        remove_button.clicked.connect(self.remove_standard_task)
-        for button in (add_button, edit_button, remove_button):
+        for button in (add_button,):
             actions.addWidget(button)
         actions.addStretch()
         layout.addLayout(actions)
@@ -4647,18 +4641,14 @@ class BezoekerslijstWindow(QMainWindow):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.open_tasks_table.cellDoubleClicked.connect(lambda *_: self.open_selected_open_task())
+        self._attach_row_menu(self.open_tasks_table, [
+            ("Taak openen", self.open_selected_open_task),
+            ("Markeren als afgerond", self.complete_selected_open_task),
+        ])
         layout.addWidget(self.open_tasks_table, 1)
 
         actions = QHBoxLayout()
         actions.addStretch()
-        done_button = QPushButton("Afronden")
-        done_button.setObjectName("secondaryButton")
-        done_button.clicked.connect(self.complete_selected_open_task)
-        open_button = QPushButton("Taak openen")
-        open_button.setObjectName("primaryButton")
-        open_button.clicked.connect(self.open_selected_open_task)
-        actions.addWidget(done_button)
-        actions.addWidget(open_button)
         layout.addLayout(actions)
         self.page_stack.addWidget(page)
 
@@ -5632,15 +5622,7 @@ class BezoekerslijstWindow(QMainWindow):
         add_task_button = QPushButton("Taak toevoegen")
         add_task_button.setObjectName("primaryButton")
         add_task_button.clicked.connect(self.add_task)
-        edit_task_button = QPushButton("Taak aanpassen")
-        edit_task_button.setObjectName("secondaryButton")
-        edit_task_button.clicked.connect(self.edit_selected_task)
-        remove_task_button = QPushButton("Taak verwijderen")
-        remove_task_button.setObjectName("dangerButton")
-        remove_task_button.clicked.connect(self.remove_selected_task)
         tasks_top.addWidget(add_task_button)
-        tasks_top.addWidget(edit_task_button)
-        tasks_top.addWidget(remove_task_button)
         tasks_layout.addLayout(tasks_top)
         task_hint = QLabel("De deadline wordt automatisch berekend vanuit de evenementdatum. Vink een taak af zodra deze is afgerond.")
         task_hint.setObjectName("hintLabel")
@@ -5648,6 +5630,11 @@ class BezoekerslijstWindow(QMainWindow):
         self.task_table = self._new_table(["Afgerond", "Taak", "Deadline", "Planning", "Melding", "Status", "Notities"])
         self.task_table.itemChanged.connect(self._task_item_changed)
         self.task_table.cellDoubleClicked.connect(lambda *_: self.edit_selected_task())
+        self._attach_row_menu(self.task_table, [
+            ("Taak aanpassen", self.edit_selected_task),
+            (None, None),
+            ("Taak verwijderen", self.remove_selected_task),
+        ])
         tasks_layout.addWidget(self.task_table, 1)
         self.tabs.addTab(tasks_tab, "Taken")
 
@@ -5722,9 +5709,6 @@ class BezoekerslijstWindow(QMainWindow):
         attachments_top.addWidget(attachments_hint, 1)
         for label, handler, object_name in [
             ("Document toevoegen", self.add_attachment, "primaryButton"),
-            ("Openen", self.open_selected_attachment, "secondaryButton"),
-            ("Opslaan als", self.export_selected_attachment, "secondaryButton"),
-            ("Verwijderen", self.remove_selected_attachment, "dangerButton"),
         ]:
             button = QPushButton(label)
             button.setObjectName(object_name)
@@ -5735,6 +5719,12 @@ class BezoekerslijstWindow(QMainWindow):
         self.attachments_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.attachments_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.attachments_table.cellDoubleClicked.connect(lambda *_: self.open_selected_attachment())
+        self._attach_row_menu(self.attachments_table, [
+            ("Openen", self.open_selected_attachment),
+            ("Opslaan als", self.export_selected_attachment),
+            (None, None),
+            ("Verwijderen", self.remove_selected_attachment),
+        ])
         attachments_layout.addWidget(self.attachments_table, 1)
         self.attachments_table.setMinimumHeight(220)
         documents_layout.addWidget(attachments_box, 1)
@@ -6555,6 +6545,32 @@ class BezoekerslijstWindow(QMainWindow):
             return (0, event_date.toordinal(), name)
         # Negatief sorteert het verleden aflopend: het meest recente eerst.
         return (1, -event_date.toordinal(), name)
+
+    def _attach_row_menu(self, table, actions):
+        """Geef een tabel een rechtermuismenu met acties op de gekozen rij.
+
+        Rij-acties stonden als knoppenrij boven elke tabel. Die rijen groeiden
+        mee met de applicatie en namen ruimte in terwijl ze alleen bruikbaar
+        zijn zodra er iets geselecteerd is. Aanmaken blijft wel een knop: bij
+        een lege tabel valt er niets aan te wijzen.
+        """
+        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        table.customContextMenuRequested.connect(
+            lambda position, target=table, items=actions: self._show_row_menu(target, items, position)
+        )
+
+    def _show_row_menu(self, table, actions, position):
+        row = table.rowAt(position.y())
+        if row < 0 or table.isRowHidden(row):
+            return
+        table.selectRow(row)
+        menu = QMenu(table)
+        for label, handler in actions:
+            if label is None:
+                menu.addSeparator()
+                continue
+            menu.addAction(label, handler)
+        menu.exec(table.viewport().mapToGlobal(position))
 
     def _show_event_context_menu(self, position):
         table = self.home_event_table
