@@ -103,8 +103,10 @@ class SessionSurvivalTests(unittest.TestCase):
     def test_the_session_is_cleared_when_the_import_ends(self):
         self.assertGreaterEqual(self.bulk.count("sessionStorage.removeItem(SESSION_KEY)"), 2)
 
-    def test_the_panel_warns_when_more_pages_exist(self):
-        self.assertIn("pagina 1 van", self.bulk)
+    def test_more_pages_lead_to_a_choice_instead_of_a_warning(self):
+        """De waarschuwing is vervangen door aanvinkbare pagina's."""
+        self.assertIn('if (paginas.length <= 1) return "";', self.bulk)
+        self.assertIn("eventhub-bulk-pages", self.bulk)
 
     def test_the_panel_tells_you_to_filter_when_owners_differ(self):
         self.assertIn("verschillende eigenaren", self.bulk)
@@ -129,15 +131,64 @@ class LiveFilterTests(unittest.TestCase):
         self.assertIn("const huidigeKaarten = () => scraper.scrapeEventList(document)", self.bulk)
         self.assertNotIn("const cards = scraper.scrapeEventList(document);", self.bulk)
 
-    def test_the_import_uses_the_list_as_it_is_at_that_moment(self):
+    def test_the_import_reads_the_lists_when_it_starts(self):
+        """Niet de momentopname van het laden, maar wat er nu staat."""
         start = self.bulk.index("async function importeerAlles()")
         block = self.bulk[start:self.bulk.index("\n  }", start)]
-        self.assertIn("const cards = huidigeKaarten();", block)
+        self.assertIn("await haalPagina(nummer)", block)
+        self.assertNotIn("scrapeEventList(document)", block, "geen eigen momentopname")
+        # De pagina die al in beeld staat wordt uit het scherm gelezen.
+        self.assertIn("if (nummer === huidigePagina()) return huidigeKaarten();", self.bulk)
 
     def test_watching_stops_while_importing_and_afterwards(self):
         self.assertIn("bezig = true", self.bulk)
         self.assertIn("if (bezig) return;", self.bulk)
         self.assertGreaterEqual(self.bulk.count("observer.disconnect()"), 2)
+
+
+class PageSelectionTests(unittest.TestCase):
+    """Meerdere pagina's kunnen worden aangevinkt."""
+
+    def setUp(self):
+        self.bulk = (EXTENSION / "event_bulk.js").read_text(encoding="utf-8")
+        self.css = (EXTENSION / "content.css").read_text(encoding="utf-8")
+
+    def test_pages_are_offered_as_checkboxes(self):
+        self.assertIn('type="checkbox" data-page=', self.bulk)
+        self.assertIn("eventhub-bulk-pages", self.bulk)
+
+    def test_only_the_current_page_is_ticked_by_default(self):
+        """Ongevraagd tientallen pagina's ophalen hoort niet."""
+        self.assertIn("let gekozenPaginas = new Set([huidigePagina()]);", self.bulk)
+
+    def test_quick_choices_for_all_and_one_page(self):
+        self.assertIn("eventhub-bulk-all-pages", self.bulk)
+        self.assertIn("eventhub-bulk-this-page", self.bulk)
+
+    def test_other_pages_keep_the_active_filter(self):
+        """Alleen page mag veranderen; de filters moeten mee."""
+        start = self.bulk.index("const paginaUrl =")
+        block = self.bulk[start:start + 300]
+        self.assertIn("new URLSearchParams(location.search)", block)
+        self.assertIn('params.set("page"', block)
+
+    def test_the_selection_never_becomes_empty(self):
+        self.assertIn("if (!gekozenPaginas.size) gekozenPaginas.add(huidigePagina());", self.bulk)
+
+    def test_events_seen_twice_are_imported_once(self):
+        self.assertIn("if (gezien.has(card.id)) continue;", self.bulk)
+
+    def test_the_current_page_is_read_from_the_dom_not_fetched(self):
+        """Wat al in beeld staat hoeft niet opnieuw over het net."""
+        self.assertIn("if (nummer === huidigePagina()) return huidigeKaarten();", self.bulk)
+
+    def test_ticking_a_box_does_not_trigger_a_filter_refresh(self):
+        """Het paneel tekent zichzelf opnieuw; dat mag geen lus veroorzaken."""
+        self.assertIn("panel.contains(mutatie.target)", self.bulk)
+
+    def test_the_checkboxes_are_styled(self):
+        self.assertIn(".eventhub-bulk-pages", self.css)
+        self.assertIn(".eventhub-bulk-page", self.css)
 
 
 class SelectReadingTests(unittest.TestCase):

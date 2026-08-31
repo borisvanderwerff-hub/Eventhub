@@ -85,6 +85,41 @@
   // ongefilterde lijst; daarom wordt er telkens opnieuw gelezen.
   const huidigeKaarten = () => scraper.scrapeEventList(document);
 
+  const huidigePagina = () => Number(new URLSearchParams(location.search).get("page") || 1);
+
+  // Andere pagina's opvragen met dezelfde filters: alleen page verandert.
+  const paginaUrl = nummer => {
+    const params = new URLSearchParams(location.search);
+    params.set("page", String(nummer));
+    return `${location.pathname}?${params.toString()}`;
+  };
+
+  // Welke pagina's zijn aangevinkt. De huidige staat standaard aan; de rest
+  // kiest de gebruiker er zelf bij, zodat er niet ongevraagd tientallen
+  // pagina's worden opgehaald.
+  let gekozenPaginas = new Set([huidigePagina()]);
+
+  function beschikbarePaginas() {
+    const gevonden = scraper.scrapePageLinks(document);
+    const hoogste = gevonden.length ? Math.max(...gevonden) : 1;
+    return Array.from({ length: hoogste }, (_value, index) => index + 1);
+  }
+
+  function paginaKeuze(paginas) {
+    if (paginas.length <= 1) return "";
+    const vakjes = paginas.map(nummer => {
+      const aan = gekozenPaginas.has(nummer) ? " checked" : "";
+      const nu = nummer === huidigePagina() ? " title=\"Pagina die u nu ziet\"" : "";
+      return `<label class="eventhub-bulk-page"><input type="checkbox" data-page="${nummer}"${aan}${nu}> ${nummer}</label>`;
+    }).join("");
+    return (
+      `<br><span class="eventhub-bulk-label">Pagina's (${paginas.length}):</span>` +
+      `<div class="eventhub-bulk-pages">${vakjes}</div>` +
+      `<button type="button" id="eventhub-bulk-all-pages">Alles aanvinken</button>` +
+      `<button type="button" id="eventhub-bulk-this-page">Alleen deze</button>`
+    );
+  }
+
   function toonKeuze() {
     if (bezig) return;
     const cards = huidigeKaarten();
@@ -95,16 +130,18 @@
       );
       return;
     }
-    const pages = scraper.scrapePageLinks(document);
-    const laatste = pages.length ? Math.max(...pages) : 1;
+    const paginas = beschikbarePaginas();
     const eigenaren = [...new Set(cards.map(card => card.owner).filter(Boolean))];
+    const meerdere = gekozenPaginas.size > 1;
     setStatus(
-      `<b>${cards.length} evenement(en) in beeld</b>` +
+      `<b>${cards.length} evenement(en) op deze pagina</b>` +
       (eigenaren.length === 1
         ? `<br>Eigenaar: ${scraper.clean(eigenaren[0])}`
         : `<br>${eigenaren.length} verschillende eigenaren. Filter hierboven op uw naam; dit paneel blijft staan.`) +
-      (laatste > 1 ? `<br>Let op: pagina 1 van ${laatste}. Alleen wat hier staat wordt geimporteerd.` : "") +
-      `<br><button type="button" id="eventhub-bulk-start">Alles importeren naar EventHub</button>` +
+      paginaKeuze(paginas) +
+      `<br><button type="button" id="eventhub-bulk-start">` +
+      (meerdere ? `Importeren (${gekozenPaginas.size} pagina's)` : "Alles importeren naar EventHub") +
+      `</button>` +
       `<button type="button" id="eventhub-bulk-cancel">Annuleren</button>`,
     );
   }
@@ -112,14 +149,29 @@
   // Meebewegen met het filter, gedempt zodat een reeks wijzigingen tot een
   // enkele verversing leidt.
   let wachtend = null;
-  const observer = new MutationObserver(() => {
+  const observer = new MutationObserver(mutaties => {
     if (bezig) return;
+    // Wijzigingen binnen het eigen paneel niet als filterwijziging lezen;
+    // anders wist het opnieuw tekenen de zojuist gezette vinkjes.
+    if (mutaties.every(mutatie => panel.contains(mutatie.target))) return;
     clearTimeout(wachtend);
     wachtend = setTimeout(toonKeuze, 250);
   });
   observer.observe(document.body, { childList: true, subtree: true });
 
   toonKeuze();
+
+  async function haalPagina(nummer) {
+    if (nummer === huidigePagina()) return huidigeKaarten();
+    const response = await fetch(paginaUrl(nummer), {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { "X-Requested-With": "EventHub" },
+    });
+    if (!response.ok) throw new Error(`pagina ${nummer}: status ${response.status}`);
+    const doc = new DOMParser().parseFromString(await response.text(), "text/html");
+    return scraper.scrapeEventList(doc);
+  }
 
   async function haalEvenement(id) {
     const response = await fetch(`/rudder/event/events/${id}/edit`, {
@@ -134,11 +186,28 @@
 
   async function importeerAlles() {
     bezig = true;
-    let gelukt = 0;
     const mislukt = [];
-    // Op dit moment vastleggen: wat er nu in beeld staat, is wat de gebruiker
-    // ziet en bedoelt.
-    const cards = huidigeKaarten();
+    const paginas = [...gekozenPaginas].sort((a, b) => a - b);
+
+    // Eerst de lijsten verzamelen, zodat duidelijk is hoeveel er komen voordat
+    // het echte werk begint. Dubbele ids kunnen ontstaan wanneer Rudder
+    // tussentijds herschikt; die tellen een keer.
+    const gezien = new Set();
+    const cards = [];
+    for (const [index, nummer] of paginas.entries()) {
+      setStatus(`Lijst ophalen: pagina ${index + 1} van ${paginas.length}...`);
+      try {
+        for (const card of await haalPagina(nummer)) {
+          if (gezien.has(card.id)) continue;
+          gezien.add(card.id);
+          cards.push(card);
+        }
+      } catch (error) {
+        mislukt.push(error.message || String(error));
+      }
+    }
+
+    let gelukt = 0;
     for (const [index, card] of cards.entries()) {
       setStatus(`Bezig: ${index + 1} van ${cards.length}<br>${scraper.clean(card.title)}`);
       try {
@@ -150,18 +219,38 @@
         mislukt.push(`${card.id}: ${error.message || error}`);
       }
     }
+
     // Sluitsignaal: hierop rondt EventHub de import af en toont het overzicht.
     await send({ format: scraper.EVENT_FORMAT, action: "done" });
     sessionStorage.removeItem(SESSION_KEY);
     observer.disconnect();
     setStatus(
-      `<b>Klaar.</b><br>${gelukt} van ${cards.length} verstuurd naar EventHub.` +
+      `<b>Klaar.</b><br>${gelukt} van ${cards.length} verstuurd naar EventHub` +
+      (paginas.length > 1 ? ` (${paginas.length} pagina's).` : ".") +
       (mislukt.length ? `<br>Overgeslagen: ${mislukt.slice(0, 3).join("; ")}` : "") +
       "<br>Ga terug naar EventHub om de import te bevestigen.",
     );
   }
 
+  panel.addEventListener("change", event => {
+    const nummer = Number(event.target.dataset?.page || 0);
+    if (!nummer) return;
+    if (event.target.checked) gekozenPaginas.add(nummer);
+    else gekozenPaginas.delete(nummer);
+    // Nooit met een lege keuze eindigen; dan valt er niets te importeren.
+    if (!gekozenPaginas.size) gekozenPaginas.add(huidigePagina());
+    toonKeuze();
+  });
+
   panel.addEventListener("click", event => {
+    if (event.target.id === "eventhub-bulk-all-pages") {
+      gekozenPaginas = new Set(beschikbarePaginas());
+      toonKeuze();
+    }
+    if (event.target.id === "eventhub-bulk-this-page") {
+      gekozenPaginas = new Set([huidigePagina()]);
+      toonKeuze();
+    }
     if (event.target.id === "eventhub-bulk-cancel") {
       send({ format: scraper.EVENT_FORMAT, action: "done" });
       sessionStorage.removeItem(SESSION_KEY);
