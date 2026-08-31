@@ -262,6 +262,9 @@ def event_name_with_date(name: str, event_date: str) -> str:
 def _picker_button(tooltip: str) -> QPushButton:
     button = QPushButton("📅")
     button.setObjectName("secondaryButton")
+    # De gewone knopmarge van 14px aan weerszijden laat op deze breedte niets
+    # over voor het teken; de stylesheet zet die marge terug via deze vlag.
+    button.setProperty("picker", "true")
     button.setFixedWidth(34)
     button.setToolTip(tooltip)
     button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1276,6 +1279,7 @@ class TrendPanel(QWidget):
         self.expand_button = QPushButton("⤢")
         self.expand_button.setObjectName("secondaryButton")
         self.expand_button.setCheckable(True)
+        self.expand_button.setProperty("picker", "true")
         self.expand_button.setFixedWidth(38)
         self.expand_button.setToolTip("Grafiek maximaliseren binnen het venster (F11)")
         self.expand_button.clicked.connect(lambda: self.set_maximised(not self.maximised))
@@ -4384,6 +4388,7 @@ class BezoekerslijstWindow(QMainWindow):
         # op de plek zelf, en de algemene rondleiding zou er te lang van worden.
         self.live_session_help_button = QPushButton("?")
         self.live_session_help_button.setObjectName("secondaryButton")
+        self.live_session_help_button.setProperty("picker", "true")
         self.live_session_help_button.setFixedWidth(34)
         self.live_session_help_button.setToolTip(
             "Korte uitleg over samen inchecken met meerdere apparaten."

@@ -130,6 +130,56 @@ class TimePickerTests(unittest.TestCase):
         self.assertTrue(bezoekerslijst_app.valid_time_text(field.text()))
 
 
+class ButtonFitTests(unittest.TestCase):
+    """Een vaste breedte moet ruimte laten voor het teken zelf.
+
+    De gewone knopstijl heeft 14px zijmarge; op een knop van 34px bleef daar
+    4px over en werd het kalendericoon half afgesneden.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+        cls.window = bezoekerslijst_app.BezoekerslijstWindow()
+        cls.window.resize(1400, 900)
+        cls.window.show()
+        cls.app.processEvents()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.window.close()
+
+    def _fits(self, button):
+        button.ensurePolished()
+        return button.sizeHint().width() <= button.width()
+
+    def test_every_compact_button_shows_its_glyph(self):
+        knoppen = [
+            ("hulpknop live sessie", self.window.live_session_help_button),
+            ("maximaliseren", self.window.own_trend_panel.expand_button),
+        ]
+        for naam, knop in knoppen:
+            with self.subTest(button=naam):
+                self.assertTrue(self._fits(knop), f"{naam} snijdt zijn teken af")
+
+    def test_the_pickers_in_the_event_form_fit(self):
+        dialog = bezoekerslijst_app.NewProjectDialog(self.window)
+        kiezers = [b for b in dialog.findChildren(QPushButton) if b.property("picker") == "true"]
+        self.assertEqual(len(kiezers), 3, "datum, begintijd en eindtijd")
+        for knop in kiezers:
+            with self.subTest(button=knop.toolTip()):
+                self.assertTrue(self._fits(knop))
+
+    def test_compact_buttons_are_marked_so_the_stylesheet_can_reach_them(self):
+        for knop in (self.window.live_session_help_button,
+                     self.window.own_trend_panel.expand_button):
+            self.assertEqual(knop.property("picker"), "true")
+
+    def test_the_stylesheet_trims_the_padding_for_them(self):
+        css = (ROOT / "theme" / "styles.py").read_text(encoding="utf-8")
+        self.assertIn('QPushButton[picker="true"]', css)
+
+
 class WiringTests(unittest.TestCase):
     def test_all_four_date_fields_have_a_picker(self):
         for snippet in (

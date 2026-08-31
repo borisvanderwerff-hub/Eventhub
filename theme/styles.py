@@ -48,6 +48,9 @@ def build_stylesheet(dark_mode: bool = False) -> str:
         QLabel#eyebrowLabel {{ color: #687d9d; font-size: 8pt; font-weight: 800; letter-spacing: 1.4px; padding: 2px 2px 0 2px; }}
 
         QPushButton {{ min-height: 20px; padding: 8px 14px; border-radius: 8px; border: 1px solid {border}; font-weight: 700; }}
+        /* Compacte knoppen met alleen een teken: de gewone zijmarge van 14px
+           laat op een vaste breedte van 34px niets over voor het teken zelf. */
+        QPushButton[picker="true"] {{ padding: 4px 2px; font-size: 12pt; }}
         QPushButton#primaryButton {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #6c2cff, stop:1 #8f3cff); color: #ffffff; border-color: #8a52ff; }}
         QPushButton#primaryButton:hover {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #7f3cff, stop:1 #b44cff); border-color: #b486ff; }}
         QPushButton#primaryButton:pressed {{ background: #5520d6; }}
