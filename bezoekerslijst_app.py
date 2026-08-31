@@ -8690,7 +8690,10 @@ class BezoekerslijstWindow(QMainWindow):
             return True
         if current == "Afgerond":
             return False
-        open_tasks = sum(not bool(task.get("done")) for task in event.get("tasks", []))
+        open_tasks = sum(
+            not bool(task.get("done")) and self._task_blocks_readiness(event, task)
+            for task in event.get("tasks", [])
+        )
         target = current
         if open_tasks == 0:
             target = "Gereed"
@@ -8700,6 +8703,23 @@ class BezoekerslijstWindow(QMainWindow):
             return False
         event["status"] = target
         return True
+
+    @staticmethod
+    def _task_blocks_readiness(event: dict, task: dict) -> bool:
+        """Telt deze taak mee voor de vraag of de voorbereiding Gereed is?
+
+        Alleen werk tot en met de evenementdag hoort bij de voorbereiding. Taken
+        die na afloop moeten gebeuren — nazorg, registreren in Rudder of WENS —
+        stonden een Gereed-status altijd in de weg, waardoor een evenement met
+        het standaardtemplate tot de laatste dag In voorbereiding bleef.
+        """
+        event_date = parse_date(event.get("date", ""))
+        due = task_due_date(event, task)
+        if event_date is None or due is None:
+            # Zonder datum valt er niets te vergelijken; dan is de aanduiding
+            # op de taak zelf het enige houvast.
+            return str(task.get("relative", "before")) != "after"
+        return due <= event_date
 
     def _task_item_changed(self, item: QTableWidgetItem):
         if self.loading_tables or item.column() != 0:
