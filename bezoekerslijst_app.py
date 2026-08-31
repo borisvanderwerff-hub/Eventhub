@@ -7917,21 +7917,19 @@ class BezoekerslijstWindow(QMainWindow):
         reservekopieën en de livesessiedatabase worden automatisch opgeschoond.
         Een geëxporteerd bestand staat buiten dat bereik en blijft staan tot
         iemand het zelf verwijdert. Daarom hier een expliciete melding vooraf.
+
+        Bewust kort gehouden: deze melding verschijnt bij elke export met
+        deelnemersgegevens, en een lange tekst wordt weggeklikt zonder te lezen.
         """
         days = self._retention_days()
         box = QMessageBox(self)
         box.setWindowTitle("Persoonsgegevens exporteren")
         box.setIcon(QMessageBox.Icon.Warning)
         box.setTextFormat(Qt.TextFormat.RichText)
-        box.setText(f"<b>{escape(what)} bevat persoonsgegevens van bezoekers.</b>")
+        box.setText(f"<b>{escape(what)} bevat persoonsgegevens.</b>")
         box.setInformativeText(
-            "Zodra u exporteert, verlaten die gegevens EventHub en gelden de automatische "
-            f"maatregelen niet meer.<p>De bewaartermijn in EventHub staat op <b>{days} dagen</b> "
-            "na het evenement. Voor het geëxporteerde bestand blijft die termijn wettelijk gelden, "
-            "maar EventHub kan hem daar niet afdwingen — u bent zelf verantwoordelijk voor het "
-            "tijdig verwijderen.</p>"
-            "<p>Bewaar het bestand op een plek die daarvoor is toegestaan en deel het niet breder "
-            "dan nodig.</p>"
+            "EventHub wist dit bestand niet automatisch. "
+            f"Verwijder het zelf binnen {days} dagen na het evenement."
         )
         proceed = box.addButton("Toch exporteren", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("Annuleren", QMessageBox.ButtonRole.RejectRole)

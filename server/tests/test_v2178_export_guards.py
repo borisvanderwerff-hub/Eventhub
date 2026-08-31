@@ -62,8 +62,16 @@ class WarningTests(unittest.TestCase):
     def test_warning_names_the_retention_period_and_the_responsibility(self):
         body = block("_confirm_personal_data_export")
         self.assertIn("self._retention_days()", body)
-        self.assertIn("verlaten die gegevens EventHub", body)
-        self.assertIn("zelf verantwoordelijk", body)
+        self.assertIn("bevat persoonsgegevens", body)
+        self.assertIn("niet automatisch", body)
+        self.assertIn("Verwijder het zelf", body)
+
+    def test_warning_stays_short_enough_to_be_read(self):
+        """Een lange melding bij elke export wordt weggeklikt zonder te lezen."""
+        body = block("_confirm_personal_data_export")
+        shown = body[body.index("box.setText("):body.index("proceed = ")]
+        words = len(shown.replace('"', " ").split())
+        self.assertLess(words, 45, "de meldingstekst is weer te lang geworden")
 
     def test_warning_can_be_cancelled(self):
         body = block("_confirm_personal_data_export")
