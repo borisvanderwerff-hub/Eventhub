@@ -136,6 +136,7 @@ from bezoekerslijst_core import (
     set_present,
     visitor_type,
 )
+from emt_live_manual import MANUAL_TITLE, manual_html
 from emt_retention import (
     RETENTION_CHOICES,
     RETENTION_DEFAULT_DAYS,
@@ -4241,6 +4242,13 @@ class BezoekerslijstWindow(QMainWindow):
         )
         self.live_session_help_button.clicked.connect(self.start_live_session_tour)
         live_session_heading.addWidget(self.live_session_help_button)
+        self.live_manual_button = _make_button_compact(QPushButton("Handleiding (PDF)"))
+        self.live_manual_button.setObjectName("secondaryButton")
+        self.live_manual_button.setToolTip(
+            "Sla een handleiding op om mee te sturen naar medewerkers op locatie."
+        )
+        self.live_manual_button.clicked.connect(self.export_live_session_manual)
+        live_session_heading.addWidget(self.live_manual_button)
         live_session_text = QLabel(
             "Het gekozen evenement is leidend. Start een nieuwe live-run voor dit evenement of verbind dit apparaat "
             "met een actieve livesessie op het lokale netwerk."
@@ -7438,6 +7446,36 @@ class BezoekerslijstWindow(QMainWindow):
         actions.addWidget(continue_button)
         layout.addLayout(actions)
         dialog.exec()
+
+    def export_live_session_manual(self):
+        """Sla de handleiding livesessies op als deelbare PDF.
+
+        Bevat geen persoonsgegevens, dus zonder waarschuwing vooraf; hij is
+        juist bedoeld om mee te sturen naar medewerkers op locatie.
+        """
+        default = exports_directory() / "EventHub - handleiding livesessie.pdf"
+        file_name, _ = QFileDialog.getSaveFileName(
+            self, "Handleiding opslaan", str(default), "PDF-bestand (*.pdf)"
+        )
+        if not file_name:
+            return
+        if not file_name.lower().endswith(".pdf"):
+            file_name += ".pdf"
+        try:
+            document = QTextDocument(self)
+            document.setDefaultFont(QFont("Segoe UI", 10))
+            document.setHtml(manual_html(str(self.profile.get("name", "") or "")))
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+            printer.setOutputFileName(file_name)
+            printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+            printer.setPageOrientation(QPageLayout.Orientation.Portrait)
+            printer.setPageMargins(QMarginsF(18, 18, 18, 18), QPageLayout.Unit.Millimeter)
+            document.print_(printer)
+            self.status_label.setText(f"Handleiding opgeslagen: {file_name}")
+            self._offer_open_export_folder(file_name)
+        except Exception as exc:
+            self._show_runtime_error("Handleiding opslaan", exc)
 
     def _tutorial_is_running(self) -> bool:
         """Staat er al een rondleiding open?
