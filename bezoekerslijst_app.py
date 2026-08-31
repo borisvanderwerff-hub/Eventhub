@@ -136,6 +136,7 @@ from bezoekerslijst_core import (
     set_present,
     visitor_type,
 )
+from emt_education import crosstab as education_crosstab
 from emt_live_manual import MANUAL_TITLE, manual_html
 from emt_retention import (
     RETENTION_CHOICES,
@@ -3702,6 +3703,31 @@ class BezoekerslijstWindow(QMainWindow):
         statistics_grid.addWidget(self.statistics_cards["profile"], 0, 1)
         statistics_grid.addWidget(self.statistics_cards["gender"], 1, 0)
         statistics_grid.addWidget(self.statistics_cards["age"], 1, 1)
+
+        # Extra weergave onder de bestaande grafieken; die blijven ongewijzigd.
+        crosstab_box = QGroupBox("Opleidingsniveau x profiel")
+        crosstab_box.setObjectName("statisticsCard")
+        crosstab_layout = QVBoxLayout(crosstab_box)
+        crosstab_layout.setContentsMargins(16, 14, 16, 14)
+        crosstab_layout.setSpacing(6)
+        crosstab_caption = QLabel(
+            "Welke profielen komen bij welk opleidingsniveau. Schrijfwijzen als MBO 4, "
+            "mbo-4 en MBO niveau 4 worden als een groep geteld; de aangeleverde gegevens "
+            "blijven ongewijzigd."
+        )
+        crosstab_caption.setObjectName("statisticsCaption")
+        crosstab_caption.setWordWrap(True)
+        crosstab_layout.addWidget(crosstab_caption)
+        self.crosstab_table = QTableWidget(0, 0)
+        self.crosstab_table.setObjectName("dashboardTable")
+        self.crosstab_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.crosstab_table.setMinimumHeight(200)
+        crosstab_layout.addWidget(self.crosstab_table)
+        self.crosstab_note = QLabel("")
+        self.crosstab_note.setObjectName("hintLabel")
+        self.crosstab_note.setWordWrap(True)
+        crosstab_layout.addWidget(self.crosstab_note)
+        statistics_grid.addWidget(crosstab_box, 2, 0, 1, 2)
         statistics_scroll = QScrollArea()
         statistics_scroll.setWidgetResizable(True)
         statistics_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -10076,6 +10102,60 @@ class BezoekerslijstWindow(QMainWindow):
         self.statistics_cards["profile"].chart.set_data(self._field_counts("Profiel", records=records))
         self.statistics_cards["gender"].chart.set_data(self._field_counts("Geslacht", limit=10, records=records))
         self.statistics_cards["age"].chart.set_data(self._age_counts(records))
+        self._update_crosstab(records)
+
+    def _update_crosstab(self, records):
+        """Vul de kruistabel opleidingsniveau x profiel."""
+        if not hasattr(self, "crosstab_table"):
+            return
+        table = self.crosstab_table
+        data = education_crosstab(records)
+        rows, columns = data["rows"], data["columns"]
+        if not rows:
+            table.setRowCount(0)
+            table.setColumnCount(0)
+            self.crosstab_note.setText("Nog geen deelnemers met een opleidingsniveau.")
+            return
+
+        table.setColumnCount(len(columns) + 2)
+        table.setHorizontalHeaderLabels(["Opleidingsniveau", *columns, "Totaal"])
+        table.setRowCount(len(rows) + 1)
+
+        def cell(text, bold=False, dim=False):
+            item = QTableWidgetItem(str(text))
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            if bold:
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+            if dim and str(text) == "0":
+                item.setForeground(QColor("#8899ad"))
+            return item
+
+        for row_index, level in enumerate(rows):
+            table.setItem(row_index, 0, cell(level, bold=True))
+            for column_index, profile in enumerate(columns, start=1):
+                value = data["counts"].get((level, profile), 0)
+                table.setItem(row_index, column_index, cell(value, dim=True))
+            table.setItem(row_index, len(columns) + 1, cell(data["row_totals"][level], bold=True))
+
+        total_row = len(rows)
+        table.setItem(total_row, 0, cell("Totaal", bold=True))
+        for column_index, profile in enumerate(columns, start=1):
+            table.setItem(total_row, column_index, cell(data["column_totals"][profile], bold=True))
+        table.setItem(total_row, len(columns) + 1, cell(data["total"], bold=True))
+        table.resizeColumnsToContents()
+
+        # Laat zien welke schrijfwijzen zijn samengevoegd, zodat zichtbaar
+        # blijft dat de weergave iets doet met de aangeleverde waarden.
+        merged = data["merged"]
+        if merged:
+            samenvatting = "; ".join(
+                f"{level}: {', '.join(values)}" for level, values in sorted(merged.items())
+            )
+            self.crosstab_note.setText(f"Samengevoegde schrijfwijzen — {samenvatting}")
+        else:
+            self.crosstab_note.setText("")
 
     def _app_data_root(self):
         return application_data_root()
