@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QMarginsF, QPoint, QRect, QRectF, QSettings, QSize, QStandardPaths, Qt, QTimer, QUrl, QUrlQuery
+from PySide6.QtCore import QDate, QEvent, QItemSelectionModel, QMarginsF, QPoint, QRect, QRectF, QSettings, QSize, QStandardPaths, Qt, QTime, QTimer, QUrl, QUrlQuery
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -45,6 +45,7 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
+    QCalendarWidget,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -78,6 +79,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QSystemTrayIcon,
     QTextBrowser,
+    QTimeEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -255,6 +257,104 @@ def event_name_with_date(name: str, event_date: str) -> str:
     parsed = parse_date(event_date)
     dated = f"{base} ({parsed.strftime("%d-%m-'%y")})" if parsed else base
     return dated + sequence
+
+
+def _picker_button(tooltip: str) -> QPushButton:
+    button = QPushButton("📅")
+    button.setObjectName("secondaryButton")
+    button.setFixedWidth(34)
+    button.setToolTip(tooltip)
+    button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    return button
+
+
+def with_date_picker(line_edit: QLineEdit) -> QWidget:
+    """Zet een kalenderknop naast een datumveld.
+
+    Het tekstveld blijft leidend: typen kan gewoon en leeg laten mag. Dat is
+    de reden om geen QDateEdit te gebruiken, want die heeft altijd een waarde
+    en kan dus niet leeg zijn.
+
+    De kalender opent pas na een klik op de knop, zodat hij niet in de weg
+    zit wanneer iemand de datum simpelweg intypt.
+    """
+    holder = QWidget()
+    layout = QHBoxLayout(holder)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+    layout.addWidget(line_edit, 1)
+    button = _picker_button("Datum kiezen uit een kalender")
+    layout.addWidget(button)
+
+    def open_calendar():
+        popup = QDialog(holder)
+        popup.setWindowFlags(Qt.WindowType.Popup)
+        popup_layout = QVBoxLayout(popup)
+        popup_layout.setContentsMargins(6, 6, 6, 6)
+        calendar = QCalendarWidget()
+        calendar.setGridVisible(True)
+        calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        # Openen op de datum die er al staat; anders op vandaag.
+        bestaand = parse_date(line_edit.text())
+        calendar.setSelectedDate(
+            QDate(bestaand.year, bestaand.month, bestaand.day) if bestaand else QDate.currentDate()
+        )
+        popup_layout.addWidget(calendar)
+
+        def kies(date_value):
+            line_edit.setText(date_value.toString("dd-MM-yyyy"))
+            line_edit.editingFinished.emit()
+            popup.accept()
+
+        calendar.clicked.connect(kies)
+        popup.move(button.mapToGlobal(QPoint(0, button.height() + 2)))
+        popup.exec()
+
+    button.clicked.connect(open_calendar)
+    return holder
+
+
+def with_time_picker(line_edit: QLineEdit) -> QWidget:
+    """Zet een tijdknop naast een tijdveld.
+
+    Zelfde opzet als bij de datum: het tekstveld blijft leidend en mag leeg
+    blijven. De keuze gaat per kwartier, want dat is waar evenementtijden in
+    de praktijk op vallen; afwijkende tijden typt u gewoon.
+    """
+    holder = QWidget()
+    layout = QHBoxLayout(holder)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+    layout.addWidget(line_edit, 1)
+    button = _picker_button("Tijd kiezen")
+    layout.addWidget(button)
+
+    def open_times():
+        popup = QDialog(holder)
+        popup.setWindowFlags(Qt.WindowType.Popup)
+        popup_layout = QVBoxLayout(popup)
+        popup_layout.setContentsMargins(6, 6, 6, 6)
+        popup_layout.setSpacing(6)
+        editor = QTimeEdit()
+        editor.setDisplayFormat("HH:mm")
+        huidig = QTime.fromString(str(line_edit.text() or "").strip(), "HH:mm")
+        editor.setTime(huidig if huidig.isValid() else QTime(9, 0))
+        popup_layout.addWidget(editor)
+        confirm = QPushButton("Kiezen")
+        confirm.setObjectName("primaryButton")
+        popup_layout.addWidget(confirm)
+
+        def kies():
+            line_edit.setText(editor.time().toString("HH:mm"))
+            line_edit.editingFinished.emit()
+            popup.accept()
+
+        confirm.clicked.connect(kies)
+        popup.move(button.mapToGlobal(QPoint(0, button.height() + 2)))
+        popup.exec()
+
+    button.clicked.connect(open_times)
+    return holder
 
 
 def valid_time_text(value: str) -> bool:
@@ -2039,14 +2139,14 @@ class NewProjectDialog(QDialog):
         form.addRow("Naam*:", self.name)
         form.addRow("Soort evenement*:", self.event_type)
         if not self.template_mode:
-            form.addRow("Datum*:", self.project_date)
+            form.addRow("Datum*:", with_date_picker(self.project_date))
         time_row = QWidget()
         time_layout = QHBoxLayout(time_row)
         time_layout.setContentsMargins(0, 0, 0, 0)
         time_layout.setSpacing(8)
-        time_layout.addWidget(self.start_time)
+        time_layout.addWidget(with_time_picker(self.start_time))
         time_layout.addWidget(QLabel("tot"))
-        time_layout.addWidget(self.end_time)
+        time_layout.addWidget(with_time_picker(self.end_time))
         form.addRow("Tijd:", time_row)
         form.addRow("Locatie:", self.location)
         form.addRow("Adres:", self.location_address)
@@ -3593,7 +3693,7 @@ class BezoekerslijstWindow(QMainWindow):
         detail_rows = (
             ("Contactstatus", self.callback_detail_status),
             ("Laatste contact", self.callback_detail_last_contact),
-            ("Opnieuw contact", self.callback_detail_followup),
+            ("Opnieuw contact", with_date_picker(self.callback_detail_followup)),
             ("WhatsApp", self.callback_detail_whatsapp),
         )
         for row_index, (label_text, field_widget) in enumerate(detail_rows):
@@ -8271,7 +8371,7 @@ class BezoekerslijstWindow(QMainWindow):
             if known and known.get("date"):
                 field.setText(str(known["date"]))
             fields[name] = field
-            form.addRow(f"{name}:", field)
+            form.addRow(f"{name}:", with_date_picker(field))
         container = QWidget()
         container.setLayout(form)
         scroll = QScrollArea()
