@@ -86,6 +86,51 @@ class StylingTests(unittest.TestCase):
                     self.assertTrue(styled, f"{name} heeft geen opmaak en blijft onzichtbaar")
 
 
+class SessionSurvivalTests(unittest.TestCase):
+    """Filteren in Rudder herlaadt de pagina; de importsessie moet dat overleven."""
+
+    def setUp(self):
+        self.bulk = (EXTENSION / "event_bulk.js").read_text(encoding="utf-8")
+
+    def test_the_session_is_stored_not_only_read_from_the_url(self):
+        self.assertIn("sessionStorage.setItem(SESSION_KEY", self.bulk)
+        self.assertIn("sessionStorage.getItem(SESSION_KEY)", self.bulk)
+
+    def test_the_stored_session_expires(self):
+        self.assertIn("expiresAt", self.bulk)
+        self.assertIn("Date.now() > opgeslagen.expiresAt", self.bulk)
+
+    def test_the_session_is_cleared_when_the_import_ends(self):
+        self.assertGreaterEqual(self.bulk.count("sessionStorage.removeItem(SESSION_KEY)"), 2)
+
+    def test_the_panel_warns_when_more_pages_exist(self):
+        self.assertIn("pagina 1 van", self.bulk)
+
+    def test_the_panel_tells_you_to_filter_when_owners_differ(self):
+        self.assertIn("verschillende eigenaren", self.bulk)
+
+
+class SelectReadingTests(unittest.TestCase):
+    """Rudder gebruikt Select2; in een opgehaald document heeft dat niet gedraaid."""
+
+    def setUp(self):
+        self.scraper = (EXTENSION / "rudder_scrape.js").read_text(encoding="utf-8")
+
+    def test_selects_are_read_from_the_selected_attribute(self):
+        self.assertIn('querySelector?.("option[selected]")', self.scraper)
+        self.assertIn('querySelector("option[selected]")', self.scraper)
+
+    def test_an_unselected_list_never_returns_the_placeholder(self):
+        """Zonder deze controle kwam Selecteer optie als naam binnen."""
+        self.assertIn("if (current && current.value)", self.scraper)
+
+    def test_the_event_name_prefers_the_server_rendered_heading(self):
+        self.assertIn(".js-page-header-title", self.scraper)
+        heading = self.scraper.index(".js-page-header-title")
+        fallback = self.scraper.index('selected("item[event_template_id]")')
+        self.assertLess(heading, fallback, "de kop hoort voor de keuzelijst te komen")
+
+
 class ManifestTests(unittest.TestCase):
     def setUp(self):
         self.manifest = json.loads((EXTENSION / "manifest.json").read_text(encoding="utf-8"))

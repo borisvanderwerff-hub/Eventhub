@@ -13,10 +13,29 @@
   function readers(root) {
     const field = name => root.querySelector(`[name="${CSS.escape(name)}"]`);
     return {
-      value: name => field(name)?.value || "",
+      value: name => {
+        const node = field(name);
+        if (!node) return "";
+        if (node.tagName === "SELECT") {
+          const marked = node.querySelector("option[selected]");
+          if (marked) return marked.getAttribute("value") || "";
+        }
+        return node.value || "";
+      },
       checked: name => Boolean(root.querySelector(`[name="${CSS.escape(name)}"][type="checkbox"]`)?.checked),
       radio: name => root.querySelector(`[name="${CSS.escape(name)}"]:checked`)?.value || "",
-      selected: name => clean(field(name)?.selectedOptions?.[0]?.textContent || ""),
+      selected: name => {
+        const node = field(name);
+        if (!node) return "";
+        // Rudder gebruikt Select2. In een opgehaald document heeft dat nog niet
+        // gedraaid, en dan valt selectedOptions terug op de eerste optie
+        // (Selecteer optie). Het selected-attribuut is er wel.
+        const marked = node.querySelector?.("option[selected]");
+        if (marked) return clean(marked.textContent);
+        const current = node.selectedOptions?.[0];
+        if (current && current.value) return clean(current.textContent);
+        return "";
+      },
       info: name => {
         const node = root.querySelector(`.js-event-template-info[data-field="${CSS.escape(name)}"]`);
         if (!node) return "";
@@ -51,7 +70,11 @@
       format: EVENT_FORMAT, version: 1, direction: "import", event_id: String(eventId || ""),
       data: {
         active: checked("item[nl_NL][active]"),
-        event_template_id: value("item[event_template_id]"), event_template: selected("item[event_template_id]"),
+        event_template_id: value("item[event_template_id]"),
+        // De paginakop is server-gerenderd en dus betrouwbaarder dan de
+        // keuzelijst; die valt terug als de kop ontbreekt.
+        event_template: clean(root.querySelector(".js-page-header-title")?.textContent || "")
+          || selected("item[event_template_id]"),
         reference: info("reference"), event_type: info("event_type.title"), form_type: info("form_type.title"),
         owner_id: value("item[user_id]"), owner: selected("item[user_id]"),
         dates: scrapeDates(root, value),

@@ -14,9 +14,31 @@
   if (!/^\/rudder\/event\/events\/?$/i.test(location.pathname)) return;
 
   const HINT_DISMISSED = "eventhub-bulk-hint-dismissed";
+  const SESSION_KEY = "eventhub-bulk-import-session";
+  const LIFETIME_MS = 30 * 60 * 1000;
+
+  // De sessie moet het filteren overleven. EventHub opent de kale
+  // overzichtspagina; zodra de gebruiker daar op eigen naam filtert herlaadt
+  // Rudder de pagina en is de hash weg. Zonder deze opslag zou het paneel dan
+  // de ongefilterde lijst tonen, of helemaal verdwijnen.
+  const bewaar = reference => sessionStorage.setItem(SESSION_KEY, JSON.stringify(reference));
+  const herstel = () => {
+    try {
+      const opgeslagen = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null");
+      if (!opgeslagen || Date.now() > opgeslagen.expiresAt) return null;
+      return opgeslagen;
+    } catch (_error) {
+      return null;
+    }
+  };
 
   const match = location.hash.match(/^#eventhub-import-all=(\d+)\.([a-f0-9]{64})$/i);
-  if (!match) {
+  if (match) {
+    bewaar({ port: Number(match[1]), token: match[2], expiresAt: Date.now() + LIFETIME_MS });
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+  const sessie = herstel();
+  if (!sessie) {
     // Zonder poort en token valt er niets te versturen. Wie hier zelf naartoe
     // navigeert en een importknop zoekt, krijgt daarom te zien waar hij wel
     // begint; anders lijkt de assistent niet te werken.
@@ -38,8 +60,7 @@
     });
     return;
   }
-  const reference = { port: Number(match[1]), token: match[2] };
-  history.replaceState(null, "", location.pathname + location.search);
+  const reference = sessie;
 
   const scraper = window.EventHubRudderScrape;
   if (!scraper) return;
@@ -68,8 +89,10 @@
   const eigenaren = [...new Set(cards.map(card => card.owner).filter(Boolean))];
   panel.innerHTML =
     `<b>${cards.length} evenement(en) op deze pagina</b>` +
-    (eigenaren.length === 1 ? `<br>Eigenaar: ${scraper.clean(eigenaren[0])}` : "") +
-    (laatste > 1 ? `<br>Er zijn ${laatste} pagina's. Filter in Rudder om het aantal te beperken.` : "") +
+    (eigenaren.length === 1
+      ? `<br>Eigenaar: ${scraper.clean(eigenaren[0])}`
+      : `<br>${eigenaren.length} verschillende eigenaren. Filter hierboven op uw naam; dit paneel blijft staan.`) +
+    (laatste > 1 ? `<br>Let op: dit is pagina 1 van ${laatste}. Alleen wat hier staat wordt geimporteerd.` : "") +
     `<br><button type="button" id="eventhub-bulk-start">Alles importeren naar EventHub</button>` +
     `<button type="button" id="eventhub-bulk-cancel">Annuleren</button>`;
 
@@ -102,6 +125,7 @@
     }
     // Sluitsignaal: hierop rondt EventHub de import af en toont het overzicht.
     await send({ format: scraper.EVENT_FORMAT, action: "done" });
+    sessionStorage.removeItem(SESSION_KEY);
     setStatus(
       `<b>Klaar.</b><br>${gelukt} van ${cards.length} verstuurd naar EventHub.` +
       (mislukt.length ? `<br>Overgeslagen: ${mislukt.slice(0, 3).join("; ")}` : "") +
@@ -112,6 +136,7 @@
   panel.addEventListener("click", event => {
     if (event.target.id === "eventhub-bulk-cancel") {
       send({ format: scraper.EVENT_FORMAT, action: "done" });
+      sessionStorage.removeItem(SESSION_KEY);
       panel.remove();
     }
     if (event.target.id === "eventhub-bulk-start") {
