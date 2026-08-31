@@ -40,6 +40,52 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertIsNone(check_brackets("// pagina's tellen\nfetch(`http://x/${y}`);"))
 
 
+class StylingTests(unittest.TestCase):
+    """Een paneel zonder opmaak staat als kale div onderaan de pagina.
+
+    Precies dat gebeurde: het paneel gebruikte eventhub-rudder-toast als class
+    terwijl de stylesheet alleen een id-regel kende. Technisch aanwezig,
+    praktisch onzichtbaar.
+    """
+
+    def setUp(self):
+        self.css = (EXTENSION / "content.css").read_text(encoding="utf-8")
+
+    def _rule_for(self, selector):
+        """Geef het regelblok waarvan de selector exact zo begint."""
+        for block in self.css.split("}"):
+            if selector in block.split("{")[0]:
+                return block
+        return ""
+
+    def test_the_panel_class_positions_the_panel(self):
+        rule = self._rule_for(".eventhub-rudder-toast")
+        self.assertTrue(rule, "de class heeft geen enkele regel")
+        self.assertIn("position:fixed", rule.replace(" ", ""))
+        self.assertIn("z-index", rule)
+
+    def test_buttons_inside_a_panel_are_styled(self):
+        self.assertIn(".eventhub-rudder-toast button", self.css)
+
+    def test_panels_carry_a_class_and_not_only_an_id(self):
+        """Meerdere panelen tegelijk kunnen niet dezelfde id delen."""
+        bulk = (EXTENSION / "event_bulk.js").read_text(encoding="utf-8")
+        self.assertIn('className = "eventhub-rudder-toast', bulk)
+
+    def test_every_element_the_assistant_creates_can_be_seen(self):
+        for path in sorted(EXTENSION.glob("*.js")):
+            source = path.read_text(encoding="utf-8")
+            for line in source.splitlines():
+                if ".id =" not in line or '"' not in line:
+                    continue
+                name = line.split('"')[1]
+                if not name.startswith("eventhub"):
+                    continue
+                styled = f"#{name}" in self.css or "eventhub-rudder-toast" in source
+                with self.subTest(element=name, script=path.name):
+                    self.assertTrue(styled, f"{name} heeft geen opmaak en blijft onzichtbaar")
+
+
 class ManifestTests(unittest.TestCase):
     def setUp(self):
         self.manifest = json.loads((EXTENSION / "manifest.json").read_text(encoding="utf-8"))
