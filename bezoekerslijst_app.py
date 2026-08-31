@@ -417,11 +417,33 @@ class ArtworkHeader(QFrame):
         painter.drawPixmap(max(0, self.width() - mirrored.width()), 0, mirrored)
 
 
+# Vaste naam van de map met applicatiegegevens: back-ups, herstelkopie,
+# logboeken en cache.
+APP_DATA_ORGANISATION = "DCPL"
+
+
 def application_data_root():
-    location = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
-    base = Path(location) if location else Path.home() / "Library" / "Application Support" / "EventHub"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+    """De map met applicatiegegevens, altijd op dezelfde plek.
+
+    Eerder werd dit uit QStandardPaths gehaald, maar dat leidt de naam af van
+    de applicatienaam die pas in main() wordt gezet. Wie deze functie eerder
+    aanriep, bijvoorbeeld vanuit een test of een los script, kreeg een map
+    vernoemd naar het draaiende programma. Zo belandden logbestanden naast de
+    installatiebestanden van Python.
+
+    De locatie wordt daarom rechtstreeks bepaald, net als in server/paths.py.
+    """
+    if sys.platform.startswith("win"):
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        root = Path(base) if base else Path.home() / "AppData" / "Local"
+        root = root / APP_DATA_ORGANISATION / APP_NAME
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support" / APP_DATA_ORGANISATION / APP_NAME
+    else:
+        base = os.environ.get("XDG_DATA_HOME")
+        root = (Path(base) if base else Path.home() / ".local" / "share") / APP_DATA_ORGANISATION / APP_NAME
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 class RudderLocalBridge:
