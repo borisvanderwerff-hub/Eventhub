@@ -4221,7 +4221,9 @@ class BezoekerslijstWindow(QMainWindow):
         self.event_control_tabs = QTabWidget()
         self.event_control_tabs.setDocumentMode(True)
 
-        live_session_tab = QWidget()
+        # Als attribuut bewaren: de knop Live sessie op het startscherm en de
+        # losse uitleg schakelen hier naartoe.
+        self.live_session_tab = live_session_tab = QWidget()
         live_session_layout = QVBoxLayout(live_session_tab)
         live_session_layout.setContentsMargins(18, 18, 18, 18)
         live_session_heading = QHBoxLayout()
@@ -4231,8 +4233,9 @@ class BezoekerslijstWindow(QMainWindow):
         live_session_heading.addStretch()
         # Losse uitleg naast de hoofdrondleiding: live sessies vragen om context
         # op de plek zelf, en de algemene rondleiding zou er te lang van worden.
-        self.live_session_help_button = QPushButton("?  Hoe werkt dit?")
+        self.live_session_help_button = QPushButton("?")
         self.live_session_help_button.setObjectName("secondaryButton")
+        self.live_session_help_button.setFixedWidth(34)
         self.live_session_help_button.setToolTip(
             "Korte uitleg over samen inchecken met meerdere apparaten."
         )
@@ -7436,6 +7439,25 @@ class BezoekerslijstWindow(QMainWindow):
         layout.addLayout(actions)
         dialog.exec()
 
+    def _tutorial_is_running(self) -> bool:
+        """Staat er al een rondleiding open?
+
+        Na afloop vernietigt Qt de overlay terwijl de Python-verwijzing blijft
+        bestaan; isVisible() geeft dan een RuntimeError. Die vangen we op en
+        behandelen hem als 'er loopt niets meer'.
+        """
+        overlay = getattr(self, "_tutorial_overlay", None)
+        if overlay is None:
+            return False
+        try:
+            if overlay.isVisible():
+                overlay.raise_()
+                return True
+        except RuntimeError:
+            pass
+        self._tutorial_overlay = None
+        return False
+
     def start_live_session_tour(self, *_):
         """Losse uitleg over samen inchecken met meerdere apparaten.
 
@@ -7443,9 +7465,7 @@ class BezoekerslijstWindow(QMainWindow):
         van de hele applicatie, terwijl dit onderwerp om context op de plek
         zelf vraagt en anders onevenredig veel stappen zou opeisen.
         """
-        active_overlay = getattr(self, "_tutorial_overlay", None)
-        if active_overlay is not None and active_overlay.isVisible():
-            active_overlay.raise_()
+        if self._tutorial_is_running():
             return
 
         original_tab = self.event_control_tabs.currentWidget()
@@ -7509,7 +7529,8 @@ class BezoekerslijstWindow(QMainWindow):
             },
         ]
 
-        def finish_live_tour():
+        def finish_live_tour(completed: bool = True):
+            del completed
             self._tutorial_overlay = None
             if original_tab is not None:
                 index = self.event_control_tabs.indexOf(original_tab)
@@ -7522,9 +7543,7 @@ class BezoekerslijstWindow(QMainWindow):
         self._tutorial_overlay = TutorialOverlay(self, steps, finish_live_tour)
 
     def start_tutorial(self, *_):
-        active_overlay = getattr(self, "_tutorial_overlay", None)
-        if active_overlay is not None and active_overlay.isVisible():
-            active_overlay.raise_()
+        if self._tutorial_is_running():
             return
 
         original_page = self.page_stack.currentWidget()

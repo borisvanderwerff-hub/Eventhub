@@ -18,9 +18,11 @@ class _CapturingOverlay:
     """Vangt de stappen op in plaats van een venster te tonen."""
 
     captured: list = []
+    finished = staticmethod(lambda *_: None)
 
     def __init__(self, host, steps, finished):
         type(self).captured = steps
+        type(self).finished = staticmethod(finished)
 
     def isVisible(self):
         return False
@@ -114,10 +116,36 @@ class LiveSessionTourTests(unittest.TestCase):
     def tearDownClass(cls):
         bezoekerslijst_app.TutorialOverlay = cls.original_overlay
 
-    def test_help_button_starts_the_tour(self):
+    def test_help_button_is_just_a_question_mark(self):
+        """De volledige tekst paste niet in de kop en was slecht leesbaar."""
         button = self.window.live_session_help_button
-        self.assertIn("?", button.text())
-        self.assertTrue(button.toolTip())
+        self.assertEqual(button.text(), "?")
+        self.assertTrue(button.toolTip(), "zonder tekst moet de tooltip het uitleggen")
+
+    def test_finish_callback_accepts_the_result_argument(self):
+        """De overlay roept de callback aan met wel of niet afgerond."""
+        finish = _CapturingOverlay.finished
+        finish(True)
+        finish(False)
+        self.assertIsNone(self.window._tutorial_overlay)
+
+    def test_a_destroyed_overlay_does_not_block_a_new_tour(self):
+        """Qt vernietigt de overlay terwijl de verwijzing blijft bestaan."""
+
+        class Destroyed:
+            def isVisible(self):
+                raise RuntimeError("Internal C++ object (TutorialOverlay) already deleted.")
+
+        self.window._tutorial_overlay = Destroyed()
+        self.window.start_live_session_tour()
+        self.assertIsNot(self.window._tutorial_overlay, None)
+
+    def test_the_live_session_tab_is_reachable_by_name(self):
+        """De knop Live sessie op het startscherm schakelt hier naartoe."""
+        self.assertTrue(hasattr(self.window, "live_session_tab"))
+        self.assertGreaterEqual(
+            self.window.event_control_tabs.indexOf(self.window.live_session_tab), 0
+        )
 
     def test_every_step_can_be_shown(self):
         for step in self.steps:
