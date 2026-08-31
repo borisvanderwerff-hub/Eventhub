@@ -8708,18 +8708,17 @@ class BezoekerslijstWindow(QMainWindow):
     def _task_blocks_readiness(event: dict, task: dict) -> bool:
         """Telt deze taak mee voor de vraag of de voorbereiding Gereed is?
 
-        Alleen werk tot en met de evenementdag hoort bij de voorbereiding. Taken
-        die na afloop moeten gebeuren — nazorg, registreren in Rudder of WENS —
-        stonden een Gereed-status altijd in de weg, waardoor een evenement met
-        het standaardtemplate tot de laatste dag In voorbereiding bleef.
+        De voor/na-aanduiding op de taak is leidend. Wie een taak op na zet,
+        bedoelt werk dat pas na afloop hoort te gebeuren — ook wanneer die op
+        de evenementdag zelf valt. Zulke taken hielden een Gereed-status eerder
+        tegen, waardoor een evenement met het standaardtemplate (dat twee taken
+        na afloop bevat) tot de laatste dag In voorbereiding bleef.
+
+        Een taak met aanduiding voor valt per definitie op of vóór de
+        evenementdag, dus een datumvergelijking voegt hier niets toe.
         """
-        event_date = parse_date(event.get("date", ""))
-        due = task_due_date(event, task)
-        if event_date is None or due is None:
-            # Zonder datum valt er niets te vergelijken; dan is de aanduiding
-            # op de taak zelf het enige houvast.
-            return str(task.get("relative", "before")) != "after"
-        return due <= event_date
+        del event
+        return str(task.get("relative", "before")) != "after"
 
     def _task_item_changed(self, item: QTableWidgetItem):
         if self.loading_tables or item.column() != 0:

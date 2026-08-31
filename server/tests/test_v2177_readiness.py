@@ -50,17 +50,24 @@ class ReadinessScopeTests(unittest.TestCase):
     def test_work_before_the_event_counts(self):
         self.assertTrue(blocks(self.event, task("Bus regelen", 7, "before")))
 
-    def test_work_on_the_event_day_counts(self):
+    def test_work_on_the_event_day_counts_when_marked_before(self):
         self.assertTrue(blocks(self.event, task("Briefing", 0, "before")))
-        self.assertTrue(blocks(self.event, task("Debriefing", 0, "after")))
+
+    def test_after_on_the_event_day_does_not_count(self):
+        """De na-markering is leidend, ook op de dag zelf."""
+        self.assertFalse(blocks(self.event, task("Debriefing", 0, "after")))
 
     def test_work_after_the_event_does_not_count(self):
         self.assertFalse(blocks(self.event, task("Registreren in Rudder", 2, "after")))
 
-    def test_without_an_event_date_the_task_label_decides(self):
+    def test_the_rule_holds_without_an_event_date(self):
         undated = event([], datum="")
         self.assertTrue(blocks(undated, task("Voorbereiden", 3, "before")))
         self.assertFalse(blocks(undated, task("Nazorg", 3, "after")))
+        self.assertFalse(blocks(undated, task("Debriefing", 0, "after")))
+
+    def test_a_task_without_a_marking_counts_as_preparation(self):
+        self.assertTrue(blocks(self.event, {"id": "x", "title": "Onbekend", "done": False}))
 
 
 class StatusTests(unittest.TestCase):
@@ -95,6 +102,14 @@ class StatusTests(unittest.TestCase):
             task("Bus regelen", 7, "before", done=True),
             task("Nazorg", 5, "after", done=False),
         ], status="Gereed")
+        self.assertEqual(sync(item), "Gereed")
+
+
+    def test_only_a_same_day_after_task_open_still_reaches_gereed(self):
+        item = event([
+            task("Bus regelen", 7, "before", done=True),
+            task("Debriefing", 0, "after", done=False),
+        ])
         self.assertEqual(sync(item), "Gereed")
 
 
