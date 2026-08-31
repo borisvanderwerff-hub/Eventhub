@@ -195,6 +195,13 @@ class WiringTests(unittest.TestCase):
         block = APP_SOURCE[start:APP_SOURCE.index("\n    def ", start + 1)]
         self.assertIn('"done"', block)
 
+    def test_rudder_explains_where_the_import_starts(self):
+        """De knop staat in EventHub; in Rudder zelf is dat niet te raden."""
+        bulk = (EXTENSION / "event_bulk.js").read_text(encoding="utf-8")
+        self.assertIn("eventhub-bulk-hint", bulk)
+        self.assertIn("Begin in EventHub", bulk)
+        self.assertIn("eventhub-bulk-hint-dismissed", bulk, "de hint moet weg te klikken zijn")
+
     def test_the_assistant_only_reads_from_rudder(self):
         """De bulkimport mag niets in Rudder wijzigen."""
         bulk = (EXTENSION / "event_bulk.js").read_text(encoding="utf-8")

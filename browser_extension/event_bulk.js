@@ -13,8 +13,31 @@
 (() => {
   if (!/^\/rudder\/event\/events\/?$/i.test(location.pathname)) return;
 
+  const HINT_DISMISSED = "eventhub-bulk-hint-dismissed";
+
   const match = location.hash.match(/^#eventhub-import-all=(\d+)\.([a-f0-9]{64})$/i);
-  if (!match) return;
+  if (!match) {
+    // Zonder poort en token valt er niets te versturen. Wie hier zelf naartoe
+    // navigeert en een importknop zoekt, krijgt daarom te zien waar hij wel
+    // begint; anders lijkt de assistent niet te werken.
+    if (sessionStorage.getItem(HINT_DISMISSED)) return;
+    const hint = document.createElement("div");
+    hint.id = "eventhub-bulk-hint";
+    hint.className = "eventhub-rudder-toast";
+    hint.innerHTML =
+      "<b>Evenementen importeren?</b><br>" +
+      "Begin in EventHub: Evenementen, knop Importeren uit Rudder. " +
+      "Deze pagina opent dan opnieuw met de importknop erbij." +
+      "<br><button type=\"button\" id=\"eventhub-bulk-hint-close\">Verbergen</button>";
+    document.body.appendChild(hint);
+    hint.addEventListener("click", event => {
+      if (event.target.id === "eventhub-bulk-hint-close") {
+        sessionStorage.setItem(HINT_DISMISSED, "1");
+        hint.remove();
+      }
+    });
+    return;
+  }
   const reference = { port: Number(match[1]), token: match[2] };
   history.replaceState(null, "", location.pathname + location.search);
 
