@@ -127,11 +127,87 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn('statistics_grid.addWidget(crosstab_box, 2, 0, 1, 2)', APP_SOURCE)
         self.assertIn("def _update_crosstab(self, records):", APP_SOURCE)
 
+    def test_the_crosstab_is_included_in_the_excel_export(self):
+        """Op het scherm stond hij wel, in de export niet."""
+        start = APP_SOURCE.index("def export_statistics(self)")
+        block = APP_SOURCE[start:APP_SOURCE.index("\n    def ", start + 1)]
+        self.assertIn("crosstab=education_crosstab(event_records)", block)
+
+    def test_the_export_button_label_is_short(self):
+        """De volledige titel liep buiten de knop."""
+        self.assertIn('statistics_export_button = QPushButton("Exporteren")', APP_SOURCE)
+        self.assertNotIn('QPushButton("Statistieken exporteren naar Excel")', APP_SOURCE)
+
     def test_the_source_data_is_never_rewritten(self):
         block = APP_SOURCE[APP_SOURCE.index("def _update_crosstab(self"):]
         block = block[:block.index("\n    def ", 1)]
         self.assertNotIn('record["Opleiding"] =', block)
         self.assertNotIn('record["Profiel"] =', block)
+
+
+class ExcelSheetTests(unittest.TestCase):
+    """De kruistabel als eigen blad in de werkmap."""
+
+    @classmethod
+    def setUpClass(cls):
+        import openpyxl
+        import tempfile
+        from bezoekerslijst_core import export_statistics_workbook
+
+        records = [
+            visitor("MBO 4", "Techniek"), visitor("mbo-4", "techniek"),
+            visitor("MBO niveau 4", "Zorg"), visitor("HAVO", "Economie"),
+        ]
+        output = Path(tempfile.mkdtemp()) / "stat.xlsx"
+        export_statistics_workbook(
+            [("Opleidingsniveau", [("Alle", [("MBO 4", 3)])])],
+            output, "Test", crosstab=crosstab(records),
+        )
+        cls.workbook = openpyxl.load_workbook(output)
+
+    def test_the_sheet_exists(self):
+        self.assertIn("Niveau x profiel", self.workbook.sheetnames)
+
+    def test_the_matrix_holds_the_combinations(self):
+        sheet = self.workbook["Niveau x profiel"]
+        rijen = [
+            [cell for cell in row]
+            for row in sheet.iter_rows(min_row=3, values_only=True)
+            if any(value is not None for value in row)
+        ]
+        kop = rijen[0]
+        self.assertEqual(kop[0], "Opleidingsniveau")
+        self.assertEqual(kop[-1], "Totaal")
+        mbo = next(rij for rij in rijen if rij[0] == "MBO 4")
+        self.assertEqual(mbo[kop.index("Techniek")], 2)
+        self.assertEqual(mbo[kop.index("Zorg")], 1)
+        self.assertEqual(mbo[-1], 3)
+
+    def test_the_margins_add_up(self):
+        sheet = self.workbook["Niveau x profiel"]
+        totaal = next(
+            row for row in sheet.iter_rows(min_row=3, values_only=True)
+            if row and row[0] == "Totaal"
+        )
+        self.assertEqual(totaal[-1], 4)
+
+    def test_merged_spellings_are_written_down(self):
+        sheet = self.workbook["Niveau x profiel"]
+        tekst = " ".join(
+            str(value) for row in sheet.iter_rows(values_only=True)
+            for value in row if value is not None
+        )
+        self.assertIn("Samengevoegde schrijfwijzen", tekst)
+        self.assertIn("mbo-4", tekst)
+
+    def test_a_workbook_without_a_crosstab_still_works(self):
+        import openpyxl
+        import tempfile
+        from bezoekerslijst_core import export_statistics_workbook
+
+        output = Path(tempfile.mkdtemp()) / "zonder.xlsx"
+        export_statistics_workbook([("Opleidingsniveau", [("Alle", [("MBO", 1)])])], output, "Test")
+        self.assertNotIn("Niveau x profiel", openpyxl.load_workbook(output).sheetnames)
 
 
 if __name__ == "__main__":

@@ -764,7 +764,8 @@ def export_workbook(records, output_path: str | Path, reference_records=None):
     workbook.save(output_path)
 
 
-def export_statistics_workbook(dimension_sections, output_path: str | Path, scope_description: str = ""):
+def export_statistics_workbook(dimension_sections, output_path: str | Path,
+                               scope_description: str = "", crosstab: dict | None = None):
     """Write statistics breakdowns with readable bar charts to an .xlsx file.
 
     dimension_sections: list of (dimension_title, groups) where groups is a list of
@@ -853,8 +854,60 @@ def export_statistics_workbook(dimension_sections, output_path: str | Path, scop
             else:
                 sheet.cell(row, start_col, "Geen gegevens")
 
+    if crosstab and crosstab.get("rows"):
+        _write_crosstab_sheet(workbook, crosstab, header_fill)
+
     if not workbook.sheetnames:
         workbook.create_sheet("Statistiek")
 
     workbook.save(output_path)
+
+
+def _write_crosstab_sheet(workbook, crosstab: dict, header_fill) -> None:
+    """Zet opleidingsniveau tegen profiel in een aparte kruistabel.
+
+    De losse verdelingen laten zien hoeveel MBO'ers er waren en hoeveel
+    technische profielen, maar niet welke profielen bij welk niveau horen.
+    Daar is deze tabel voor.
+    """
+    sheet = workbook.create_sheet("Niveau x profiel")
+    sheet.sheet_view.showGridLines = False
+    rows = crosstab["rows"]
+    columns = crosstab["columns"]
+
+    kop = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+    vet = Font(name="Segoe UI", size=10, bold=True)
+
+    sheet.cell(1, 1, "Opleidingsniveau x profiel").font = Font(name="Segoe UI", size=13, bold=True)
+    for offset, label in enumerate(["Opleidingsniveau", *columns, "Totaal"]):
+        cell = sheet.cell(3, 1 + offset, label)
+        cell.font = kop
+        cell.fill = header_fill
+        cell.alignment = Alignment(wrap_text=True, vertical="center")
+    sheet.column_dimensions["A"].width = 24
+    for offset in range(len(columns) + 1):
+        sheet.column_dimensions[get_column_letter(2 + offset)].width = 16
+    sheet.row_dimensions[3].height = 30
+
+    for row_index, level in enumerate(rows, start=4):
+        sheet.cell(row_index, 1, level).font = vet
+        for column_index, profile in enumerate(columns, start=2):
+            sheet.cell(row_index, column_index, crosstab["counts"].get((level, profile), 0))
+        sheet.cell(row_index, len(columns) + 2, crosstab["row_totals"].get(level, 0)).font = vet
+
+    total_row = len(rows) + 4
+    sheet.cell(total_row, 1, "Totaal").font = vet
+    for column_index, profile in enumerate(columns, start=2):
+        sheet.cell(total_row, column_index, crosstab["column_totals"].get(profile, 0)).font = vet
+    sheet.cell(total_row, len(columns) + 2, crosstab.get("total", 0)).font = vet
+
+    # Welke schrijfwijzen zijn samengevoegd, zodat zichtbaar blijft dat de
+    # weergave iets met de aangeleverde waarden doet.
+    merged = crosstab.get("merged") or {}
+    if merged:
+        note_row = total_row + 2
+        sheet.cell(note_row, 1, "Samengevoegde schrijfwijzen").font = vet
+        for offset, (level, spellings) in enumerate(sorted(merged.items()), start=1):
+            sheet.cell(note_row + offset, 1, level)
+            sheet.cell(note_row + offset, 2, ", ".join(spellings))
 

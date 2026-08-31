@@ -3809,7 +3809,8 @@ class BezoekerslijstWindow(QMainWindow):
             self.settings.value("statistics_include_introducees", False, type=bool)
         )
         self.statistics_include_introducees.stateChanged.connect(self._statistics_scope_changed)
-        statistics_export_button = QPushButton("Statistieken exporteren naar Excel")
+        statistics_export_button = QPushButton("Exporteren")
+        statistics_export_button.setToolTip("Statistieken exporteren naar Excel, inclusief de kruistabel")
         statistics_export_button.setObjectName("secondaryButton")
         statistics_export_button.clicked.connect(self.export_statistics)
         statistics_top.addWidget(self.statistics_scope_label, 1)
@@ -11695,7 +11696,12 @@ class BezoekerslijstWindow(QMainWindow):
         if not file_name.lower().endswith(".xlsx"):
             file_name += ".xlsx"
         try:
-            export_statistics_workbook(dimension_sections, file_name, scope_description=scope_text)
+            export_statistics_workbook(
+                dimension_sections, file_name, scope_description=scope_text,
+                # De kruistabel stond alleen op het scherm; in een export naar
+                # Excel hoort hij net zo goed thuis.
+                crosstab=education_crosstab(event_records),
+            )
             self.status_label.setText(f"Statistieken geëxporteerd: {file_name}")
             self._offer_open_export_folder(file_name)
             QMessageBox.information(
