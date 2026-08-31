@@ -5294,6 +5294,8 @@ class BezoekerslijstWindow(QMainWindow):
         if not payload:
             return
         safe_event = re.sub(r"[^A-Za-z0-9._-]+", "-", event.get("name", "evenement")).strip("-") or "evenement"
+        if not self._confirm_personal_data_export("Het Rudder-aanwezigheidsbestand"):
+            return
         default_path = exports_directory() / f"Rudder-aanwezigheid-{safe_event}.json"
         file_name, _ = QFileDialog.getSaveFileName(
             self, "Rudder-aanwezigheidsbestand maken", str(default_path), "EventHub Rudder-bestand (*.json)"
@@ -5311,6 +5313,7 @@ class BezoekerslijstWindow(QMainWindow):
                 f"Bestand gemaakt: {present_count} aanwezig, {len(participants) - present_count} afwezig."
             )
             self.status_label.setText(f"Rudder-aanwezigheidsbestand gemaakt: {target}")
+            self._offer_open_export_folder(target)
             QMessageBox.information(
                 self, "Rudder-bestand gereed",
                 f"{len(participants)} deelnemer(s) geëxporteerd.\n\n"
@@ -7907,6 +7910,53 @@ class BezoekerslijstWindow(QMainWindow):
                 dates[name] = value
         return dates
 
+    def _confirm_personal_data_export(self, what: str) -> bool:
+        """Waarschuw dat persoonsgegevens EventHub verlaten.
+
+        De bewaartermijn geldt alleen binnen EventHub: het dossier, de
+        reservekopieën en de livesessiedatabase worden automatisch opgeschoond.
+        Een geëxporteerd bestand staat buiten dat bereik en blijft staan tot
+        iemand het zelf verwijdert. Daarom hier een expliciete melding vooraf.
+        """
+        days = self._retention_days()
+        box = QMessageBox(self)
+        box.setWindowTitle("Persoonsgegevens exporteren")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(f"<b>{escape(what)} bevat persoonsgegevens van bezoekers.</b>")
+        box.setInformativeText(
+            "Zodra u exporteert, verlaten die gegevens EventHub en gelden de automatische "
+            f"maatregelen niet meer.<p>De bewaartermijn in EventHub staat op <b>{days} dagen</b> "
+            "na het evenement. Voor het geëxporteerde bestand blijft die termijn wettelijk gelden, "
+            "maar EventHub kan hem daar niet afdwingen — u bent zelf verantwoordelijk voor het "
+            "tijdig verwijderen.</p>"
+            "<p>Bewaar het bestand op een plek die daarvoor is toegestaan en deel het niet breder "
+            "dan nodig.</p>"
+        )
+        proceed = box.addButton("Toch exporteren", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Annuleren", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(proceed)
+        box.exec()
+        return box.clickedButton() is proceed
+
+    def _offer_open_export_folder(self, file_name):
+        """Bied na elke export aan de map te openen waar het bestand staat."""
+        path = Path(file_name)
+        folder = path.parent
+        answer = QMessageBox.question(
+            self,
+            "Map openen?",
+            f"{escape(path.name)} is opgeslagen in:\n{folder}\n\nWilt u die map openen?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder.resolve()))):
+            QMessageBox.warning(
+                self, "Map openen mislukt", f"De map kon niet worden geopend:\n{folder}"
+            )
+
     def export_trend_data(self, panel=None):
         """Exporteer het trendbeeld van één werkgebied als PDF."""
         panel = panel or self._active_trend_panel()
@@ -7936,6 +7986,7 @@ class BezoekerslijstWindow(QMainWindow):
             self._trend_pdf_document(panel).print_(printer)
             self.status_label.setText(f"Trends geëxporteerd als PDF: {file_name}")
             QMessageBox.information(self, "Export gereed", f"De trendanalyse is geëxporteerd naar:\n{file_name}")
+            self._offer_open_export_folder(file_name)
         except Exception as exc:
             self._show_runtime_error("Trends exporteren", exc)
 
@@ -9060,6 +9111,8 @@ class BezoekerslijstWindow(QMainWindow):
             QMessageBox.critical(self, "Sjabloon ontbreekt", "Het 5WH-sjabloon ontbreekt in de installatie.")
             return
         suggested = exports_directory() / f"5WH - {self._safe_document_name(event['name'])}{self._event_date_suffix(event)}.docx"
+        if not self._confirm_personal_data_export("Het 5WH-document"):
+            return
         file_name, _ = QFileDialog.getSaveFileName(self, "5WH exporteren", str(suggested), "Word-document (*.docx)")
         if not file_name:
             return
@@ -9069,6 +9122,7 @@ class BezoekerslijstWindow(QMainWindow):
             export_fivewh(FIVEWH_TEMPLATE, file_name, event, self.profile, event.get("fivewh", {}))
             self.status_label.setText(f"5WH geëxporteerd: {file_name}")
             QMessageBox.information(self, "5WH gereed", "Het 5WH-document is volgens het vaste format opgeslagen.")
+            self._offer_open_export_folder(file_name)
         except Exception as exc:
             QMessageBox.critical(self, "5WH exporteren mislukt", str(exc))
 
@@ -9091,6 +9145,7 @@ class BezoekerslijstWindow(QMainWindow):
                 EVALUATION_TEMPLATE, file_name, event, self.profile, event.get("evaluation", {})
             )
             self.status_label.setText(f"Evaluatie geëxporteerd: {file_name}")
+            self._offer_open_export_folder(file_name)
             QMessageBox.information(
                 self,
                 "Evaluatie gereed",
@@ -9207,12 +9262,15 @@ class BezoekerslijstWindow(QMainWindow):
         attachment_path = Path(attachment_name)
         dated_name = f"{attachment_path.stem}{self._event_date_suffix(event)}{attachment_path.suffix}"
         suggested = exports_directory() / dated_name
+        if not self._confirm_personal_data_export("Dit document"):
+            return
         file_name, _ = QFileDialog.getSaveFileName(self, "Bijlage opslaan als", str(suggested), "Alle bestanden (*.*)")
         if not file_name:
             return
         try:
             Path(file_name).write_bytes(self._attachment_bytes(attachment))
             self.status_label.setText(f"Bijlage opgeslagen: {file_name}")
+            self._offer_open_export_folder(file_name)
         except Exception as exc:
             QMessageBox.critical(self, "Bijlage opslaan mislukt", str(exc))
 
@@ -10859,6 +10917,8 @@ class BezoekerslijstWindow(QMainWindow):
             )
             return
         safe_name = re.sub(r"[^A-Za-z0-9À-ÿ _.-]+", "", str(event.get("name", "") or "Evenement")).strip()
+        if not self._confirm_personal_data_export("De deelnemerslijst"):
+            return
         default_name = exports_directory() / f"Bezoekerslijst - {safe_name or 'Evenement'}{self._event_date_suffix(event)}.xlsx"
         file_name, _ = QFileDialog.getSaveFileName(
             self,
@@ -10879,6 +10939,7 @@ class BezoekerslijstWindow(QMainWindow):
                 file_name,
             )
             self.status_label.setText(f"Deelnemerslijst gemaakt: {file_name}")
+            self._offer_open_export_folder(file_name)
             QMessageBox.information(
                 self,
                 "Deelnemerslijst gereed",
@@ -10980,6 +11041,8 @@ class BezoekerslijstWindow(QMainWindow):
         event, records = self._participant_export_ready("exporteren")
         if not event:
             return
+        if not self._confirm_personal_data_export("De deelnemerslijst-PDF"):
+            return
         default_name = exports_directory() / f"Deelnemerslijst{self._event_date_suffix(event)}.pdf"
         file_name, _ = QFileDialog.getSaveFileName(
             self,
@@ -11002,6 +11065,7 @@ class BezoekerslijstWindow(QMainWindow):
             document.print_(printer)
             self.status_label.setText(f"Deelnemerslijst geëxporteerd als PDF: {file_name}")
             QMessageBox.information(self, "Export gereed", f"De deelnemerslijst is geëxporteerd naar:\n{file_name}")
+            self._offer_open_export_folder(file_name)
         except Exception as exc:
             self._show_runtime_error("Deelnemerslijst exporteren", exc)
 
@@ -11015,6 +11079,8 @@ class BezoekerslijstWindow(QMainWindow):
             return
         event = self._active_event()
         default_name = exports_directory() / f"EventHub-bezoekerslijsten{self._event_date_suffix(event)}.xlsx"
+        if not self._confirm_personal_data_export("Deze Excel-werkmap"):
+            return
         file_name, _ = QFileDialog.getSaveFileName(self, "Exporteren naar Excel", str(default_name), "Excel-werkmap (*.xlsx)")
         if not file_name:
             return
@@ -11029,6 +11095,7 @@ class BezoekerslijstWindow(QMainWindow):
                 "Export gereed",
                 f"De Excel-werkmap bevat Deelnemerslijst, Ruwe aanmeldingen, After sales en Presentie voor {scope}.",
             )
+            self._offer_open_export_folder(file_name)
         except Exception as exc:
             QMessageBox.critical(self, "Exporteren mislukt", str(exc))
 
@@ -11080,6 +11147,7 @@ class BezoekerslijstWindow(QMainWindow):
         try:
             export_statistics_workbook(dimension_sections, file_name, scope_description=scope_text)
             self.status_label.setText(f"Statistieken geëxporteerd: {file_name}")
+            self._offer_open_export_folder(file_name)
             QMessageBox.information(
                 self,
                 "Export gereed",
