@@ -2063,7 +2063,7 @@ class NewEventSourceDialog(QDialog):
         title = QLabel("Hoe wilt u het evenement aanmaken?")
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
-        intro = QLabel("Kies een lege start, hergebruik een EventHub-template of neem de gegevens over uit Rudder.")
+        intro = QLabel("Kies een lege start, hergebruik een EventHub-template of neem gegevens over uit Rudder.")
         intro.setWordWrap(True)
         intro.setObjectName("hintLabel")
         layout.addWidget(intro)
@@ -2071,7 +2071,8 @@ class NewEventSourceDialog(QDialog):
         options = (
             ("empty", "Leeg evenement", "Vul naam, soort, datum en locatie zelf in."),
             ("template", "Vanuit EventHub-template", "Hergebruik taken en instellingen; pas vooral de datum aan."),
-            ("rudder", "Importeren uit Rudder", "Open het Rudder-overzicht, kies een evenement en neem de gegevens met één klik over."),
+            ("rudder", "Eén evenement uit Rudder", "Open het Rudder-overzicht en neem één evenement met één klik over."),
+            ("rudder_bulk", "Meerdere evenementen uit Rudder", "Filter in Rudder op uw eigen naam en haal alles in één keer binnen."),
         )
         for key, label, description in options:
             row = QFrame()
@@ -4248,14 +4249,6 @@ class BezoekerslijstWindow(QMainWindow):
         self.new_event_button.setObjectName("primaryButton")
         self.new_event_button.clicked.connect(lambda _checked=False: self.new_project())
         hero_actions.addWidget(self.new_event_button)
-        self.bulk_import_button = QPushButton("Importeren uit Rudder")
-        self.bulk_import_button.setObjectName("secondaryButton")
-        self.bulk_import_button.setToolTip(
-            "Haal in een keer alle evenementen op die in Rudder in beeld staan. "
-            "Filter daar eerst op uw eigen naam."
-        )
-        self.bulk_import_button.clicked.connect(self.import_rudder_events_bulk)
-        hero_actions.addWidget(self.bulk_import_button)
         event_control_button = QPushButton("Event Control")
         event_control_button.setObjectName("secondaryButton")
         event_control_button.clicked.connect(self.show_event_control_page)
@@ -10999,6 +10992,9 @@ class BezoekerslijstWindow(QMainWindow):
                 return
             if source_dialog.choice == "rudder":
                 self.import_rudder_event(event={})
+                return
+            if source_dialog.choice == "rudder_bulk":
+                self.import_rudder_events_bulk()
                 return
             template_only = source_dialog.choice == "template"
             dialog = NewProjectDialog(

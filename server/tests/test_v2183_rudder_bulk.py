@@ -217,7 +217,8 @@ class ManifestTests(unittest.TestCase):
         self.manifest = json.loads((EXTENSION / "manifest.json").read_text(encoding="utf-8"))
 
     def test_version_was_raised_for_the_bulk_import(self):
-        self.assertEqual(self.manifest["version"], "1.4.0")
+        versie = tuple(int(deel) for deel in self.manifest["version"].split("."))
+        self.assertGreaterEqual(versie, (1, 4, 0))
 
     def test_the_shared_scraper_loads_before_the_scripts_that_use_it(self):
         for entry in self.manifest["content_scripts"]:
@@ -351,9 +352,10 @@ class PreviewTests(unittest.TestCase):
 
 
 class WiringTests(unittest.TestCase):
-    def test_the_events_page_offers_the_bulk_import(self):
-        self.assertIn("self.bulk_import_button", APP_SOURCE)
+    def test_the_bulk_import_is_reachable_from_the_new_event_dialog(self):
+        """De losse knop op het overzicht is samengevoegd met Nieuw evenement."""
         self.assertIn("def import_rudder_events_bulk(self", APP_SOURCE)
+        self.assertIn('if source_dialog.choice == "rudder_bulk":', APP_SOURCE)
 
     def test_the_bulk_import_opens_the_overview_not_a_single_event(self):
         start = APP_SOURCE.index("def import_rudder_events_bulk(self")
@@ -416,6 +418,51 @@ class StatisticsChartTests(unittest.TestCase):
     def test_the_axis_titles_survived(self):
         self.assertIn("Opleidingsniveau", self.xml)
         self.assertIn("Aantal", self.xml)
+
+
+class SingleEntryPointTests(unittest.TestCase):
+    """Importeren begint op een plek: Nieuw evenement."""
+
+    def test_the_separate_button_on_the_events_page_is_gone(self):
+        self.assertNotIn("self.bulk_import_button", APP_SOURCE)
+
+    def test_the_dialog_offers_one_and_several_events(self):
+        self.assertIn('("rudder", "Een evenement uit Rudder"'.replace("Een", "Eén"), APP_SOURCE)
+        self.assertIn('("rudder_bulk", "Meerdere evenementen uit Rudder"', APP_SOURCE)
+
+    def test_both_choices_are_handled(self):
+        self.assertIn('if source_dialog.choice == "rudder_bulk":', APP_SOURCE)
+        self.assertIn("self.import_rudder_events_bulk()", APP_SOURCE)
+
+
+class RegistrationsPageTests(unittest.TestCase):
+    """Vanaf de inschrijvingenpagina rechtstreeks kunnen importeren."""
+
+    def setUp(self):
+        self.script = (EXTENSION / "event_registrations.js").read_text(encoding="utf-8")
+
+    def test_it_runs_on_the_registrations_page(self):
+        manifest = json.loads((EXTENSION / "manifest.json").read_text(encoding="utf-8"))
+        entry = next(e for e in manifest["content_scripts"] if "event_registrations.js" in e["js"])
+        self.assertIn("registrations", entry["matches"][0])
+
+    def test_it_sends_you_to_the_edit_page(self):
+        self.assertIn("/edit", self.script)
+        self.assertIn("location.href = target.toString()", self.script)
+
+    def test_a_running_import_session_is_carried_along(self):
+        self.assertIn("eventhub-rudder-import-pending", self.script)
+        self.assertIn("eventhub-bulk-import-session", self.script)
+        self.assertIn("eventhub-import=", self.script)
+
+    def test_it_works_without_a_session_too(self):
+        """Zonder sessie gewoon naar de bewerkpagina; daar staat de knop al."""
+        self.assertIn("if (session) target.hash", self.script)
+
+    def test_the_button_reuses_an_existing_style(self):
+        css = (EXTENSION / "content.css").read_text(encoding="utf-8")
+        self.assertIn("eventhub-rudder-launcher", self.script)
+        self.assertIn("#eventhub-rudder-launcher", css)
 
 
 if __name__ == "__main__":

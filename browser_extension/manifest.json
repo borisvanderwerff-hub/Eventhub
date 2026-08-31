@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "EventHub Rudder Browserassistent",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Koppelt Rudder-evenementgegevens en aanwezigheidsregistratie veilig met EventHub, inclusief het in een keer importeren van meerdere evenementen.",
   "host_permissions": [
     "http://127.0.0.1/*"
@@ -43,6 +43,18 @@
       "js": [
         "rudder_scrape.js",
         "event_edit.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://werkenbijdefensie.nl/rudder/event/events/*/registrations*"
+      ],
+      "js": [
+        "event_registrations.js"
       ],
       "css": [
         "content.css"
