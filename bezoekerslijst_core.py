@@ -835,6 +835,16 @@ def export_statistics_workbook(dimension_sections, output_path: str | Path, scop
                     chart.legend = None
                     chart.height = 8
                     chart.width = 12
+                    # Zonder deze instellingen tekent Excel wel de balken maar
+                    # geen aslabels: openpyxl laat tickLblPos leeg en zet de
+                    # streepjes op none, en de categorie-as belandt links in
+                    # plaats van onder de balken.
+                    for axis, position in ((chart.x_axis, "b"), (chart.y_axis, "l")):
+                        axis.delete = False
+                        axis.axPos = position
+                        axis.majorTickMark = "out"
+                        axis.minorTickMark = "none"
+                        axis.tickLblPos = "nextTo"
                     categories = Reference(sheet, min_col=start_col, min_row=3, max_row=last_data_row)
                     values = Reference(sheet, min_col=start_col + 1, min_row=2, max_row=last_data_row)
                     chart.add_data(values, titles_from_data=True)

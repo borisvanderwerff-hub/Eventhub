@@ -15,6 +15,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import tempfile
 import threading
 import traceback
 import urllib.error
@@ -4395,12 +4396,12 @@ class BezoekerslijstWindow(QMainWindow):
         )
         self.live_session_help_button.clicked.connect(self.start_live_session_tour)
         live_session_heading.addWidget(self.live_session_help_button)
-        self.live_manual_button = _make_button_compact(QPushButton("Handleiding (PDF)"))
+        self.live_manual_button = _make_button_compact(QPushButton("Handleiding"))
         self.live_manual_button.setObjectName("secondaryButton")
         self.live_manual_button.setToolTip(
-            "Sla een handleiding op om mee te sturen naar medewerkers op locatie."
+            "Open de handleiding voor medewerkers op locatie."
         )
-        self.live_manual_button.clicked.connect(self.export_live_session_manual)
+        self.live_manual_button.clicked.connect(self.open_live_session_manual)
         live_session_heading.addWidget(self.live_manual_button)
         live_session_text = QLabel(
             "Het gekozen evenement is leidend. Start een nieuwe live-run voor dit evenement of verbind dit apparaat "
@@ -7749,35 +7750,41 @@ class BezoekerslijstWindow(QMainWindow):
         layout.addLayout(actions)
         dialog.exec()
 
-    def export_live_session_manual(self):
-        """Sla de handleiding livesessies op als deelbare PDF.
+    def open_live_session_manual(self):
+        """Toon de handleiding livesessies; bewaren hoeft niet.
 
-        Bevat geen persoonsgegevens, dus zonder waarschuwing vooraf; hij is
-        juist bedoeld om mee te sturen naar medewerkers op locatie.
+        Eerder vroeg dit om een opslaglocatie, maar dan blijft er een bestand
+        achter dat vrijwel niemand terugleest. De handleiding wordt nu in de
+        tijdelijke map gezet en meteen geopend; wie hem wil doorsturen slaat
+        hem vanuit de viewer op.
         """
-        default = exports_directory() / "EventHub - handleiding livesessie.pdf"
-        file_name, _ = QFileDialog.getSaveFileName(
-            self, "Handleiding opslaan", str(default), "PDF-bestand (*.pdf)"
-        )
-        if not file_name:
-            return
-        if not file_name.lower().endswith(".pdf"):
-            file_name += ".pdf"
         try:
+            doelmap = Path(tempfile.gettempdir()) / "EventHub"
+            doelmap.mkdir(parents=True, exist_ok=True)
+            bestand = doelmap / "EventHub - handleiding livesessie.pdf"
+
             document = QTextDocument(self)
             document.setDefaultFont(QFont("Segoe UI", 10))
             document.setHtml(manual_html(str(self.profile.get("name", "") or "")))
             printer = QPrinter(QPrinter.PrinterMode.HighResolution)
             printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
-            printer.setOutputFileName(file_name)
+            printer.setOutputFileName(str(bestand))
             printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
             printer.setPageOrientation(QPageLayout.Orientation.Portrait)
             printer.setPageMargins(QMarginsF(18, 18, 18, 18), QPageLayout.Unit.Millimeter)
             document.print_(printer)
-            self.status_label.setText(f"Handleiding opgeslagen: {file_name}")
-            self._offer_open_export_folder(file_name)
+
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(bestand))):
+                QMessageBox.warning(
+                    self,
+                    "Openen mislukt",
+                    "De handleiding kon niet worden geopend. Het bestand staat in:\n"
+                    f"{bestand}",
+                )
+                return
+            self.status_label.setText("Handleiding livesessies geopend.")
         except Exception as exc:
-            self._show_runtime_error("Handleiding opslaan", exc)
+            self._show_runtime_error("Handleiding openen", exc)
 
     def _tutorial_is_running(self) -> bool:
         """Staat er al een rondleiding open?

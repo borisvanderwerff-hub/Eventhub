@@ -382,5 +382,41 @@ class WiringTests(unittest.TestCase):
             self.assertNotIn(verb, bulk, "de assistent hoort alleen te lezen")
 
 
+class StatisticsChartTests(unittest.TestCase):
+    """Excel tekende de balken wel, maar zonder aslabels."""
+
+    def setUp(self):
+        import tempfile
+        from bezoekerslijst_core import export_statistics_workbook
+
+        self.output = Path(tempfile.mkdtemp()) / "stat.xlsx"
+        export_statistics_workbook(
+            [("Opleidingsniveau", [("Alle deelnemers", [("MBO", 12), ("HBO", 8)])])],
+            self.output, "Testscope",
+        )
+        import zipfile
+        with zipfile.ZipFile(self.output) as bundle:
+            naam = next(n for n in bundle.namelist() if n.startswith("xl/charts/chart"))
+            self.xml = bundle.read(naam).decode("utf-8")
+
+    def test_the_axes_are_not_deleted(self):
+        self.assertIn('<delete val="0" />', self.xml)
+
+    def test_tick_labels_have_a_position(self):
+        """Zonder tickLblPos toont Excel geen enkel aslabel."""
+        self.assertIn("tickLblPos", self.xml)
+
+    def test_the_category_axis_sits_under_the_bars(self):
+        catax = self.xml[self.xml.index("<catAx>"):self.xml.index("</catAx>")]
+        self.assertIn('<axPos val="b" />', catax)
+
+    def test_tick_marks_are_visible(self):
+        self.assertIn('<majorTickMark val="out" />', self.xml)
+
+    def test_the_axis_titles_survived(self):
+        self.assertIn("Opleidingsniveau", self.xml)
+        self.assertIn("Aantal", self.xml)
+
+
 if __name__ == "__main__":
     unittest.main()

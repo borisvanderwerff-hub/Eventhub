@@ -81,14 +81,26 @@ class AccuracyTests(unittest.TestCase):
 
     def test_the_app_offers_the_manual_next_to_the_help_button(self):
         self.assertIn("self.live_manual_button", APP_SOURCE)
-        self.assertIn("def export_live_session_manual(self)", APP_SOURCE)
-        self.assertIn("self._offer_open_export_folder(file_name)", APP_SOURCE)
+        self.assertIn("def open_live_session_manual(self)", APP_SOURCE)
 
-    def test_manual_export_does_not_warn_about_personal_data(self):
+    def _manual_block(self):
+        start = APP_SOURCE.index("def open_live_session_manual(self)")
+        return APP_SOURCE[start:APP_SOURCE.index("\n    def ", start + 1)]
+
+    def test_the_manual_opens_instead_of_asking_where_to_save(self):
+        """Een bestand dat vrijwel niemand terugleest hoeft niet bewaard."""
+        block = self._manual_block()
+        self.assertNotIn("getSaveFileName", block)
+        self.assertNotIn("_offer_open_export_folder", block)
+        self.assertIn("tempfile.gettempdir()", block)
+        self.assertIn("QDesktopServices.openUrl", block)
+
+    def test_a_failure_to_open_still_names_the_file(self):
+        self.assertIn("Openen mislukt", self._manual_block())
+
+    def test_the_manual_does_not_warn_about_personal_data(self):
         """Er staan geen bezoekersgegevens in; waarschuwen zou verwarren."""
-        start = APP_SOURCE.index("def export_live_session_manual(self)")
-        block = APP_SOURCE[start:APP_SOURCE.index("\n    def ", start + 1)]
-        self.assertNotIn("_confirm_personal_data_export", block)
+        self.assertNotIn("_confirm_personal_data_export", self._manual_block())
 
 
 if __name__ == "__main__":
