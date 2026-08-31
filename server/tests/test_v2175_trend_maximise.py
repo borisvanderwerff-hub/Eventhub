@@ -126,7 +126,7 @@ class WiringTests(unittest.TestCase):
         """Maximaliseren mag de meetwaarde-keuze niet wegnemen."""
         start = self.source.index("def _build_trends_page(self")
         block = self.source[start:self.source.index("\n    def ", start + 1)]
-        self.assertNotIn("panel.metric", block.split("chrome = [")[-1].split("]")[0])
+        self.assertNotIn("metric_choice", block.split("chrome = [")[-1].split("]")[0])
 
 
 if __name__ == "__main__":

@@ -1141,9 +1141,12 @@ class TrendPanel(QWidget):
         controls_layout.setContentsMargins(14, 10, 14, 10)
         controls_layout.setSpacing(10)
 
-        self.metric = QComboBox()
+        # Niet 'metric': QWidget heeft al een metric()-methode, en Qt roept die
+        # tijdens het tekenen aan. Een combobox op die naam laat de applicatie
+        # omvallen zodra de stylesheet opnieuw wordt toegepast.
+        self.metric_choice = QComboBox()
         for label, value in TREND_METRICS:
-            self.metric.addItem(label, value)
+            self.metric_choice.addItem(label, value)
         self.dimension = QComboBox()
         for label, value in TREND_EVENT_DIMENSIONS:
             self.dimension.addItem(label, value)
@@ -1155,7 +1158,7 @@ class TrendPanel(QWidget):
         self.period.setCurrentIndex(2)
 
         for caption_text, widget in (
-            ("Meetwaarde:", self.metric),
+            ("Meetwaarde:", self.metric_choice),
             ("Uitsplitsen naar:", self.dimension),
             ("Periode:", self.period),
         ):
@@ -1230,7 +1233,7 @@ class TrendPanel(QWidget):
         summaries = self.provider() or []
         series = build_trend_series(
             summaries,
-            metric=str(self.metric.currentData() or "aangemeld"),
+            metric=str(self.metric_choice.currentData() or "aangemeld"),
             dimension=str(self.dimension.currentData() or ""),
             period=str(self.period.currentData() or "event"),
         )
@@ -8373,7 +8376,7 @@ class BezoekerslijstWindow(QMainWindow):
 
     def _trend_pdf_document(self, panel) -> QTextDocument:
         series = panel.current_series()
-        metric = panel.metric.currentText()
+        metric = panel.metric_choice.currentText()
         dimension = panel.dimension.currentText()
         period = panel.period.currentText()
         if panel is self.loose_trend_panel:
