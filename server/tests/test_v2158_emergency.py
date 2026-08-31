@@ -36,6 +36,12 @@ class Version2158EmergencyServiceTests(unittest.TestCase):
                 )
 
     def tearDown(self):
+        # Windows geeft een openstaand databasebestand niet vrij; zonder deze
+        # sluiting faalt het opruimen van de tijdelijke map.
+        try:
+            self.connection.close()
+        except Exception:
+            pass
         self.temp.cleanup()
 
     def test_emergency_tracks_only_people_inside_without_changing_attendance(self):

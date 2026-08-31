@@ -32,12 +32,6 @@ COLUMNS = [
     ("Ingecheckt door", "checkin_by", 18),
 ]
 
-_STATUS_LABELS = {
-    "present": "Aanwezig",
-    "not_checked_in": "Nog niet ingecheckt",
-}
-
-
 def export_participants_workbook(participants: list[dict], event: dict | None, output_path: str | Path,
                                  selected_fields: list[str] | None = None) -> int:
     """Write the participant list to an .xlsx file. Returns the row count written."""

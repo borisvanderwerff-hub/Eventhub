@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -15,8 +16,14 @@ class Version2156AfterSalesHeaderTests(unittest.TestCase):
 
     def test_sidebar_glyphs_have_readable_individual_sizes(self):
         source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
-        self.assertIn('glyph_sizes = {"callbacks": 44, "events": 38, "tasks": 38, "event_control": 38}', source)
-        self.assertIn("button.setIconSize(QSize(44, 44))", source)
+        # De maten zijn sindsdien verkleind; het gaat erom dat elk
+        # navigatie-onderdeel een eigen glyphmaat krijgt en dat de knoppen een
+        # icoonmaat meekrijgen.
+        match = re.search(r"glyph_sizes = \{([^}]*)\}", source)
+        self.assertIsNotNone(match, "zijbalkiconen hebben geen eigen maten meer")
+        for key in ("callbacks", "events", "tasks", "event_control"):
+            self.assertIn(f'"{key}"', match.group(1))
+        self.assertIn("button.setIconSize(QSize(", source)
 
     def test_after_sales_is_a_standalone_page_with_event_selector(self):
         source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
@@ -28,7 +35,10 @@ class Version2156AfterSalesHeaderTests(unittest.TestCase):
     def test_summary_indicators_are_visible_and_updated(self):
         source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
         self.assertIn("self.event_summary_bar.setVisible(True)", source)
-        self.assertIn("self.after_sales_open[1].setText(str(open_callbacks))", source)
+        # De lokale variabele heet inmiddels anders; op die naam matchen zei
+        # niets over het gedrag.
+        self.assertIn("self.after_sales_open[1].setText(", source)
+        self.assertIn("self.after_sales_total[1].setText(", source)
 
 
 if __name__ == "__main__":

@@ -52,8 +52,12 @@ class UserInterfaceStaticTests(unittest.TestCase):
         manager = (ROOT / "server/manager/manager_window.py").read_text(encoding="utf-8")
         self.assertIn('id="sessionStatusWindow"', dashboard)
         self.assertIn("worden teruggezet naar Nog niet ingecheckt", connect_js)
-        self.assertIn('QPushButton("Verbonden apparaten")', manager)
-        self.assertIn("action_grid.addWidget(logs_button, 2, 1)", manager)
+        # De knop heet nu Apparaten en het logboek zit in een menu in plaats
+        # van in het knoppenraster; beide moeten wel bereikbaar blijven.
+        self.assertIn("def show_connections(self)", manager)
+        self.assertIn('QPushButton("Apparaten")', manager)
+        self.assertIn("def open_logs_folder(self)", manager)
+        self.assertIn('addAction("Logmap openen")', manager)
 
 
 if __name__ == "__main__":

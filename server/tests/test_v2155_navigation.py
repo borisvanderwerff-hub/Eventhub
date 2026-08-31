@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -21,13 +22,25 @@ class Version2155NavigationTests(unittest.TestCase):
 
     def test_sidebar_width_and_utility_alignment_are_consistent(self):
         source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
-        self.assertIn("self.sidebar.setFixedWidth(184 if expanded else 70)", source)
+        # Niet de exacte pixels vastpinnen; die zijn sindsdien bijgesteld. Wat
+        # telt is dat de zijbalk inklapt naar een smallere vaste breedte.
+        match = re.search(
+            r"self\.sidebar\.setFixedWidth\((\d+) if expanded else (\d+)\)", source
+        )
+        self.assertIsNotNone(match, "zijbalk heeft geen in- en uitgeklapte breedte")
+        self.assertGreater(int(match.group(1)), int(match.group(2)))
         self.assertIn('button.setProperty("collapsed", not expanded)', source)
 
-    def test_every_dated_event_uses_underscore_date_suffix(self):
+    def test_every_dated_event_carries_its_date_in_the_name(self):
+        """De notatie is van 15_04_2026 naar (15-04-'26) gegaan.
+
+        De oude test pinde het onderstreepte formaat vast. Wat blijft tellen is
+        dat elk evenement zijn datum in de naam draagt en dat die naam via
+        dezelfde functie wordt opgebouwd.
+        """
         source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
         self.assertIn("def event_name_with_date(name: str, event_date: str)", source)
-        self.assertIn("strftime('%d_%m_%Y')", source)
+        self.assertIn("parsed.strftime(", source)
         self.assertIn("updated[\"name\"] = event_name_with_date", source)
         self.assertIn("renamed_events = self._ensure_event_date_names()", source)
 

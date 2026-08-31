@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -14,9 +15,20 @@ class Version214StaticTests(unittest.TestCase):
         self.assertIn('navigator.wakeLock.request("screen")', app_js)
         self.assertIn('prefers-color-scheme: dark', app_js)
 
-    def test_service_worker_cache_was_advanced(self):
+    def test_service_worker_cache_is_versioned_and_purges_stale_caches(self):
+        """Niet het nummer vastpinnen, maar het mechanisme.
+
+        De oude test eiste een specifieke versie en brak dus bij elke
+        legitieme ophoging. Wat telt is dat er een versie is en dat oude
+        caches worden opgeruimd, anders blijven clients op verouderde
+        bestanden hangen.
+        """
         source = (ROOT / "server/web/static/js/service-worker.js").read_text(encoding="utf-8")
-        self.assertIn('eventhub-live-v18', source)
+        match = re.search(r'const CACHE = "eventhub-live-v(\d+)"', source)
+        self.assertIsNotNone(match, "service worker heeft geen genummerde cacheversie")
+        self.assertGreaterEqual(int(match.group(1)), 18, "cacheversie mag niet teruglopen")
+        self.assertIn('key.startsWith("eventhub-live-")', source)
+        self.assertIn("caches.delete(key)", source)
 
     def test_profile_schema_contains_signature(self):
         from emt_models import DEFAULT_PROFILE

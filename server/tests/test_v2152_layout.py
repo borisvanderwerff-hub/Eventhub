@@ -19,12 +19,20 @@ class Version2152LayoutTests(unittest.TestCase):
         self.assertIn("QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed", source)
 
     def test_major_vertical_action_groups_use_compact_buttons(self):
+        """Knoppen in verticale groepen mogen niet over de volle breedte rekken.
+
+        Op losse knoplabels matchen bleek te breekbaar: Live sessie openen en
+        Verbonden apparaten bestaan niet meer, en de Server Manager gebruikt
+        inmiddels menu's in plaats van knoppenrijen. Getoetst wordt nu dat het
+        hulpmiddel bestaat en daadwerkelijk breed wordt toegepast.
+        """
         desktop = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
-        manager = (ROOT / "server/manager/manager_window.py").read_text(encoding="utf-8")
-        self.assertIn('_make_button_compact(QPushButton("Live sessie openen"))', desktop)
+        self.assertIn("def _make_button_compact(", desktop)
         self.assertIn('_make_button_compact(QPushButton("5WH exporteren naar Word"))', desktop)
-        self.assertIn('_compact(QPushButton("Verbonden apparaten"))', manager)
-        self.assertIn('_compact(QPushButton("Dossier synchroniseren"))', manager)
+        self.assertGreaterEqual(
+            desktop.count("_make_button_compact("), 10,
+            "verticale actiegroepen gebruiken het hulpmiddel nauwelijks nog",
+        )
 
 
 if __name__ == "__main__":

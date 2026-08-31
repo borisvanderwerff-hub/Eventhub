@@ -156,20 +156,34 @@ class CheckinTests(unittest.TestCase):
     def test_checkout_then_idempotent_second_checkout(self):
         participant_service.check_in(self.connection, self.participant_id)
         result = participant_service.check_out(self.connection, self.participant_id)
-        self.assertFalse(result["already_not_present"])
-        self.assertEqual(result["participant"]["attendance_status"], "not_checked_in")
+        self.assertFalse(result["already_checked_out"])
+        # Uitchecken betekent vertrokken, niet nooit geweest; undo_check_in zet
+        # iemand terug op not_checked_in.
+        self.assertEqual(result["participant"]["attendance_status"], "checked_out")
 
         result_again = participant_service.check_out(self.connection, self.participant_id)
-        self.assertTrue(result_again["already_not_present"])
+        self.assertTrue(result_again["already_checked_out"])
+
+    def test_undo_check_in_returns_someone_to_not_checked_in(self):
+        participant_service.check_in(self.connection, self.participant_id)
+        result = participant_service.undo_check_in(self.connection, self.participant_id)
+        self.assertEqual(result["participant"]["attendance_status"], "not_checked_in")
 
     def test_concurrent_checkins_only_count_once(self):
         errors = []
 
         def do_checkin():
+            # Elke thread een eigen verbinding, zoals de webserver het doet:
+            # die maakt er per request een via g.connection. Eén verbinding
+            # delen over threads liet transacties door elkaar lopen en maakte
+            # deze test onbetrouwbaar.
+            connection = connect(self.session.db_path)
             try:
-                participant_service.check_in(self.connection, self.participant_id)
+                participant_service.check_in(connection, self.participant_id)
             except Exception as exc:  # pragma: no cover - defensive
                 errors.append(exc)
+            finally:
+                connection.close()
 
         threads = [threading.Thread(target=do_checkin) for _ in range(8)]
         for t in threads:
@@ -405,11 +419,14 @@ class ExportTests(unittest.TestCase):
         header_row = next(row for row in rows_out if row and row[0] == "Voornaam")
         header_index = rows_out.index(header_row)
         data_rows = {row[0]: row for row in rows_out[header_index + 1:]}
-        status_index = header_row.index("Status")
+        # De kolom Aanwezig is een ja/nee op basis van een ingecheckt-tijdstip;
+        # wie is uitgecheckt heeft er ook een en telt dus als aanwezig geweest.
+        present_index = header_row.index("Aanwezig")
         introducee_index = header_row.index("Introducee")
-        self.assertEqual(data_rows["Jan"][status_index], "Aanwezig")
-        self.assertEqual(data_rows["Marie"][status_index], "Nog niet ingecheckt")
+        self.assertEqual(data_rows["Jan"][present_index], "Ja")
+        self.assertEqual(data_rows["Marie"][present_index], "Nee")
         self.assertEqual(data_rows["Marie"][introducee_index], "Ja")
+        self.assertEqual(data_rows["Jan"][introducee_index], "Nee")
 
 
 class _CleanupMixin:

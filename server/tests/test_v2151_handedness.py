@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -18,7 +19,11 @@ class Version2151HandednessTests(unittest.TestCase):
         source = (ROOT / "server/web/static/js/connect.js").read_text(encoding="utf-8")
         self.assertIn('eventhub_handedness', source)
         self.assertIn('participant.achternaam', source)
-        self.assertIn('applyHandedness(selectedHand)', source)
+        # De aanroep kreeg er een argument bij; op de haakjes matchen maakte
+        # deze test onnodig breekbaar. De keuze moet toegepast en bewaard.
+        self.assertIn('applyHandedness(selectedHand', source)
+        self.assertIn('localStorage.setItem(HANDEDNESS_KEY', source)
+        self.assertIn('localStorage.getItem(HANDEDNESS_KEY)', source)
         self.assertIn('jumpToLetter', source)
 
     def test_mobile_layout_can_be_mirrored(self):
@@ -27,9 +32,20 @@ class Version2151HandednessTests(unittest.TestCase):
         self.assertIn('.hand-left .result-row', css)
         self.assertIn('.alphabet-index', css)
 
-    def test_service_worker_cache_was_advanced(self):
+    def test_service_worker_cache_is_versioned_and_purges_stale_caches(self):
+        """Niet het nummer vastpinnen, maar het mechanisme.
+
+        De oude test eiste een specifieke versie en brak dus bij elke
+        legitieme ophoging. Wat telt is dat er een versie is en dat oude
+        caches worden opgeruimd, anders blijven clients op verouderde
+        bestanden hangen.
+        """
         source = (ROOT / "server/web/static/js/service-worker.js").read_text(encoding="utf-8")
-        self.assertIn('eventhub-live-v18', source)
+        match = re.search(r'const CACHE = "eventhub-live-v(\d+)"', source)
+        self.assertIsNotNone(match, "service worker heeft geen genummerde cacheversie")
+        self.assertGreaterEqual(int(match.group(1)), 18, "cacheversie mag niet teruglopen")
+        self.assertIn('key.startsWith("eventhub-live-")', source)
+        self.assertIn("caches.delete(key)", source)
 
 
 if __name__ == "__main__":
