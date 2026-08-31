@@ -4224,8 +4224,20 @@ class BezoekerslijstWindow(QMainWindow):
         live_session_tab = QWidget()
         live_session_layout = QVBoxLayout(live_session_tab)
         live_session_layout.setContentsMargins(18, 18, 18, 18)
+        live_session_heading = QHBoxLayout()
         live_session_title = QLabel("Live sessies")
         live_session_title.setObjectName("sectionTitle")
+        live_session_heading.addWidget(live_session_title)
+        live_session_heading.addStretch()
+        # Losse uitleg naast de hoofdrondleiding: live sessies vragen om context
+        # op de plek zelf, en de algemene rondleiding zou er te lang van worden.
+        self.live_session_help_button = QPushButton("?  Hoe werkt dit?")
+        self.live_session_help_button.setObjectName("secondaryButton")
+        self.live_session_help_button.setToolTip(
+            "Korte uitleg over samen inchecken met meerdere apparaten."
+        )
+        self.live_session_help_button.clicked.connect(self.start_live_session_tour)
+        live_session_heading.addWidget(self.live_session_help_button)
         live_session_text = QLabel(
             "Het gekozen evenement is leidend. Start een nieuwe live-run voor dit evenement of verbind dit apparaat "
             "met een actieve livesessie op het lokale netwerk."
@@ -4238,7 +4250,7 @@ class BezoekerslijstWindow(QMainWindow):
         choices = QHBoxLayout()
         choices.setSpacing(16)
 
-        start_card = QFrame()
+        self.live_start_card = start_card = QFrame()
         start_card.setObjectName("liveChoiceCardPrimary")
         start_card.setMinimumHeight(210)
         start_layout = QVBoxLayout(start_card)
@@ -4251,7 +4263,7 @@ class BezoekerslijstWindow(QMainWindow):
         start_text = QLabel("Start een nieuwe live-run. Naam, datum, locatie en deelnemers worden uit het gekozen evenement overgenomen.")
         start_text.setObjectName("choiceText")
         start_text.setWordWrap(True)
-        start_live_button = QPushButton("Live sessie starten  →")
+        self.start_live_button = start_live_button = QPushButton("Live sessie starten  →")
         start_live_button.setObjectName("primaryButton")
         start_live_button.clicked.connect(self.open_live_session_manager)
         self.reopen_previous_live_button = QPushButton("Vorige sessie opnieuw openen")
@@ -4265,7 +4277,7 @@ class BezoekerslijstWindow(QMainWindow):
         start_layout.addWidget(self.reopen_previous_live_button)
         choices.addWidget(start_card, 1)
 
-        join_card = QFrame()
+        self.live_join_card = join_card = QFrame()
         join_card.setObjectName("liveChoiceCard")
         join_card.setMinimumHeight(210)
         join_layout = QVBoxLayout(join_card)
@@ -4280,7 +4292,7 @@ class BezoekerslijstWindow(QMainWindow):
         )
         join_text.setObjectName("choiceText")
         join_text.setWordWrap(True)
-        connect_page_button = QPushButton("Verbindpagina openen  →")
+        self.connect_page_button = connect_page_button = QPushButton("Verbindpagina openen  →")
         connect_page_button.setObjectName("secondaryButton")
         connect_page_button.clicked.connect(self.open_live_webclient)
         join_layout.addWidget(join_eyebrow)
@@ -4290,7 +4302,7 @@ class BezoekerslijstWindow(QMainWindow):
         join_layout.addWidget(connect_page_button)
         choices.addWidget(join_card, 1)
 
-        live_session_layout.addWidget(live_session_title)
+        live_session_layout.addLayout(live_session_heading)
         live_session_layout.addWidget(live_session_text)
         live_session_layout.addSpacing(8)
         live_session_layout.addLayout(choices)
@@ -7423,6 +7435,91 @@ class BezoekerslijstWindow(QMainWindow):
         actions.addWidget(continue_button)
         layout.addLayout(actions)
         dialog.exec()
+
+    def start_live_session_tour(self, *_):
+        """Losse uitleg over samen inchecken met meerdere apparaten.
+
+        Bewust gescheiden van de algemene rondleiding: die geeft een overzicht
+        van de hele applicatie, terwijl dit onderwerp om context op de plek
+        zelf vraagt en anders onevenredig veel stappen zou opeisen.
+        """
+        active_overlay = getattr(self, "_tutorial_overlay", None)
+        if active_overlay is not None and active_overlay.isVisible():
+            active_overlay.raise_()
+            return
+
+        original_tab = self.event_control_tabs.currentWidget()
+
+        def show_live_tab():
+            self.show_event_control_page()
+            self.event_control_tabs.setCurrentIndex(0)
+
+        def show_dashboard_tab():
+            self.show_event_control_page()
+            self.event_control_tabs.setCurrentIndex(1)
+
+        steps = [
+            {
+                "title": "Samen inchecken op één sessie",
+                "body": "Bij een livesessie draait dit apparaat als host. Laptops, tablets en telefoons "
+                        "op hetzelfde netwerk checken dan tegelijk bezoekers in, op dezelfde lijst. "
+                        "Internet is niet nodig.",
+                "prepare": show_live_tab,
+                "target": lambda: self.live_start_card,
+            },
+            {
+                "title": "De sessie starten",
+                "body": "Naam, datum, locatie en de al ingeladen deelnemers komen uit het gekozen evenement. "
+                        "Iedereen start als niet ingecheckt. U krijgt een QR-code, een netwerkadres en een "
+                        "sessiecode om de andere apparaten mee aan te melden.",
+                "prepare": show_live_tab,
+                "target": lambda: self.start_live_button,
+            },
+            {
+                "title": "Een apparaat laten meedoen",
+                "body": "Op een telefoon of tablet opent u de verbindpagina en scant u de QR-code of vult u "
+                        "de sessiecode in. Op iOS kunt u de pagina via Deel, Zet op beginscherm "
+                        "schermvullend openen.",
+                "prepare": show_live_tab,
+                "target": lambda: self.live_join_card,
+            },
+            {
+                "title": "Onderbrekingen overleven",
+                "body": "Valt het netwerk even weg, dan bewaren de apparaten hun handelingen en "
+                        "synchroniseren ze daarna vanzelf. Tijdens een actieve sessie maakt EventHub elke "
+                        "minuut een herstelkopie.",
+                "prepare": show_live_tab,
+                "target": lambda: self.live_session_status_label,
+            },
+            {
+                "title": "Meekijken tijdens het evenement",
+                "body": "Het live dashboard toont in de browser hoeveel mensen binnen zijn, wat het "
+                        "opkomstpercentage is en welke apparaten meedoen. Handig om open te zetten op een "
+                        "tweede scherm.",
+                "prepare": show_dashboard_tab,
+                "target": lambda: self.event_control_tabs,
+            },
+            {
+                "title": "Terug in het dossier",
+                "body": "In- en uitchecken schrijft EventHub terug naar de aanwezigheid van dit evenement, "
+                        "zodat presentie, statistieken en de Rudder-export erop aansluiten. Een eerdere "
+                        "sessie heropent u met Vorige sessie opnieuw openen.",
+                "prepare": show_live_tab,
+                "target": lambda: self.reopen_previous_live_button,
+            },
+        ]
+
+        def finish_live_tour():
+            self._tutorial_overlay = None
+            if original_tab is not None:
+                index = self.event_control_tabs.indexOf(original_tab)
+                if index >= 0:
+                    self.event_control_tabs.setCurrentIndex(index)
+            self.status_label.setText("Uitleg live sessies afgerond.")
+
+        # TutorialOverlay toont zichzelf al in __init__, net als bij de
+        # hoofdrondleiding.
+        self._tutorial_overlay = TutorialOverlay(self, steps, finish_live_tour)
 
     def start_tutorial(self, *_):
         active_overlay = getattr(self, "_tutorial_overlay", None)

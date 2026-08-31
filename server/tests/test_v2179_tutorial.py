@@ -85,10 +85,55 @@ class TutorialTests(unittest.TestCase):
         titles = [step["title"] for step in self.steps]
         self.assertIn("Uw startscherm", titles)
 
+    def test_live_session_help_is_separate_from_the_main_tour(self):
+        """Live sessies krijgen uitleg op de plek zelf, niet in de hoofdrondleiding."""
+        titles = " ".join(step["title"] for step in self.steps).casefold()
+        self.assertNotIn("live sessie", titles, "hoort in de losse uitleg te staan")
+        self.assertTrue(hasattr(self.window, "live_session_help_button"))
+        self.assertTrue(hasattr(self.window, "start_live_session_tour"))
+
     def test_wording_does_not_claim_things_are_new(self):
         """'Nieuw' veroudert; een rondleiding beschrijft wat er is."""
         for step in self.steps:
             self.assertNotIn("de nieuwe ", str(step["title"]).casefold(), step["title"])
+
+
+class LiveSessionTourTests(unittest.TestCase):
+    """De losse uitleg bij Live sessie."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+        cls.original_overlay = bezoekerslijst_app.TutorialOverlay
+        bezoekerslijst_app.TutorialOverlay = _CapturingOverlay
+        cls.window = bezoekerslijst_app.BezoekerslijstWindow()
+        cls.window.start_live_session_tour()
+        cls.steps = _CapturingOverlay.captured
+
+    @classmethod
+    def tearDownClass(cls):
+        bezoekerslijst_app.TutorialOverlay = cls.original_overlay
+
+    def test_help_button_starts_the_tour(self):
+        button = self.window.live_session_help_button
+        self.assertIn("?", button.text())
+        self.assertTrue(button.toolTip())
+
+    def test_every_step_can_be_shown(self):
+        for step in self.steps:
+            with self.subTest(step=step["title"]):
+                step["prepare"]()
+                self.assertIsNotNone(step["target"](), "doel niet gevonden")
+
+    def test_it_covers_what_the_interface_does_not_show(self):
+        """Juist het niet-zichtbare hoort uitgelegd: netwerk, apparaten, herstel."""
+        bodies = " ".join(step["body"] for step in self.steps).casefold()
+        for needle in ("netwerk", "qr-code", "sessiecode", "herstelkopie", "dashboard"):
+            self.assertIn(needle, bodies, f"de uitleg noemt {needle} niet")
+
+    def test_it_stays_short(self):
+        self.assertLessEqual(len(self.steps), 8, "een contextuele uitleg hoort kort te zijn")
+        self.assertGreaterEqual(len(self.steps), 4)
 
 
 if __name__ == "__main__":
