@@ -323,10 +323,15 @@ def application_data_root():
 class RudderLocalBridge:
     """One-use loopback bridge between EventHub and the browser extension."""
 
-    def __init__(self, payload: dict | None = None, lifetime_seconds: int = 300, receive_event=False):
+    def __init__(self, payload: dict | None = None, lifetime_seconds: int = 300,
+                 receive_event=False, batch: bool = False):
         self.payload = payload
         self.receive_event = bool(receive_event)
+        # In batchmodus blijft de brug open tot de assistent klaar is of de
+        # levensduur verstrijkt; anders sluit hij na het eerste evenement.
+        self.batch = bool(batch)
         self._received_payload = None
+        self._received_batch: list[dict] = []
         self._lock = threading.Lock()
         self.token = uuid.uuid4().hex + uuid.uuid4().hex
         self.lifetime_seconds = max(30, int(lifetime_seconds))
@@ -377,7 +382,10 @@ class RudderLocalBridge:
                     return
                 with bridge._lock:
                     bridge._received_payload = payload
-                body = b'{"ok":true}'
+                    if bridge.batch:
+                        bridge._received_batch.append(payload)
+                    received = len(bridge._received_batch) if bridge.batch else 1
+                body = json.dumps({"ok": True, "received": received}).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -385,7 +393,9 @@ class RudderLocalBridge:
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(body)
-                threading.Thread(target=bridge.stop, daemon=True).start()
+                # In batchmodus blijft de brug open voor het volgende evenement.
+                if not bridge.batch:
+                    threading.Thread(target=bridge.stop, daemon=True).start()
 
             def do_OPTIONS(self):
                 self.send_response(204)
@@ -409,6 +419,12 @@ class RudderLocalBridge:
         self.timer.daemon = True
         self.timer.start()
         return self.server.server_address[1], self.token
+
+    def take_received_batch(self):
+        """Haal de tot nu toe ontvangen evenementen op en maak de lijst leeg."""
+        with self._lock:
+            received, self._received_batch = list(self._received_batch), []
+        return received
 
     def take_received_payload(self):
         with self._lock:
@@ -4101,6 +4117,14 @@ class BezoekerslijstWindow(QMainWindow):
         self.new_event_button.setObjectName("primaryButton")
         self.new_event_button.clicked.connect(lambda _checked=False: self.new_project())
         hero_actions.addWidget(self.new_event_button)
+        self.bulk_import_button = QPushButton("Importeren uit Rudder")
+        self.bulk_import_button.setObjectName("secondaryButton")
+        self.bulk_import_button.setToolTip(
+            "Haal in een keer alle evenementen op die in Rudder in beeld staan. "
+            "Filter daar eerst op uw eigen naam."
+        )
+        self.bulk_import_button.clicked.connect(self.import_rudder_events_bulk)
+        hero_actions.addWidget(self.bulk_import_button)
         event_control_button = QPushButton("Event Control")
         event_control_button.setObjectName("secondaryButton")
         event_control_button.clicked.connect(self.show_event_control_page)
@@ -5389,6 +5413,134 @@ class BezoekerslijstWindow(QMainWindow):
             )
         except Exception as exc:
             self._show_runtime_error("Importeren uit Rudder", exc)
+
+    def import_rudder_events_bulk(self, _checked=False):
+        """Importeer in een keer alle evenementen die in Rudder in beeld staan.
+
+        Rudder filtert zelf op eigenaar, soort en krijgsmacht. Wie daar op de
+        eigen naam filtert en dit start, haalt in een keer al die evenementen
+        binnen; de assistent loopt de resultaten af en stuurt ze een voor een
+        door over dezelfde brug.
+        """
+        try:
+            if self._rudder_bridge is not None:
+                self._rudder_bridge.stop()
+            self._rudder_bridge = RudderLocalBridge(
+                lifetime_seconds=1800, receive_event=True, batch=True
+            )
+            port, token = self._rudder_bridge.start()
+            self._rudder_bulk_import = []
+            self._rudder_import_started_at = datetime.now()
+            self._rudder_import_target_event_id = ""
+            self._rudder_import_expected_event_id = ""
+            if not hasattr(self, "_rudder_bulk_timer"):
+                self._rudder_bulk_timer = QTimer(self)
+                self._rudder_bulk_timer.setInterval(500)
+                self._rudder_bulk_timer.timeout.connect(self._poll_rudder_bulk_import)
+            self._rudder_bulk_timer.start()
+            QDesktopServices.openUrl(
+                QUrl(f"{RUDDER_EVENTS_OVERVIEW_URL}#eventhub-import-all={port}.{token}")
+            )
+            self.status_label.setText(
+                "Rudder geopend. Filter daar op uw eigen naam en kies "
+                "Alles importeren naar EventHub."
+            )
+        except Exception as exc:
+            self._show_runtime_error("Evenementen importeren uit Rudder", exc)
+
+    def _poll_rudder_bulk_import(self):
+        bridge = self._rudder_bridge
+        if bridge is None:
+            self._rudder_bulk_timer.stop()
+            return
+        for payload in bridge.take_received_batch():
+            if str(payload.get("action", "")) == "done":
+                self._finish_rudder_bulk_import()
+                return
+            try:
+                self._rudder_bulk_import.append(sanitize_rudder_event_payload(payload))
+            except Exception:
+                self._write_error_log("Rudder-bulkimport", traceback.format_exc())
+        started = getattr(self, "_rudder_import_started_at", datetime.now())
+        if (datetime.now() - started).total_seconds() >= 1800:
+            self._finish_rudder_bulk_import(expired=True)
+        elif self._rudder_bulk_import:
+            self.status_label.setText(
+                f"Bezig met importeren uit Rudder: {len(self._rudder_bulk_import)} evenement(en) ontvangen."
+            )
+
+    def _finish_rudder_bulk_import(self, expired: bool = False):
+        self._rudder_bulk_timer.stop()
+        if self._rudder_bridge is not None:
+            self._rudder_bridge.stop()
+            self._rudder_bridge = None
+        imported = list(self._rudder_bulk_import)
+        self._rudder_bulk_import = []
+        if not imported:
+            self.status_label.setText(
+                "Rudder-import verlopen zonder evenementen." if expired
+                else "Geen evenementen ontvangen uit Rudder."
+            )
+            return
+        self._confirm_rudder_bulk_import(imported)
+
+    def _rudder_bulk_preview(self, imported: list[dict]):
+        """Splits de ontvangst in nieuw en bij te werken, op Rudder-event-id."""
+        bestaand = {
+            str(event.get("rudder_event_id", "") or ""): event
+            for event in self.events if event.get("rudder_event_id")
+        }
+        nieuw, bijwerken = [], []
+        for item in imported:
+            doel = bestaand.get(str(item.get("event_id", "") or ""))
+            (bijwerken if doel else nieuw).append((item, doel))
+        return nieuw, bijwerken
+
+    def _confirm_rudder_bulk_import(self, imported: list[dict]):
+        nieuw, bijwerken = self._rudder_bulk_preview(imported)
+        regels = []
+        for item, _ in nieuw:
+            updates = rudder_eventhub_updates(item)
+            regels.append(f"<li>Nieuw: {escape(str(updates.get('name', '') or 'Onbenoemd'))}</li>")
+        for item, doel in bijwerken:
+            regels.append(f"<li>Bijwerken: {escape(str(doel.get('name', '') or 'Onbenoemd'))}</li>")
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Evenementen importeren")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(f"<b>{len(imported)} evenement(en) uit Rudder ontvangen.</b>")
+        box.setInformativeText(
+            f"<p>{len(nieuw)} nieuw, {len(bijwerken)} bij te werken.</p>"
+            f"<ul>{''.join(regels[:20])}</ul>"
+            + ("<p>...</p>" if len(regels) > 20 else "")
+            + "<p>Bestaande evenementen worden bijgewerkt, niet gedupliceerd. "
+            "Afgeronde taken blijven staan.</p>"
+        )
+        toepassen = box.addButton("Importeren", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Annuleren", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(toepassen)
+        box.exec()
+        if box.clickedButton() is not toepassen:
+            self.status_label.setText("Rudder-import geannuleerd.")
+            return
+
+        verwerkt, mislukt = 0, []
+        for item, doel in nieuw + bijwerken:
+            try:
+                self._apply_rudder_event_import(item, doel)
+                verwerkt += 1
+            except Exception as exc:
+                mislukt.append(f"{item.get('event_id', '?')}: {exc}")
+                self._write_error_log("Rudder-bulkimport toepassen", traceback.format_exc())
+        self._mark_dirty()
+        self._render_all()
+        self._add_recent_activity(f"{verwerkt} evenement(en) uit Rudder geimporteerd")
+        melding = f"{verwerkt} evenement(en) verwerkt uit Rudder."
+        if mislukt:
+            melding += "\n\nOvergeslagen:\n" + "\n".join(mislukt[:6])
+        QMessageBox.information(self, "Import gereed", melding)
+        self.status_label.setText(f"{verwerkt} evenement(en) uit Rudder verwerkt.")
 
     def _poll_rudder_event_import(self):
         bridge = self._rudder_bridge

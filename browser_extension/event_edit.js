@@ -66,30 +66,12 @@
     return dates;
   }
 
+  // Gebruikt dezelfde uitlezer als de bulkimport, zodat beide routes
+  // gegarandeerd dezelfde gegevens opleveren.
   function scrapeEvent() {
-    const locationPlate = document.querySelector(".js-event-template-location-license-plate");
-    const plateText = clean(locationPlate?.textContent || "").toLowerCase();
-    return {
-      format: EVENT_FORMAT, version: 1, direction: "import", event_id: pageEventId(),
-      data: {
-        active: checked("item[nl_NL][active]"),
-        event_template_id: value("item[event_template_id]"), event_template: selected("item[event_template_id]"),
-        reference: info("reference"), event_type: info("event_type.title"), form_type: info("form_type.title"),
-        owner_id: value("item[user_id]"), owner: selected("item[user_id]"), dates: scrapeDates(),
-        publication_date: value("item[publication_date]"), expiration_date: value("item[expiration_date]"),
-        internal_registration: radio("item[internal_registration]") === "1",
-        registrant_limit: checked("item[registrant_limit]"), maximum_registrants: value("item[maximum_registrants]"),
-        allows_invitees: checked("item[allows_invitees]"), invitees_per_registrant: value("item[invitees_per_registrant]"),
-        registration_url: value("item[registration_url]"), prior_closing_days: value("item[prior_closing_days]"),
-        event_location_id: value("item[event_location_id]"), event_location: selected("item[event_location_id]"),
-        location_address: clean(document.querySelector(".js-event-template-location-address")?.textContent || ""),
-        license_plate_registration: plateText ? plateText === clean(locationPlate?.dataset?.yes || "ja").toLowerCase() : null,
-        location_instructions: value("item[nl_NL][location_instructions]"),
-        minimal_education: info("minimal_required_education.translations.[LOCALE].title"),
-        minimal_age: info("minimal_age"), maximal_age: info("maximal_age"),
-      },
-    };
+    return window.EventHubRudderScrape.scrapeEvent(document, pageEventId());
   }
+
 
   function setValue(name, next, changes) {
     const input = field(name); if (!input || next === undefined || next === null) return;

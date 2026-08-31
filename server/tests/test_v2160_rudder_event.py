@@ -103,7 +103,10 @@ class RudderEventTests(unittest.TestCase):
 
     def test_browser_assistant_patch_version_is_updated(self):
         manifest = json.loads((ROOT / "browser_extension" / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["version"], "1.3.0")
+        # Niet het nummer vastpinnen; dat brak bij elke legitieme ophoging.
+        # Wat telt is dat de assistent niet terugvalt naar een oudere versie.
+        versie = tuple(int(deel) for deel in manifest["version"].split("."))
+        self.assertGreaterEqual(versie, (1, 3, 0))
 
     def test_manual_link_does_not_clear_unknown_rudder_fields(self):
         package = rudder_export_package({"date": "19-08-2026", "rudder_event_id": "5900", "rudder_data": {}})

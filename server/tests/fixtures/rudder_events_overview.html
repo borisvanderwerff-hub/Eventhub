@@ -1,0 +1,72 @@
+<!doctype html>
+<!--
+  Nagebouwd fragment van de Rudder-evenementenpagina.
+
+  Bewust een eigen fixture met verzonnen namen: de echte pagina bevat de namen
+  van collega's, en die horen niet in een broncoderepository thuis. Alleen de
+  structuur is overgenomen, want daar hangt de browserassistent op.
+-->
+<html lang="nl">
+<body>
+  <form>
+    <select name="event_type"><option value="">Selecteer optie</option></select>
+    <select name="user">
+      <option value="">Selecteer optie</option>
+      <option value="401">Test Gebruiker</option>
+      <option value="402">Andere Gebruiker</option>
+    </select>
+    <select name="armed_force_id"><option value="">Selecteer optie</option></select>
+  </form>
+
+  <div class="grid__item">
+    <div class="event-card js-event">
+      <div class="event-card__main">
+        <span class="event-card__status js-event-state-label is-active">Actief</span>
+        <h3 class="event-card__title">Meeloopdag Marine (Varend)</h3>
+        <p class="event-card__meta">02/09/2026 09:00 - 16:00</p>
+        <p class="event-card__byline">Test Gebruiker</p>
+      </div>
+      <div class="event-card__stats"><span class="event-stats__total">23</span></div>
+      <a href="https://werkenbijdefensie.nl/rudder/event/events/5900/registrations">Bekijken</a>
+      <a href="https://werkenbijdefensie.nl/rudder/event/events/5900/edit">Aanpassen</a>
+      <a href="https://werkenbijdefensie.nl/rudder/event/events/5900/duplicate">Dupliceren</a>
+    </div>
+  </div>
+
+  <div class="grid__item">
+    <div class="event-card js-event">
+      <div class="event-card__main">
+        <span class="event-card__status js-event-state-label is-active">Actief</span>
+        <h3 class="event-card__title">Voorlichting Landmacht</h3>
+        <p class="event-card__meta">03/09/2026 13:00 - 17:00</p>
+        <p class="event-card__byline">Test Gebruiker</p>
+      </div>
+      <div class="event-card__stats"><span class="event-stats__total">12</span></div>
+      <a href="https://werkenbijdefensie.nl/rudder/event/events/6081/edit">Aanpassen</a>
+    </div>
+  </div>
+
+  <div class="grid__item">
+    <div class="event-card js-event">
+      <div class="event-card__main">
+        <span class="event-card__status js-event-state-label">Afgerond</span>
+        <h3 class="event-card__title">Open dag Luchtmacht</h3>
+        <p class="event-card__meta">28/08/2026 10:00 - 15:00</p>
+        <p class="event-card__byline">Andere Gebruiker</p>
+      </div>
+      <div class="event-card__stats"><span class="event-stats__total">40</span></div>
+      <a href="https://werkenbijdefensie.nl/rudder/event/events/5814/edit">Aanpassen</a>
+    </div>
+  </div>
+
+  <nav class="pagination">
+    <a class="pagination__prev js-pagination is-inactive" href="/rudder/event/events?page=1">Vorige</a>
+    <a class="js-pagination is-active" href="/rudder/event/events?page=1">1</a>
+    <a class="js-pagination" href="/rudder/event/events?page=2">2</a>
+    <a class="js-pagination" href="/rudder/event/events?page=3">3</a>
+    <span class="pagination__seperator">...</span>
+    <a class="js-pagination" href="/rudder/event/events?page=24">24</a>
+    <a class="pagination__next js-pagination" href="/rudder/event/events?page=2">Volgende</a>
+  </nav>
+</body>
+</html>

@@ -83,7 +83,10 @@ class RudderWorkflowTests(unittest.TestCase):
 
     def test_overview_passes_import_reference_to_selected_event(self):
         manifest = json.loads((ROOT / "browser_extension" / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["version"], "1.3.0")
+        # Niet het nummer vastpinnen; dat brak bij elke legitieme ophoging.
+        # Wat telt is dat de assistent niet terugvalt naar een oudere versie.
+        versie = tuple(int(deel) for deel in manifest["version"].split("."))
+        self.assertGreaterEqual(versie, (1, 3, 0))
         scripts = {script for entry in manifest["content_scripts"] for script in entry["js"]}
         self.assertIn("event_list.js", scripts)
         overview = (ROOT / "browser_extension" / "event_list.js").read_text(encoding="utf-8")
