@@ -77,26 +77,49 @@
   panel.className = "eventhub-rudder-toast ready";
   document.body.appendChild(panel);
 
-  const cards = scraper.scrapeEventList(document);
-  const pages = scraper.scrapePageLinks(document);
-  const laatste = pages.length ? Math.max(...pages) : 1;
+  const setStatus = text => { panel.innerHTML = text; };
+  let bezig = false;
 
-  if (!cards.length) {
-    panel.textContent = "Geen evenementen op deze pagina. Pas het filter in Rudder aan.";
-    return;
+  // Rudder vernieuwt de lijst na het kiezen van een filter zonder de pagina te
+  // herladen. Een momentopname bij het laden zou dus blijven hangen op de
+  // ongefilterde lijst; daarom wordt er telkens opnieuw gelezen.
+  const huidigeKaarten = () => scraper.scrapeEventList(document);
+
+  function toonKeuze() {
+    if (bezig) return;
+    const cards = huidigeKaarten();
+    if (!cards.length) {
+      setStatus(
+        "<b>Geen evenementen in beeld.</b><br>Pas het filter in Rudder aan." +
+        `<br><button type="button" id="eventhub-bulk-cancel">Annuleren</button>`,
+      );
+      return;
+    }
+    const pages = scraper.scrapePageLinks(document);
+    const laatste = pages.length ? Math.max(...pages) : 1;
+    const eigenaren = [...new Set(cards.map(card => card.owner).filter(Boolean))];
+    setStatus(
+      `<b>${cards.length} evenement(en) in beeld</b>` +
+      (eigenaren.length === 1
+        ? `<br>Eigenaar: ${scraper.clean(eigenaren[0])}`
+        : `<br>${eigenaren.length} verschillende eigenaren. Filter hierboven op uw naam; dit paneel blijft staan.`) +
+      (laatste > 1 ? `<br>Let op: pagina 1 van ${laatste}. Alleen wat hier staat wordt geimporteerd.` : "") +
+      `<br><button type="button" id="eventhub-bulk-start">Alles importeren naar EventHub</button>` +
+      `<button type="button" id="eventhub-bulk-cancel">Annuleren</button>`,
+    );
   }
 
-  const eigenaren = [...new Set(cards.map(card => card.owner).filter(Boolean))];
-  panel.innerHTML =
-    `<b>${cards.length} evenement(en) op deze pagina</b>` +
-    (eigenaren.length === 1
-      ? `<br>Eigenaar: ${scraper.clean(eigenaren[0])}`
-      : `<br>${eigenaren.length} verschillende eigenaren. Filter hierboven op uw naam; dit paneel blijft staan.`) +
-    (laatste > 1 ? `<br>Let op: dit is pagina 1 van ${laatste}. Alleen wat hier staat wordt geimporteerd.` : "") +
-    `<br><button type="button" id="eventhub-bulk-start">Alles importeren naar EventHub</button>` +
-    `<button type="button" id="eventhub-bulk-cancel">Annuleren</button>`;
+  // Meebewegen met het filter, gedempt zodat een reeks wijzigingen tot een
+  // enkele verversing leidt.
+  let wachtend = null;
+  const observer = new MutationObserver(() => {
+    if (bezig) return;
+    clearTimeout(wachtend);
+    wachtend = setTimeout(toonKeuze, 250);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
 
-  const setStatus = text => { panel.innerHTML = text; };
+  toonKeuze();
 
   async function haalEvenement(id) {
     const response = await fetch(`/rudder/event/events/${id}/edit`, {
@@ -110,8 +133,12 @@
   }
 
   async function importeerAlles() {
+    bezig = true;
     let gelukt = 0;
     const mislukt = [];
+    // Op dit moment vastleggen: wat er nu in beeld staat, is wat de gebruiker
+    // ziet en bedoelt.
+    const cards = huidigeKaarten();
     for (const [index, card] of cards.entries()) {
       setStatus(`Bezig: ${index + 1} van ${cards.length}<br>${scraper.clean(card.title)}`);
       try {
@@ -126,6 +153,7 @@
     // Sluitsignaal: hierop rondt EventHub de import af en toont het overzicht.
     await send({ format: scraper.EVENT_FORMAT, action: "done" });
     sessionStorage.removeItem(SESSION_KEY);
+    observer.disconnect();
     setStatus(
       `<b>Klaar.</b><br>${gelukt} van ${cards.length} verstuurd naar EventHub.` +
       (mislukt.length ? `<br>Overgeslagen: ${mislukt.slice(0, 3).join("; ")}` : "") +
@@ -137,6 +165,7 @@
     if (event.target.id === "eventhub-bulk-cancel") {
       send({ format: scraper.EVENT_FORMAT, action: "done" });
       sessionStorage.removeItem(SESSION_KEY);
+      observer.disconnect();
       panel.remove();
     }
     if (event.target.id === "eventhub-bulk-start") {

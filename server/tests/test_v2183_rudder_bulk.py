@@ -110,6 +110,36 @@ class SessionSurvivalTests(unittest.TestCase):
         self.assertIn("verschillende eigenaren", self.bulk)
 
 
+class LiveFilterTests(unittest.TestCase):
+    """Rudder vernieuwt de lijst zonder herladen; het paneel moet meebewegen."""
+
+    def setUp(self):
+        self.bulk = (EXTENSION / "event_bulk.js").read_text(encoding="utf-8")
+
+    def test_the_panel_watches_for_list_changes(self):
+        self.assertIn("new MutationObserver(", self.bulk)
+        self.assertIn("observer.observe(document.body", self.bulk)
+
+    def test_updates_are_debounced(self):
+        """Een filterwijziging veroorzaakt een reeks mutaties, geen enkele."""
+        self.assertIn("clearTimeout(wachtend)", self.bulk)
+        self.assertIn("setTimeout(toonKeuze", self.bulk)
+
+    def test_the_list_is_read_again_instead_of_snapshotted(self):
+        self.assertIn("const huidigeKaarten = () => scraper.scrapeEventList(document)", self.bulk)
+        self.assertNotIn("const cards = scraper.scrapeEventList(document);", self.bulk)
+
+    def test_the_import_uses_the_list_as_it_is_at_that_moment(self):
+        start = self.bulk.index("async function importeerAlles()")
+        block = self.bulk[start:self.bulk.index("\n  }", start)]
+        self.assertIn("const cards = huidigeKaarten();", block)
+
+    def test_watching_stops_while_importing_and_afterwards(self):
+        self.assertIn("bezig = true", self.bulk)
+        self.assertIn("if (bezig) return;", self.bulk)
+        self.assertGreaterEqual(self.bulk.count("observer.disconnect()"), 2)
+
+
 class SelectReadingTests(unittest.TestCase):
     """Rudder gebruikt Select2; in een opgehaald document heeft dat niet gedraaid."""
 
