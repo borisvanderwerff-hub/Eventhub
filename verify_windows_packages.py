@@ -17,6 +17,8 @@ def verify(root=Path('.')):
                         yield from modules(item)
         included = set(modules(analysis))
         assert not any(m == 'server.tests' or m.startswith('server.tests.') for m in included), name
+        if name == 'EventHub':
+            assert 'emt_updater' in included, 'EventHub: updater ontbreekt in het desktop-pakket'
         bundle = root / 'dist' / name
         assert (bundle / (name + '.exe')).is_file(), name
         engine = list(bundle.rglob('Qt6WebEngineCore.dll'))

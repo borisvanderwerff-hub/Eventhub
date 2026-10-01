@@ -45,6 +45,8 @@ def build_stylesheet(dark_mode: bool = False) -> str:
         QLabel#workspaceStatus {{ color: #79e9b4; background: #10251f; border: 1px solid #1f5c49; border-radius: 13px; padding: 5px 10px; font-size: 8.5pt; font-weight: 700; }}
         QLabel#privacyLabel {{ color: #6f819b; font-size: 8.5pt; }}
         QLabel#poweredByLabel {{ color: {muted}; font-size: 8pt; font-style: italic; padding: 2px 4px; }}
+        QLabel#updateNoticeLabel {{ color: #00a8c8; font-size: 8pt; font-weight: 600; }}
+        QLabel#updateNoticeLabel a {{ color: #00a8c8; font-weight: 800; text-decoration: underline; }}
 
         QFrame#dashboardHero {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #131b2d, stop:0.62 #171c38, stop:1 #221847); border: 1px solid #343b62; border-radius: 16px; }}
         QLabel#heroTitle {{ color: #ffffff; font-size: 17pt; font-weight: 800; }}

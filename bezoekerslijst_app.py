@@ -10,10 +10,13 @@ import json
 import mimetypes
 import os
 from pathlib import Path
+import queue
 import re
 import shutil
 import sqlite3
 import sys
+import subprocess
+import threading
 import tempfile
 import traceback
 import urllib.error
@@ -60,6 +63,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QProgressDialog,
     QScrollArea,
     QSizePolicy,
     QStackedLayout,
@@ -221,6 +225,12 @@ from emt_base import (  # noqa: F401
     parse_timestamp,
     program_directory,
     projects_directory,
+)
+from emt_updater import (
+    GITHUB_RELEASES_PAGE,
+    UpdateDownloadCancelled,
+    download_update_installer,
+    find_latest_update,
 )
 from emt_widgets import (  # noqa: F401
     EventCard,
@@ -470,8 +480,9 @@ EDITABLE_VISITOR_FIELDS = {
 }
 
 UPDATE_LOG_HTML = """
-<h2>Nieuw in EventHub 0.2.1 Beta</h2>
+<h2>Nieuw in EventHub 0.2.2 Beta</h2>
 <ul>
+  <li><b>Updates vanuit EventHub:</b> bij het opstarten controleert EventHub op nieuwe releases. Een beschikbare update staat als klikbare melding onderin; u kunt die meteen installeren of uitstellen.</li>
   <li><b>WhatsApp-sjablonen:</b> beheer via Instellingen een eigen lijst met berichten en kies er één in de WhatsApp-wachtrij.</li>
   <li><b>Contactstatus in kleur:</b> After sales toont per kandidaat een gekleurde stip: groen afgehandeld, oranje opnieuw proberen, rood niet meer benaderen, grijs nog bellen.</li>
   <li><b>Opgelost:</b> de datum van het evenement stond twee keer in een WhatsApp-bericht.</li>
@@ -1336,6 +1347,14 @@ class BezoekerslijstWindow(EventBoardMixin, QMainWindow):
         footer_layout.setContentsMargins(0, 0, 0, 0)
         footer_layout.setSpacing(12)
         footer_layout.addWidget(self.status_label, 1)
+        self.update_notice_label = QLabel()
+        self.update_notice_label.setObjectName("updateNoticeLabel")
+        self.update_notice_label.setTextFormat(Qt.TextFormat.RichText)
+        self.update_notice_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.update_notice_label.setOpenExternalLinks(False)
+        self.update_notice_label.linkActivated.connect(self._handle_update_notice_link)
+        self.update_notice_label.hide()
+        footer_layout.addWidget(self.update_notice_label, 0)
         self.powered_by_label = QLabel("Powered by Cohentra Digital")
         self.powered_by_label.setObjectName("poweredByLabel")
         self.powered_by_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -4050,13 +4069,173 @@ class BezoekerslijstWindow(EventBoardMixin, QMainWindow):
             self.show_changelog()
 
     def show_about_dialog(self):
-        QMessageBox.information(
-            self,
-            "Over EventHub",
+        latest = getattr(self, "_available_update", None)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Over EventHub")
+        layout = QVBoxLayout(dialog)
+        info = QLabel(
             f"{APP_NAME}\nVersie {APP_VERSION}\n\nEen product van Cohentra Digital.\n\n"
             "Dossiers worden lokaal opgeslagen. WhatsApp opent alleen na een bewuste actie. "
-            "De Rudder Browserassistent gebruikt uitsluitend een tijdelijke koppeling op deze laptop.",
+            "De Rudder Browserassistent gebruikt uitsluitend een tijdelijke koppeling op deze laptop."
         )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        if latest:
+            version = escape(str(latest.get("version", "")))
+            update_info = QLabel(
+                f'Update beschikbaar: <b>{version}</b> · '
+                '<a href="install">Nu installeren</a> · '
+                '<a href="release">Release bekijken</a>'
+            )
+            update_info.setTextFormat(Qt.TextFormat.RichText)
+            update_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+            update_info.linkActivated.connect(lambda target: self._handle_about_update_link(dialog, target))
+            layout.addWidget(update_info)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.exec()
+
+    def _handle_about_update_link(self, dialog, target):
+        latest = getattr(self, "_available_update", {})
+        if target == "release":
+            QDesktopServices.openUrl(QUrl(latest.get("release_url") or GITHUB_RELEASES_PAGE))
+        elif target == "install":
+            dialog.accept()
+            QTimer.singleShot(0, self._download_and_install_update)
+
+    def start_update_check_polling(self, result_queue):
+        """Lees het resultaat van de opstartcontrole zonder de interface te blokkeren."""
+        self._startup_update_result_queue = result_queue
+        self._startup_update_timer = QTimer(self)
+        self._startup_update_timer.setInterval(250)
+        self._startup_update_timer.timeout.connect(self._poll_startup_update_result)
+        self._startup_update_timer.start()
+
+    def _poll_startup_update_result(self):
+        try:
+            update = self._startup_update_result_queue.get_nowait()
+        except queue.Empty:
+            return
+        self._startup_update_timer.stop()
+        if update:
+            self._available_update = update
+            version = escape(str(update.get("version", "")))
+            self.update_notice_label.setText(
+                f'Update <b>{version}</b> beschikbaar · '
+                '<a href="install">Nu installeren</a> · '
+                '<a href="later">Later</a>'
+            )
+            self.update_notice_label.show()
+            self.privacy_label.setText(f"Versie {APP_VERSION}  •  Update {version} beschikbaar")
+            self.privacy_label.setToolTip(f"Versie {APP_VERSION}; update {version} is beschikbaar.")
+
+    def _handle_update_notice_link(self, target):
+        if target == "later":
+            self.update_notice_label.hide()
+            latest = getattr(self, "_available_update", {})
+            self.status_label.setText(
+                f"Update {latest.get('version', '')} uitgesteld. U vindt de informatie terug bij Help → Over EventHub."
+            )
+        elif target == "install":
+            self._download_and_install_update()
+
+    def _save_before_update(self):
+        if not self.dirty:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Wijzigingen opslaan voor de update?",
+            "Er zijn nog niet-opgeslagen wijzigingen. Sla deze eerst op voordat EventHub wordt bijgewerkt.",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        return answer == QMessageBox.StandardButton.Save and self.save_project()
+
+    def _download_and_install_update(self):
+        if not sys.platform.startswith("win"):
+            QMessageBox.information(self, "Update niet beschikbaar", "De automatische installer is alleen beschikbaar voor Windows.")
+            return
+        update = getattr(self, "_available_update", None)
+        if not update:
+            return
+        if not self._save_before_update():
+            return
+        if getattr(self, "_update_download_thread", None) and self._update_download_thread.is_alive():
+            return
+
+        self._update_download_queue = queue.Queue()
+        self._update_download_cancel = threading.Event()
+        self._update_progress_dialog = QProgressDialog(
+            f"Update {update['version']} downloaden en controleren…",
+            "Annuleren",
+            0,
+            100,
+            self,
+        )
+        self._update_progress_dialog.setWindowTitle("EventHub bijwerken")
+        self._update_progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._update_progress_dialog.setMinimumDuration(0)
+        self._update_progress_dialog.setAutoClose(False)
+        self._update_progress_dialog.setAutoReset(False)
+        self._update_progress_dialog.canceled.connect(self._update_download_cancel.set)
+
+        result_queue = self._update_download_queue
+        cancel_event = self._update_download_cancel
+
+        def download_worker():
+            try:
+                installer = download_update_installer(
+                    update,
+                    application_data_root() / "updates",
+                    progress=lambda value: result_queue.put(("progress", value)),
+                    cancel_event=cancel_event,
+                )
+                result_queue.put(("ready", str(installer)))
+            except UpdateDownloadCancelled:
+                result_queue.put(("cancelled", ""))
+            except Exception as exc:
+                result_queue.put(("error", str(exc)))
+
+        self._update_download_thread = threading.Thread(target=download_worker, name="EventHub-update-download", daemon=True)
+        self._update_download_thread.start()
+        self._update_download_timer = QTimer(self)
+        self._update_download_timer.setInterval(100)
+        self._update_download_timer.timeout.connect(self._poll_update_download)
+        self._update_download_timer.start()
+        self._update_progress_dialog.show()
+
+    def _poll_update_download(self):
+        while True:
+            try:
+                state, value = self._update_download_queue.get_nowait()
+            except queue.Empty:
+                return
+            if state == "progress":
+                self._update_progress_dialog.setValue(int(value))
+                continue
+
+            self._update_download_timer.stop()
+            self._update_progress_dialog.close()
+            if state == "cancelled":
+                self.status_label.setText("Update downloaden geannuleerd.")
+            elif state == "error":
+                QMessageBox.warning(self, "Update downloaden mislukt", str(value))
+            else:
+                self._launch_update_installer(Path(value))
+            return
+
+    def _launch_update_installer(self, installer: Path):
+        try:
+            subprocess.Popen([str(installer)], cwd=str(installer.parent), close_fds=True)
+        except OSError as exc:
+            QMessageBox.critical(self, "Update starten mislukt", f"De gecontroleerde installer kon niet worden gestart.\n\n{exc}")
+            return
+        self._allow_application_exit = True
+        self.close()
+        if not self.isVisible():
+            QApplication.instance().quit()
 
     def _event_workspace_card(self, eyebrow: str, title: str, description: str, button_text: str, handler, primary: bool = False):
         """Create a reusable EventHub 2 workspace card for an event dossier."""
@@ -10853,8 +11032,30 @@ def main():
     app.setStyle("Fusion")
     splash = StartupSplash()
     splash.show()
+    update_result_queue = queue.Queue(maxsize=1)
+    update_check_thread = None
+    if sys.platform.startswith("win"):
+        splash.set_progress(5, "Controleren op EventHub-updates…")
+
+        def check_for_update():
+            try:
+                result = find_latest_update(APP_VERSION)
+            except Exception:
+                # Een tijdelijke netwerkfout mag het starten van EventHub niet
+                # blokkeren of een foutvenster veroorzaken.
+                result = None
+            update_result_queue.put(result)
+
+        update_check_thread = threading.Thread(
+            target=check_for_update,
+            name="EventHub-startup-update-check",
+            daemon=True,
+        )
+        update_check_thread.start()
     splash.set_progress(8, "Programmacomponenten laden…")
     window = BezoekerslijstWindow(progress_callback=splash.set_progress)
+    window._startup_update_thread = update_check_thread
+    window.start_update_check_polling(update_result_queue)
     splash.set_progress(100, "Gereed")
     window.show()
     # Draait er al een EventHub, dan houdt die de poort; deze werkt dan gewoon

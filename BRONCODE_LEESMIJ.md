@@ -1,6 +1,6 @@
-# EventHub — broncode 0.2.1 Beta
+# EventHub — broncode 0.2.2 Beta
 
-Dit pakket bevat de bewerkbare broncode van EventHub 0.2.1 Beta. Het bevat geen echte
+Dit pakket bevat de bewerkbare broncode van EventHub 0.2.2 Beta. Het bevat geen echte
 deelnemersgegevens, opgeslagen evenementen of Windows-runtime met duizenden
 losse bestanden.
 
@@ -13,6 +13,7 @@ Begin bij de functie of het scherm dat je wilt wijzigen. Deze kaart beschrijft d
 - `bezoekerslijst_app.py`: startpunt, applicatie-instellingen en het hoofdvenster. De klasse `BezoekerslijstWindow` koppelt schermen en acties aan elkaar. Namen die eerder uit dit bestand zijn verhuisd, worden hier opnieuw geïmporteerd om bestaande imports te blijven ondersteunen.
 - `emt_event_board.py`: evenementoverzicht en kaartweergave, sorteren, filteren, archiveren, eventselectie en recente activiteit. `EventBoardMixin` levert dit gedrag aan `BezoekerslijstWindow`; `event_name_with_date` blijft via `bezoekerslijst_app.py` beschikbaar.
 - `emt_base.py`: appnaam en versie, standaardpaden, resources en algemene evenement-/datumhulpfuncties. Dit is de onderste gedeelde laag.
+- `emt_updater.py`: controleert tijdens het opstarten GitHub Releases op een nieuwere Windows-installer en downloadt die na een bewuste klik. De SHA-256-controlesom wordt vóór het starten van de installer gecontroleerd.
 - `theme/styles.py`: centrale stylesheet en visuele basisstijl.
 
 ### Schermen en bediening
