@@ -27,20 +27,22 @@ if not exist "server\web\app.py" (
     exit /b 1
 )
 
-where py >nul 2>&1
-if errorlevel 1 (
-    echo Python 3.12 of nieuwer is niet gevonden.
-    echo Installeer Python vanaf https://www.python.org/downloads/windows/
-    pause
-    exit /b 1
-)
-
 if not exist ".venv\Scripts\python.exe" (
+    where py >nul 2>&1
+    if errorlevel 1 (
+        echo Python 3.12 of nieuwer is niet gevonden.
+        echo Installeer Python vanaf https://www.python.org/downloads/windows/
+        pause
+        exit /b 1
+    )
     py -3.12 -m venv .venv
     if errorlevel 1 goto :python_error
     ".venv\Scripts\python.exe" -m pip install --upgrade pip
     if errorlevel 1 goto :install_error
 )
+
+".venv\Scripts\python.exe" -c "import sys; sys.exit(sys.version_info < (3, 12))"
+if errorlevel 1 goto :python_error
 
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt pyinstaller
 if errorlevel 1 goto :install_error

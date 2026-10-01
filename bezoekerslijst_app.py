@@ -18,6 +18,7 @@ import sys
 import subprocess
 import threading
 import tempfile
+import time
 import traceback
 import urllib.error
 import urllib.parse
@@ -4121,15 +4122,20 @@ class BezoekerslijstWindow(EventBoardMixin, QMainWindow):
         self._startup_update_timer.stop()
         if update:
             self._available_update = update
-            version = escape(str(update.get("version", "")))
-            self.update_notice_label.setText(
-                f'Update <b>{version}</b> beschikbaar · '
-                '<a href="install">Nu installeren</a> · '
-                '<a href="later">Later</a>'
-            )
-            self.update_notice_label.show()
-            self.privacy_label.setText(f"Versie {APP_VERSION}  •  Update {version} beschikbaar")
-            self.privacy_label.setToolTip(f"Versie {APP_VERSION}; update {version} is beschikbaar.")
+            self._show_update_notice(update)
+
+    def _show_update_notice(self, update):
+        """Toon een genegeerde opstartmelding als kleine melding in de voettekst."""
+        self._available_update = update
+        version = escape(str(update.get("version", "")))
+        self.update_notice_label.setText(
+            f'Update <b>{version}</b> beschikbaar · '
+            '<a href="install">Nu installeren</a> · '
+            '<a href="later">Verbergen</a>'
+        )
+        self.update_notice_label.show()
+        self.privacy_label.setText(f"Versie {APP_VERSION}  •  Update {version} beschikbaar")
+        self.privacy_label.setToolTip(f"Versie {APP_VERSION}; update {version} is beschikbaar.")
 
     def _handle_update_notice_link(self, target):
         if target == "later":
@@ -11055,13 +11061,45 @@ def main():
     splash.set_progress(8, "Programmacomponenten laden…")
     window = BezoekerslijstWindow(progress_callback=splash.set_progress)
     window._startup_update_thread = update_check_thread
-    window.start_update_check_polling(update_result_queue)
+    startup_update = None
+    if update_check_thread is not None:
+        # Houd de melding bij het laadscherm: de GitHub-controle heeft dezelfde
+        # begrensde netwerk-timeout als de checker, terwijl Qt events blijven lopen.
+        deadline = time.monotonic() + 6.5
+        while time.monotonic() < deadline and update_check_thread.is_alive():
+            QApplication.processEvents()
+            try:
+                startup_update = update_result_queue.get_nowait()
+                break
+            except queue.Empty:
+                time.sleep(0.025)
+        if startup_update is None:
+            try:
+                startup_update = update_result_queue.get_nowait()
+            except queue.Empty:
+                pass
+    install_update = False
+    if startup_update:
+        prompt = QMessageBox(splash)
+        prompt.setWindowTitle("EventHub-update beschikbaar")
+        prompt.setText(f"Er is een nieuwe versie van EventHub beschikbaar: {startup_update.get('version', '')}.")
+        prompt.setInformativeText("Wilt u de update nu installeren?")
+        install_button = prompt.addButton("Nu installeren", QMessageBox.ButtonRole.AcceptRole)
+        ignore_button = prompt.addButton("Negeren", QMessageBox.ButtonRole.RejectRole)
+        prompt.setDefaultButton(install_button)
+        prompt.exec()
+        install_update = prompt.clickedButton() is install_button
+        window._available_update = startup_update
+        if not install_update:
+            window._show_update_notice(startup_update)
     splash.set_progress(100, "Gereed")
     window.show()
     # Draait er al een EventHub, dan houdt die de poort; deze werkt dan gewoon
     # zonder de assistent.
     window.rudder_attendance_service.start()
     splash.finish(window)
+    if install_update:
+        QTimer.singleShot(0, window._download_and_install_update)
     QTimer.singleShot(250, window.run_post_startup)
     return app.exec()
 

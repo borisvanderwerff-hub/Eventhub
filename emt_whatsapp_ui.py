@@ -45,7 +45,7 @@ WHATSAPP_LEGACY_SIGNATURE_SUFFIXES = (
 
 WHATSAPP_PLACEHOLDER_HINT = (
     "Beschikbaar: [voornaam], [tussenvoegsel], [achternaam], [volledige naam], [evenement], "
-    "[datum], [locatie], [plaats], [contactpersoon] en [contactnummer]."
+    "[datum], [locatie], [plaats], [handtekening] en [contactnummer]."
 )
 
 
@@ -85,7 +85,7 @@ def _whatsapp_phone(value) -> str:
 
 
 def _profile_signature(profile: dict) -> str:
-    """Build the WhatsApp profile signature; the 06-number is intentionally omitted."""
+    """Build the WhatsApp profile signature including email; omit the 06-number."""
     first_name = str(profile.get("signature_first_name", "") or "").strip()
     if not first_name:
         first_name = str(profile.get("name", "") or "").strip().split(" ", 1)[0]
@@ -95,7 +95,8 @@ def _profile_signature(profile: dict) -> str:
         profile.get("signature_organization", "Ministerie van Defensie")
         or "Ministerie van Defensie"
     ).strip()
-    return "\n".join(filter(None, [" ".join(filter(None, [rank, first_name])), department, organization]))
+    email = str(profile.get("email", "") or "").strip()
+    return "\n".join(filter(None, [" ".join(filter(None, [rank, first_name])), department, organization, email]))
 
 
 def whatsapp_event_name(name) -> str:
@@ -557,7 +558,9 @@ class WhatsAppQueueDialog(QDialog):
             "[datum]": str(self.event_data.get("date", "") or "").strip(),
             "[locatie]": location,
             "[plaats]": str(self.event_data.get("place", "") or "").strip(),
-            "[contactpersoon]": str(self.profile.get("name", "") or "").strip(),
+            "[handtekening]": _profile_signature(self.profile),
+            # Backward compatibility for already saved templates.
+            "[contactpersoon]": _profile_signature(self.profile),
             "[contactnummer]": str(self.profile.get("phone", "") or "").strip(),
         }
         message = self.template_edit.toPlainText()

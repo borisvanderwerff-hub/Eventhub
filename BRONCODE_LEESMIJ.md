@@ -1,6 +1,6 @@
-# EventHub — broncode 0.2.2 Beta
+# EventHub — broncode 0.2.4 Beta
 
-Dit pakket bevat de bewerkbare broncode van EventHub 0.2.2 Beta. Het bevat geen echte
+Dit pakket bevat de bewerkbare broncode van EventHub 0.2.4 Beta. Het bevat geen echte
 deelnemersgegevens, opgeslagen evenementen of Windows-runtime met duizenden
 losse bestanden.
 
@@ -106,7 +106,7 @@ zijn en aan PATH zijn toegevoegd.
 
 Installeer Python 3.12 en Inno Setup 6 en dubbelklik daarna op
 `BUILD_EVENTHUB_INSTALLER.bat`. Het script bouwt EventHub inclusief Event Control
-en maakt vervolgens `installer\EventHub-Setup-v0.2.1 Beta.exe`.
+en maakt vervolgens `installer\EventHub-Setup-v0.2.4 Beta.exe`.
 
 ## Veilig wijzigen
 

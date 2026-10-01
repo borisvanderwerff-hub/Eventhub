@@ -1,5 +1,5 @@
 #define MyAppName "EventHub"
-#define MyAppVersion "0.2.2 Beta"
+#define MyAppVersion "0.2.4 Beta"
 #define MyAppPublisher "Cohentra Digital"
 #define MyAppExeName "EventHub.exe"
 

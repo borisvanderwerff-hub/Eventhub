@@ -19,7 +19,7 @@ from emt_models import parse_date
 APP_NAME = "EventHub"
 
 
-APP_VERSION = "0.2.2 Beta"
+APP_VERSION = "0.2.4 Beta"
 
 
 def bundled_resource(relative_path):
