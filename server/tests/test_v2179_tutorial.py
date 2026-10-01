@@ -99,6 +99,42 @@ class TutorialTests(unittest.TestCase):
         for step in self.steps:
             self.assertNotIn("de nieuwe ", str(step["title"]).casefold(), step["title"])
 
+    def test_templates_and_extension_installation_are_in_main_tour(self):
+        text = " ".join(step["body"] for step in self.steps)
+        for label in ("Templatebeheer", "Opslaan als template", "Browserextensie installeren"):
+            self.assertIn(label, text)
+
+    def test_closing_returns_to_trends(self):
+        self.window.page_stack.setCurrentWidget(self.window.trends_page)
+        self.window._set_navigation_active("trends")
+        self.window.start_tutorial()
+        _CapturingOverlay.captured[0]["prepare"]()
+        _CapturingOverlay.finished(False)
+        self.assertIs(self.window.page_stack.currentWidget(), self.window.trends_page)
+        self.assertEqual(self.window.sidebar_buttons["trends"].objectName(), "sidebarButtonActive")
+
+    def test_trends_tour_restores_workspace_and_choices(self):
+        self.window.page_stack.setCurrentWidget(self.window.trends_page)
+        for workspace in (0, 1):
+            self.window.trend_tabs.setCurrentIndex(workspace)
+            panel = self.window.own_trend_panel if workspace == 0 else self.window.loose_trend_panel
+            panel.analysis_tabs.setCurrentIndex(2)
+            before = (panel.range_choice.currentData(), panel.dimension.currentData(),
+                      panel.metric_choice.currentData(), panel.display_choice.currentData(),
+                      panel.time_choice.currentData(), dict(panel.group_selections))
+            self.window.start_trends_tour()
+            steps = _CapturingOverlay.captured
+            for step in steps + list(reversed(steps)):
+                step["prepare"]()
+                self.assertIsNotNone(step["target"]())
+            _CapturingOverlay.finished(False)
+            self.assertEqual(self.window.trend_tabs.currentIndex(), workspace)
+            self.assertEqual(panel.analysis_tabs.currentIndex(), 2)
+            after = (panel.range_choice.currentData(), panel.dimension.currentData(),
+                     panel.metric_choice.currentData(), panel.display_choice.currentData(),
+                     panel.time_choice.currentData(), dict(panel.group_selections))
+            self.assertEqual(before, after)
+
 
 class LiveSessionTourTests(unittest.TestCase):
     """De losse uitleg bij Live sessie."""

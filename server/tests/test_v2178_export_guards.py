@@ -5,16 +5,16 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
-SOURCE = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+SOURCE = desktop_source(ROOT)
 
 # Exports die deelnemersgegevens meenemen en dus gewaarschuwd horen te worden.
 WITH_PERSONAL_DATA = [
     "export_participant_list",
     "export_participant_pdf",
     "export_excel",
-    "export_rudder_attendance",
     "export_fivewh_document",
     "export_selected_attachment",
 ]

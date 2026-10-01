@@ -7,13 +7,14 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from PySide6.QtWidgets import QApplication
 
 import bezoekerslijst_app
 
-SOURCE = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+SOURCE = desktop_source(ROOT)
 
 
 class DataLocationTests(unittest.TestCase):
@@ -43,7 +44,8 @@ class DataLocationTests(unittest.TestCase):
 
     def test_it_no_longer_reads_the_location_from_qt(self):
         start = SOURCE.index("def application_data_root():")
-        block = SOURCE[start:SOURCE.index("\nclass ", start)]
+        # Alleen deze functie, tot aan de volgende: de klassen eronder zijn verhuisd.
+        block = SOURCE[start:SOURCE.index("\n\ndef ", start + 1)]
         # Op de aanroep matchen, niet op het woord: de toelichting noemt
         # QStandardPaths juist om uit te leggen waarom het weg is.
         self.assertNotIn("QStandardPaths.writableLocation", block)

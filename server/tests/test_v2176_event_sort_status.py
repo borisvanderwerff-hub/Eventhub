@@ -6,6 +6,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from bezoekerslijst_app import AUTOMATIC_STATUS, EVENT_SORT_MODES, BezoekerslijstWindow
@@ -125,14 +126,14 @@ class ManualStatusTests(unittest.TestCase):
 
 class StatusReachabilityTests(unittest.TestCase):
     def setUp(self):
-        self.source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        self.source = desktop_source(ROOT)
 
     def _block(self, name):
         start = self.source.index(f"def {name}(self")
         return self.source[start:self.source.index("\n    def ", start + 1)]
 
     def test_events_list_offers_a_status_menu(self):
-        block = self._block("_show_event_context_menu")
+        block = self._block("_event_actions_menu")
         self.assertIn('status_menu = menu.addMenu("Status")', block)
         self.assertIn("AUTOMATIC_STATUS", block)
 

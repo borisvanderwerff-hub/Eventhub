@@ -6,12 +6,13 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from emt_live_manual import MANUAL_TITLE, manual_html, manual_sections
 
 CONNECT_PAGE = (ROOT / "server/web/templates/connect.html").read_text(encoding="utf-8")
-APP_SOURCE = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+APP_SOURCE = desktop_source(ROOT)
 
 
 class ContentTests(unittest.TestCase):

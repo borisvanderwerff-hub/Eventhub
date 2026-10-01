@@ -35,7 +35,8 @@ ALLOWED_IMPORT_EXTENSIONS = {".xlsx", ".xlsm", ".xls"}
 MAX_IMPORT_SIZE = 20 * 1024 * 1024  # 20 MB is generous for a visitor list
 MUTATING_ROLES = {"admin", "event_manager"}
 CHECKIN_ROLES = {"admin", "event_manager", "checkin"}
-READ_ROLES = {"admin", "event_manager", "checkin", "viewer"}
+READ_ROLES = {"admin", "event_manager", "checkin"}
+SESSION_STATE_ROLES = {"admin", "event_manager", "checkin", "viewer"}
 
 
 class ApiError(Exception):
@@ -133,7 +134,7 @@ def create_app(db_path: Path, event_id: str) -> Flask:
     @app.get("/api/session/state")
     def api_session_state():
         connection = get_connection()
-        require_role(connection, READ_ROLES)
+        require_role(connection, SESSION_STATE_ROLES)
         return jsonify({**session_service.freeze_state(connection), "emergency": emergency_service.state(connection)})
 
     @app.get("/api/session/activity")
@@ -231,12 +232,39 @@ def create_app(db_path: Path, event_id: str) -> Flask:
         return app.send_static_file("js/service-worker.js"), 200, {"Content-Type": "application/javascript", "Service-Worker-Allowed": "/"}
 
     # ---- Clients -----------------------------------------------------------
+    def _device_type_from_request(submitted: str = "") -> str:
+        allowed = {
+            "iPhone", "iPad", "Android-telefoon", "Android-tablet",
+            "Windows-pc", "Mac", "Chromebook", "Linux-apparaat",
+            "Onbekend apparaat",
+        }
+        submitted = (submitted or "").strip()
+        if submitted in allowed:
+            return submitted
+        ua = request.headers.get("User-Agent", "")
+        ua_lower = ua.lower()
+        if "ipad" in ua_lower:
+            return "iPad"
+        if "iphone" in ua_lower or "ipod" in ua_lower:
+            return "iPhone"
+        if "android" in ua_lower:
+            return "Android-telefoon" if "mobile" in ua_lower else "Android-tablet"
+        if "windows" in ua_lower:
+            return "Windows-pc"
+        if "cros" in ua_lower:
+            return "Chromebook"
+        if "macintosh" in ua_lower or "mac os x" in ua_lower:
+            return "Mac"
+        if "linux" in ua_lower:
+            return "Linux-apparaat"
+        return "Onbekend apparaat"
+
     @app.post("/api/clients/register")
     def api_register_client():
         connection = get_connection()
         payload = request.get_json(silent=True) or {}
         client_name = (payload.get("client_name") or "").strip() or "Onbekend apparaat"
-        client_type = (payload.get("client_type") or "Browser").strip()
+        client_type = _device_type_from_request(payload.get("client_type", ""))
         # Een browserclient start altijd zonder mutatierechten. Een bestaande
         # eventmanager of beheerder wijst daarna zo nodig een hogere rol toe.
         role = "viewer"
@@ -343,6 +371,23 @@ def create_app(db_path: Path, event_id: str) -> Flask:
         query = request.args.get("q", "")
         limit = min(int(request.args.get("limit", 1000)), 2000)
         return jsonify(participant_service.list_participants(connection, event_id, query, limit=limit))
+
+    @app.post("/api/participants/walkin")
+    def api_add_walkin():
+        connection = get_connection()
+        client_id = require_role(connection, MUTATING_ROLES)
+        require_not_frozen(connection)
+        require_checkin_open(connection)
+        payload = request.get_json(silent=True) or {}
+        row = connection.execute("SELECT client_name FROM client_session WHERE id=?", (client_id,)).fetchone()
+        try:
+            participant = participant_service.add_walkin(
+                connection, event_id, payload.get("name", ""), payload.get("phone", ""),
+                client_id, row["client_name"] if row else ""
+            )
+        except ValueError as exc:
+            raise ApiError(str(exc), 400)
+        return jsonify({"participant": participant}), 201
 
     @app.get("/api/participants/<participant_id>")
     def api_get_participant(participant_id: str):

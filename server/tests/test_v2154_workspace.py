@@ -3,6 +3,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 
 
 class Version2154WorkspaceTests(unittest.TestCase):
@@ -21,7 +22,7 @@ class Version2154WorkspaceTests(unittest.TestCase):
         self.assertIn("self.emergency_button = ", source)
 
     def test_event_workspace_defaults_to_maximum_without_corner_button(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         self.assertIn("self.event_focus_mode = True", source)
         self.assertNotIn("self.event_focus_button =", source)
         self.assertNotIn("self.event_action_bar =", source)
@@ -30,13 +31,13 @@ class Version2154WorkspaceTests(unittest.TestCase):
         self.assertNotIn("self.event_action_bar", source)
 
     def test_summary_cards_wrap_in_three_plus_two_grid(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         self.assertIn("cards = QGridLayout(self.event_summary_bar)", source)
         self.assertIn("cards.addWidget(card, 0, index)", source)
         self.assertIn("caption.setWordWrap(True)", source)
 
     def test_splash_uses_neon_wave_asset(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         self.assertIn("if NEON_WAVES_PATH.exists():", source)
         self.assertIn("painter.drawPixmap(canvas.rect(), waves)", source)
         self.assertTrue((ROOT / "assets/backgrounds/neon_waves.png").is_file())

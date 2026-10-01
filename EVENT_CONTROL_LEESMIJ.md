@@ -1,9 +1,9 @@
 # Event Control
 
-Event Control bevat in 2.16.2 drie onderdelen:
+Event Control bevat in 0.2.0 Beta drie onderdelen:
 
-- **Live sessie**: start of hervat een lokale server en verbind meerdere apparaten via QR-code, netwerkadres en sessiecode.
-- **Live dashboard**: open live opkomstcijfers en statistieken in de standaardbrowser.
+- **Aanwezigheid**: registreer en controleer de status van de deelnemers van het gekozen evenement.
+- **Live sessie**: host of hervat een lokale sessie en verbind meerdere apparaten via QR-code, netwerkadres en sessiecode. Tijdens een geopende sessie staat de dashboardknop bij de actuele sessiestatus.
 - **Rudder**: exporteer de presentie rechtstreeks via een tijdelijke lokale koppeling, open de per evenement opgeslagen attendance-link en vul de pagina gecontroleerd met de Browserassistent.
 
 De Browserassistent zet EventHub-aanwezigen op Yes en niet-aanwezigen op No. Een bestaande
@@ -26,7 +26,7 @@ Bij het aanmaken van een live sessie worden naam, datum en locatie van het gekoz
 EventHub-evenement vooraf ingevuld. De reeds ingeladen deelnemers worden automatisch
 naar een nieuwe live sessie gekopieerd; zij starten altijd als niet ingecheckt.
 
-Een andere EventHub Desktop-installatie kan via **Verbinden met bestaande sessie**
+Een andere EventHub Desktop-installatie kan via **Verbinden als incheckpunt**
 als native check-inclient deelnemen. Telefoons en tablets gebruiken dezelfde sessie via
 de lokale browser. Internet is niet nodig; alle apparaten moeten wel op hetzelfde lokale
 netwerk zitten.
@@ -34,7 +34,7 @@ netwerk zitten.
 ## Windows-build
 
 Installeer Python 3.12 en Inno Setup 6 en start `BUILD_EVENTHUB_INSTALLER.bat`.
-De installer verschijnt als `installer\EventHub-Setup-v2.16.2.exe`.
+De installer verschijnt als `installer\EventHub-Setup-v0.2.1 Beta.exe`.
 
 De browserclient bevat een web-appmanifest, favicon en Apple-touch-icon. Open op iOS de live
 check-inpagina in Safari en kies **Deel → Zet op beginscherm** om EventHub schermvullend te openen.

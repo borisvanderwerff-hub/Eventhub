@@ -4,6 +4,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 
 
 class Version2155NavigationTests(unittest.TestCase):
@@ -13,7 +14,7 @@ class Version2155NavigationTests(unittest.TestCase):
         self.assertIn(".page-connect #checkinCard { margin:0; padding:0; border:0;", css)
 
     def test_after_sales_has_own_sidebar_entry_and_icon(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         self.assertIn('"callbacks": SIDEBAR_ICON_DIR / "nazorg.png"', source)
         self.assertIn('("callbacks", "After sales"', source)
         self.assertIn("self.show_nazorg_page", source)
@@ -21,7 +22,7 @@ class Version2155NavigationTests(unittest.TestCase):
         self.assertTrue((ROOT / "assets/sidebar/nazorg.png").is_file())
 
     def test_sidebar_width_and_utility_alignment_are_consistent(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         # Niet de exacte pixels vastpinnen; die zijn sindsdien bijgesteld. Wat
         # telt is dat de zijbalk inklapt naar een smallere vaste breedte.
         match = re.search(
@@ -38,14 +39,14 @@ class Version2155NavigationTests(unittest.TestCase):
         dat elk evenement zijn datum in de naam draagt en dat die naam via
         dezelfde functie wordt opgebouwd.
         """
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         self.assertIn("def event_name_with_date(name: str, event_date: str)", source)
         self.assertIn("parsed.strftime(", source)
         self.assertIn("updated[\"name\"] = event_name_with_date", source)
         self.assertIn("renamed_events = self._ensure_event_date_names()", source)
 
     def test_duplicate_event_edit_button_is_removed_from_header(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         self.assertNotIn('edit_event_button = QPushButton("Evenement aanpassen")', source)
 
 

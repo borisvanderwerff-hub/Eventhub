@@ -11,6 +11,19 @@ RUDDER_EVENTS_OVERVIEW_URL = "https://werkenbijdefensie.nl/rudder/event/events"
 RUDDER_EVENT_FORMAT = "EventHub Rudder Event"
 RUDDER_EVENT_SCHEMA_VERSION = 1
 
+# Rudder noemt zijn exports meeloopdag-marine-varend-5900-registrations-...
+# Dat nummer is per evenement uniek en keert terug bij elke volgende export van
+# hetzelfde evenement. De datum verderop in die naam is het moment van
+# exporteren, niet de evenementdatum, en is dus onbruikbaar.
+RUDDER_EXPORT_ID = re.compile(r"-(\d{3,6})-registrations[-.]")
+
+
+def rudder_id_from_filename(name) -> str:
+    """Het Rudder-evenementnummer uit de naam van een export, of leeg."""
+    match = RUDDER_EXPORT_ID.search(str(name or ""))
+    return match.group(1) if match else ""
+
+
 RUDDER_STRING_FIELDS = (
     "event_template_id",
     "event_template",

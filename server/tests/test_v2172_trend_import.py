@@ -6,6 +6,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from bezoekerslijst_core import set_present
@@ -68,7 +69,7 @@ class AgeGroupTests(unittest.TestCase):
         self.assertIsNone(age_on("geen datum", date(2026, 4, 2)))
 
     def test_app_uses_the_same_definition(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         start = source.index("def _age_label(self")
         block = source[start:source.index("\n    def ", start + 1)]
         self.assertIn("trend_age_group(", block)
@@ -90,13 +91,25 @@ class SummariseTests(unittest.TestCase):
     def test_introducees_are_counted(self):
         self.assertEqual(self.snapshot["introducees"], 1)
 
-    def test_distribution_splits_attendance(self):
+    def test_distribution_splits_all_four_states(self):
+        """Vanaf schema 4 staat per groep ook waar de no-shows en afmeldingen zitten."""
         opleiding = self.snapshot["verdeling"]["Opleidingsniveau"]
-        self.assertEqual(opleiding["HBO"], {"aangemeld": 2, "aanwezig": 2})
-        self.assertEqual(opleiding["MBO"], {"aangemeld": 3, "aanwezig": 1})
+        self.assertEqual(opleiding["HBO"],
+                         {"aangemeld": 2, "aanwezig": 2, "noshow": 0, "afgemeld": 0})
+        self.assertEqual(opleiding["MBO"]["aangemeld"], 3)
+        self.assertEqual(opleiding["MBO"]["aanwezig"], 1)
+        self.assertIn("noshow", opleiding["MBO"])
+        self.assertIn("afgemeld", opleiding["MBO"])
 
-    def test_uses_schema_two_like_the_app(self):
-        self.assertEqual(self.snapshot["schema"], 2)
+    def test_uses_the_same_schema_as_the_app(self):
+        self.assertEqual(self.snapshot["schema"], 5)
+        self.assertIn("onbekend", self.snapshot)
+
+    def test_regular_scope_excludes_introducees_without_retaining_people(self):
+        regular = self.snapshot["regulier"]
+        self.assertEqual(regular["aangemeld"], 4)
+        self.assertEqual(regular["aanwezig"], 2)
+        self.assertEqual(regular["verdeling"]["Opleidingsniveau"]["MBO"]["aangemeld"], 2)
 
     def test_summary_holds_no_personal_data(self):
         blob = repr(self.snapshot)
@@ -155,7 +168,7 @@ class ImportFlowTests(unittest.TestCase):
     """De inlaadroutine mag geen deelnemersrijen achterlaten."""
 
     def setUp(self):
-        self.source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        self.source = desktop_source(ROOT)
 
     def _block(self, name):
         start = self.source.index(f"def {name}(self")
@@ -184,20 +197,34 @@ class ImportFlowTests(unittest.TestCase):
 
 
 class PdfExportTests(unittest.TestCase):
-    def setUp(self):
-        self.source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+    """De directe PDF-knop is vervangen door de Report Builder.
 
-    def test_export_writes_a_pdf(self):
+    De eisen blijven: er komt een PDF uit, met de grafiek erin, en het rapport
+    meldt dat de cijfers geanonimiseerd zijn.
+    """
+
+    def setUp(self):
+        self.source = desktop_source(ROOT)
+        self.export_source = (ROOT / "emt_report_export.py").read_text(encoding="utf-8")
+        self.layout_source = (ROOT / "emt_report_layout.py").read_text(encoding="utf-8")
+
+    def test_export_opens_the_report_builder(self):
         start = self.source.index("def export_trend_data(self")
         block = self.source[start:self.source.index("\n    def ", start + 1)]
-        self.assertIn("QPrinter.OutputFormat.PdfFormat", block)
-        self.assertIn(".pdf", block)
+        self.assertIn("ReportBuilderDialog(", block)
+        self.assertNotIn("QPrinter", block)
 
-    def test_pdf_embeds_the_chart_and_states_it_is_anonymous(self):
-        start = self.source.index("def _trend_pdf_document(self")
-        block = self.source[start:self.source.index("\n    def ", start + 1)]
-        self.assertIn("ImageResource", block)
-        self.assertIn("geen namen", block)
+    def test_the_report_is_written_as_a_pdf(self):
+        self.assertIn("def export_pdf(", self.export_source)
+        self.assertIn("QPdfWriter", self.export_source)
+        omgeving = (ROOT / "emt_report_ui.py").read_text(encoding="utf-8")
+        self.assertIn('"PDF-rapport (*.pdf)", "pdf"', omgeving)
+
+    def test_the_pdf_draws_the_chart_with_the_shared_renderer(self):
+        self.assertIn("paint_trend_chart(", self.layout_source)
+
+    def test_the_report_states_it_is_anonymous(self):
+        self.assertIn("geen namen", self.layout_source)
 
 
 if __name__ == "__main__":

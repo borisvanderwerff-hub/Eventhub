@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "EventHub Rudder Browserassistent",
-  "version": "1.5.0",
-  "description": "Koppelt Rudder-evenementgegevens en aanwezigheidsregistratie veilig met EventHub, inclusief het in een keer importeren van meerdere evenementen.",
+  "version": "1.6.0",
+  "description": "Koppelt Rudder-evenementgegevens en aanwezigheidsregistratie veilig met EventHub. De knop op de aanwezigheidspagina haalt de presentie rechtstreeks uit EventHub, na bevestiging daar.",
   "host_permissions": [
     "http://127.0.0.1/*"
   ],

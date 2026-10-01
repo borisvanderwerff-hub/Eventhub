@@ -9,6 +9,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -16,7 +17,7 @@ from jslint import check_brackets
 
 EXTENSION = ROOT / "browser_extension"
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "rudder_events_overview.html"
-APP_SOURCE = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+APP_SOURCE = desktop_source(ROOT)
 
 
 class ScriptStructureTests(unittest.TestCase):
@@ -392,14 +393,20 @@ class StatisticsChartTests(unittest.TestCase):
         from bezoekerslijst_core import export_statistics_workbook
 
         self.output = Path(tempfile.mkdtemp()) / "stat.xlsx"
+        # (categorie, aangemeld, aanwezig, niet gekomen, afgemeld)
         export_statistics_workbook(
-            [("Opleidingsniveau", [("Alle deelnemers", [("MBO", 12), ("HBO", 8)])])],
-            self.output, "Testscope",
+            [("Opleidingsniveau", [("MBO", 12, 9, 3, 0), ("HBO", 8, 6, 2, 0)])],
+            self.output,
         )
         import zipfile
         with zipfile.ZipFile(self.output) as bundle:
             naam = next(n for n in bundle.namelist() if n.startswith("xl/charts/chart"))
             self.xml = bundle.read(naam).decode("utf-8")
+
+    def test_the_legend_sits_below_the_plot(self):
+        """Standaard legt Excel hem over de balken heen, midden in de grafiek."""
+        self.assertIn('<legendPos val="b" />', self.xml)
+        self.assertIn('<overlay val="0" />', self.xml)
 
     def test_the_axes_are_not_deleted(self):
         self.assertIn('<delete val="0" />', self.xml)
@@ -408,16 +415,60 @@ class StatisticsChartTests(unittest.TestCase):
         """Zonder tickLblPos toont Excel geen enkel aslabel."""
         self.assertIn("tickLblPos", self.xml)
 
-    def test_the_category_axis_sits_under_the_bars(self):
+    def test_the_category_axis_sits_beside_the_bars(self):
         catax = self.xml[self.xml.index("<catAx>"):self.xml.index("</catAx>")]
-        self.assertIn('<axPos val="b" />', catax)
+        self.assertIn('<axPos val="l" />', catax)
+
+    def test_every_category_label_is_shown(self):
+        catax = self.xml[self.xml.index("<catAx>"):self.xml.index("</catAx>")]
+        self.assertIn('<tickLblSkip val="1" />', catax)
+
+    def test_long_labels_use_horizontal_bars(self):
+        self.assertIn('<barDir val="bar" />', self.xml)
+
+    def test_statuses_are_separate_bars_per_category(self):
+        self.assertIn('<grouping val="clustered" />', self.xml)
+        self.assertIn('<overlap val="0" />', self.xml)
+
+    def test_bars_do_not_have_crowded_value_labels(self):
+        self.assertNotIn("<dLbls>", self.xml)
+
+    def test_first_series_and_number_axis_stay_at_the_top(self):
+        catax = self.xml[self.xml.index("<catAx>"):self.xml.index("</catAx>")]
+        valax = self.xml[self.xml.index("<valAx>"):self.xml.index("</valAx>")]
+        self.assertIn('<orientation val="maxMin" />', catax)
+        self.assertNotIn('<crosses val="max" />', catax)
+        self.assertNotIn('<crosses val="max" />', valax)
+
+    def test_title_reserves_space_above_the_plot(self):
+        title = self.xml[self.xml.index("<title>"):self.xml.index("</title>")]
+        self.assertIn('<overlay val="0" />', title)
+
+    def test_attendance_cancellation_and_absence_are_separate_series(self):
+        self.assertEqual(self.xml.count("<ser>"), 3)
+        aanwezig = self.xml.index("!C3")
+        afgemeld = self.xml.index("!E3")
+        afwezig = self.xml.index("!D3")
+        self.assertLess(aanwezig, afgemeld)
+        self.assertLess(afgemeld, afwezig)
+
+    def test_attendance_series_have_semantic_colors(self):
+        series = self.xml.split("<ser>")[1:]
+        self.assertIn('val="2E7D32"', series[0])
+        self.assertIn('val="F28C28"', series[1])
+        self.assertIn('val="C62828"', series[2])
 
     def test_tick_marks_are_visible(self):
         self.assertIn('<majorTickMark val="out" />', self.xml)
 
-    def test_the_axis_titles_survived(self):
+    def test_participant_axis_uses_whole_people(self):
+        valax = self.xml[self.xml.index("<valAx>"):self.xml.index("</valAx>")]
+        self.assertIn('<majorUnit val="1" />', valax)
+        self.assertIn('<numFmt formatCode="0"', valax)
+
+    def test_the_chart_has_one_compact_title(self):
         self.assertIn("Opleidingsniveau", self.xml)
-        self.assertIn("Aantal", self.xml)
+        self.assertNotIn("Aantal", self.xml)
 
 
 class SingleEntryPointTests(unittest.TestCase):

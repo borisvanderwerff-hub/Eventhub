@@ -57,16 +57,16 @@ def add_participants(connection: sqlite3.Connection, event_id: str, rows: list[d
                 """INSERT INTO participant (
                     id, event_id, identifier, voornaam, tussenvoegsel, achternaam,
                     geboortedatum, geboorteplaats, geslacht, opleidingsniveau, profiel,
-                    telefoonnummer, email, gast_van, introducee, attendance_status,
+                    telefoonnummer, email, gast_van, introducee, temporary_walkin, attendance_status,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     row["id"], event_id, row.get("identifier", ""), row["voornaam"],
                     row.get("tussenvoegsel", ""), row["achternaam"], row.get("geboortedatum", ""),
                     row.get("geboorteplaats", ""), row.get("geslacht", ""),
                     row.get("opleidingsniveau", ""), row.get("profiel", ""),
                     row.get("telefoonnummer", ""), row.get("email", ""), row.get("gast_van", ""),
-                    row.get("introducee", 0), row.get("attendance_status", "not_checked_in"),
+                    row.get("introducee", 0), row.get("temporary_walkin", 0), row.get("attendance_status", "not_checked_in"),
                     timestamp, timestamp,
                 ),
             )
@@ -208,3 +208,42 @@ def undo_check_in(connection: sqlite3.Connection, participant_id: str,
     hub.publish("participant_checkin_undone", {"participant_id": participant_id, "event_id": updated["event_id"]})
     hub.publish("statistics_updated", {"event_id": updated["event_id"]})
     return {"participant": updated}
+
+
+def add_walkin(connection: sqlite3.Connection, event_id: str, name: str, phone: str = "",
+               client_id: Optional[str] = None, client_name: str = "") -> dict:
+    """Create a session-only walk-in and immediately check them in.
+
+    Walk-ins deliberately live in the live-session database only and are marked
+    temporary_walkin so normal participant exports/statistical profile breakdowns
+    can exclude them while presence/emergency accounting can still include them.
+    """
+    full_name = " ".join(str(name or "").split()).strip()
+    if not full_name:
+        raise ValueError("Vul de naam van de deelnemer in.")
+    if len(full_name) > 160:
+        raise ValueError("De naam is te lang.")
+    phone = " ".join(str(phone or "").split()).strip()[:40]
+    parts = full_name.split()
+    voornaam = parts[0]
+    achternaam = " ".join(parts[1:]) if len(parts) > 1 else "(onbekend)"
+    participant_id = str(uuid.uuid4())
+    timestamp = now_iso()
+    with transaction(connection) as tx:
+        tx.execute(
+            """INSERT INTO participant (
+                id,event_id,identifier,voornaam,tussenvoegsel,achternaam,telefoonnummer,
+                introducee,temporary_walkin,attendance_status,checkin_time,checkin_by,created_at,updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (participant_id,event_id,"",voornaam,"",achternaam,phone,0,1,"present",timestamp,
+             client_name or client_id or "",timestamp,timestamp),
+        )
+        _log_audit(tx,event_id,participant_id,client_id,"walkin_added",new_value=full_name)
+        if client_id:
+            tx.execute("UPDATE client_session SET checkin_count=checkin_count+1,last_seen=? WHERE id=?",
+                       (timestamp,client_id))
+    participant = get_participant(connection, participant_id)
+    touch_session(connection)
+    hub.publish("participant_walkin_added", {"participant_id": participant_id, "event_id": event_id})
+    hub.publish("statistics_updated", {"event_id": event_id})
+    return participant

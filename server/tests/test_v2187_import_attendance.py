@@ -4,11 +4,12 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
-from bezoekerslijst_core import infer_presence_from_text, is_present, set_present
+from bezoekerslijst_core import infer_presence_from_text, is_present, relink_to_event, set_present
 
-APP_SOURCE = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+APP_SOURCE = desktop_source(ROOT)
 
 
 class RudderValueTests(unittest.TestCase):
@@ -46,10 +47,7 @@ class AttendanceFollowsTheEventNameTests(unittest.TestCase):
 
     def _reassign(self, record, target):
         """Zoals de import het doet."""
-        aanwezig = is_present(record)
-        record["Evenement"] = target
-        record["Aanwezig"] = {}
-        set_present(record, target, aanwezig)
+        relink_to_event(record, target)
         return record
 
     def test_attendance_survives_the_rename(self):
@@ -69,10 +67,11 @@ class AttendanceFollowsTheEventNameTests(unittest.TestCase):
         self.assertEqual(list(record["Aanwezig"]), [doel])
 
     def test_the_import_does_this(self):
-        start = APP_SOURCE.index("linked_to_active = active_event")
-        block = APP_SOURCE[start:start + 800]
-        self.assertIn("aanwezig_in_bestand = is_present(record)", block)
-        self.assertIn('set_present(record, active_event["name"], aanwezig_in_bestand)', block)
+        """De verhuizing zit in de import zelf, zodat ook duplicaten hem krijgen."""
+        self.assertIn(
+            'import_registration_files(file_names, self.records, target_event=active_event["name"])',
+            APP_SOURCE,
+        )
 
 
 if __name__ == "__main__":

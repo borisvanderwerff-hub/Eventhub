@@ -7,6 +7,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from PySide6.QtCore import Qt
@@ -14,7 +15,7 @@ from PySide6.QtWidgets import QApplication
 
 import bezoekerslijst_app
 
-SOURCE = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+SOURCE = desktop_source(ROOT)
 
 TABLES_WITH_MENU = [
     "home_event_table",
@@ -99,12 +100,27 @@ class ButtonRemovalTests(unittest.TestCase):
 
 
 class DiscoverabilityTests(unittest.TestCase):
-    def test_the_event_list_explains_both_gestures(self):
-        """Zonder knoppen moet de hint vertellen hoe je er dan wel komt."""
-        block = SOURCE[SOURCE.index("def _build_events_page"):]
-        block = block[:block.index("\n    def ", 1)]
-        self.assertIn("Dubbelklik", block)
-        self.assertIn("rechtermuisknop", block)
+    """De uitlegregel is vervangen door een knop die je gewoon ziet staan."""
+
+    def _card(self):
+        start = SOURCE.index("class EventOverviewCard")
+        return SOURCE[start:SOURCE.index("\nclass ", start + 1)]
+
+    def test_the_card_carries_a_visible_menu_button(self):
+        kaart = self._card()
+
+        self.assertIn('self.menu_button.setObjectName("cardMenuButton")', kaart)
+        self.assertIn('self.menu_button.setToolTip("Meer acties")', kaart)
+
+    def test_the_right_mouse_button_keeps_working(self):
+        self.assertIn("customContextMenuRequested.connect", self._card())
+
+    def test_a_double_click_opens_the_event(self):
+        kaart = self._card()
+
+        self.assertIn("def mouseDoubleClickEvent", kaart)
+        self.assertIn("self.geopend.emit(self.event_id)", kaart)
+        self.assertIn("kaart.geopend.connect(self._open_event_from_card)", SOURCE)
 
 
 if __name__ == "__main__":

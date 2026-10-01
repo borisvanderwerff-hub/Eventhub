@@ -1,6 +1,12 @@
 (() => {
     const registerCard = document.getElementById("registerCard");
     const checkinCard = document.getElementById("checkinCard");
+    const viewerWaitingCard = document.getElementById("viewerWaitingCard");
+    const addWalkinButton = document.getElementById("addWalkinButton");
+    const walkinModal = document.getElementById("walkinModal");
+    const walkinName = document.getElementById("walkinName");
+    const walkinPhone = document.getElementById("walkinPhone");
+    const walkinMessage = document.getElementById("walkinMessage");
     const statusBar = document.getElementById("statusBar");
     const clientLabel = document.getElementById("clientLabel");
     const searchInput = document.getElementById("searchInput");
@@ -202,6 +208,7 @@
         EventHubClient.stopHeartbeat();
         EventHubClient.clearStoredClient();
         checkinCard.classList.add("hidden");
+        if (viewerWaitingCard) viewerWaitingCard.classList.add("hidden");
         statusBar.classList.add("hidden");
         settingsButton.classList.add("hidden");
         if (clientManagementCard) clientManagementCard.classList.add("hidden");
@@ -235,9 +242,14 @@
         if (managerTabs) managerTabs.classList.toggle("hidden", !manager);
         if (!manager) {
             if (clientManagementCard) clientManagementCard.classList.add("hidden");
-            checkinCard.classList.remove("hidden");
+            const waiting = currentRole === "viewer";
+            if (viewerWaitingCard) viewerWaitingCard.classList.toggle("hidden", !waiting);
+            checkinCard.classList.toggle("hidden", waiting);
+            if (addWalkinButton) addWalkinButton.classList.add("hidden");
             return;
         }
+        if (viewerWaitingCard) viewerWaitingCard.classList.add("hidden");
+        if (addWalkinButton) addWalkinButton.classList.remove("hidden");
         const showManagement = managerActiveTab === "management";
         if (clientManagementCard) clientManagementCard.classList.toggle("hidden", !showManagement);
         checkinCard.classList.toggle("hidden", showManagement);
@@ -283,7 +295,7 @@
             const name = document.createElement("strong");
             name.textContent = client.client_name || "Onbekend apparaat";
             const meta = document.createElement("small");
-            meta.textContent = [client.client_type, client.ip_address].filter(Boolean).join(" · ");
+            meta.textContent = client.client_type || "Onbekend apparaat";
             nameCell.append(name, meta);
 
             const statusCell = document.createElement("td");
@@ -653,7 +665,7 @@
             item.innerHTML = `
                 <div class="result-info">
                     <div class="result-name">${personLabel(participant)}</div>
-                    <div class="result-meta">${participant.geboortedatum || ""}</div>
+                    <div class="result-meta">${participant.temporary_walkin ? (participant.telefoonnummer || "Geen telefoonnummer") + '<span class="walkin-badge">Niet vooraf aangemeld</span>' : (participant.geboortedatum || "")}</div>
                 </div>
                 <div class="result-actions">
                     <span class="status-pill status-${participant.attendance_status}">${statusLabel}</span>
@@ -688,6 +700,7 @@
     // Full A-Z roster (sorted by achternaam server-side) shown immediately;
     // typing narrows it down further. No minimum character count.
     async function runSearch(query) {
+        if (currentRole === "viewer") return;
         const sequence = ++searchSequence;
         try {
             const results = await EventHubClient.apiFetch(`/api/participants/search?q=${encodeURIComponent(query.trim())}&limit=1000`);
@@ -903,18 +916,40 @@
         }
     });
 
+    function setWalkinOpen(open) {
+        if (!walkinModal) return;
+        walkinModal.classList.toggle("hidden", !open);
+        if (open) { walkinName.value=""; walkinPhone.value=""; walkinMessage.textContent=""; setTimeout(() => walkinName.focus(), 0); }
+    }
+    addWalkinButton?.addEventListener("click", () => { if (canManageSession()) setWalkinOpen(true); });
+    document.getElementById("walkinCancel")?.addEventListener("click", () => setWalkinOpen(false));
+    walkinModal?.addEventListener("click", event => { if (event.target === walkinModal) setWalkinOpen(false); });
+    document.getElementById("walkinSave")?.addEventListener("click", async () => {
+        if (!canManageSession()) return;
+        const name = walkinName.value.trim();
+        if (!name) { walkinMessage.textContent = "Vul een naam in."; return; }
+        const button = document.getElementById("walkinSave");
+        button.disabled = true; walkinMessage.textContent = "Toevoegen…";
+        try {
+            await EventHubClient.apiFetch("/api/participants/walkin", {method:"POST", json:{name, phone:walkinPhone.value.trim()}});
+            setWalkinOpen(false);
+            await runSearch(searchInput.value);
+        } catch (err) { walkinMessage.textContent = err.message; }
+        finally { button.disabled = false; }
+    });
+
     function showCheckinScreen(client) {
         registerCard.classList.add("hidden");
-        checkinCard.classList.remove("hidden");
+        checkinCard.classList.add("hidden");
+        if (viewerWaitingCard) viewerWaitingCard.classList.add("hidden");
         statusBar.classList.remove("hidden");
-        currentRole = client.role || "checkin";
+        currentRole = client.role || "viewer";
         clientLabel.textContent = `${client.client_name} (${roleLabel(currentRole)})`;
         settingsButton.classList.remove("hidden");
         populateSettings(client);
         updateManagementVisibility();
         searchInput.value = "";
-        runSearch("");
-        searchInput.focus();
+        if (currentRole !== "viewer") { runSearch(""); searchInput.focus(); }
         EventHubAppearance.requestWakeLock();
     }
 
@@ -943,6 +978,7 @@
         await EventHubAppearance.releaseWakeLock();
         await EventHubClient.logout();
         checkinCard.classList.add("hidden");
+        if (viewerWaitingCard) viewerWaitingCard.classList.add("hidden");
         statusBar.classList.add("hidden");
         settingsButton.classList.add("hidden");
         if (clientManagementCard) clientManagementCard.classList.add("hidden");
@@ -966,7 +1002,7 @@
     setInterval(refreshState, 4000);
 
     EventHubClient.subscribeToLiveUpdates((event) => {
-        if (["participant_checked_in", "participant_checked_out", "participant_checkin_undone"].includes(event.type)) {
+        if (["participant_checked_in", "participant_checked_out", "participant_checkin_undone", "participant_walkin_added"].includes(event.type)) {
             if (!checkinCard.classList.contains("hidden")) {
                 runSearch(searchInput.value);
             }
@@ -1006,7 +1042,7 @@
             if (client && event.client_id===client.id) {
                 client.role=event.role; EventHubClient.storeClient(client); currentRole=event.role;
                 clientLabel.textContent=`${client.client_name} (${roleLabel(client.role)})`;
-                populateSettings(client); updateManagementVisibility(); runSearch(searchInput.value);
+                populateSettings(client); updateManagementVisibility(); if (currentRole !== "viewer") runSearch(searchInput.value);
             }
         }
         if (event.type === "client_profile_changed") {
@@ -1015,7 +1051,7 @@
                 client.client_name=event.client_name; client.role=event.role;
                 EventHubClient.storeClient(client); currentRole=event.role;
                 clientLabel.textContent=`${client.client_name} (${roleLabel(client.role)})`;
-                populateSettings(client); updateManagementVisibility(); runSearch(searchInput.value);
+                populateSettings(client); updateManagementVisibility(); if (currentRole !== "viewer") runSearch(searchInput.value);
             }
         }
         if (["client_connected", "client_disconnected", "client_kicked", "client_role_changed", "client_profile_changed"].includes(event.type)) {

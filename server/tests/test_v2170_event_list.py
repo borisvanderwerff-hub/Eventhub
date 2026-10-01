@@ -6,6 +6,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from bezoekerslijst_app import BezoekerslijstWindow
@@ -200,7 +201,7 @@ class HiddenSelectionTests(unittest.TestCase):
     """Een weggefilterde rij mag niet meer als selectie gelden."""
 
     def test_selection_guard_checks_row_visibility(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         start = source.index("def _selected_management_event(self")
         block = source[start:source.index("\n    def ", start + 1)]
         self.assertIn("table.isRowHidden(row)", block)

@@ -48,43 +48,26 @@ if errorlevel 1 goto :install_error
 ".venv\Scripts\python.exe" -m PyInstaller ^
     --noconfirm ^
     --clean ^
-    --windowed ^
-    --onedir ^
-    --name "EventHub" ^
-    --add-data "templates;templates" ^
-    --add-data "eventhub_logo.png;." ^
-    --add-data "eventhub_icon.png;." ^
-    --add-data "eventhub.ico;." ^
-    --add-data "settings_gear.png;." ^
-    --add-data "assets\sidebar;assets\sidebar" ^
-    --add-data "assets\backgrounds;assets\backgrounds" ^
-    --add-data "server\web\templates;server\web\templates" ^
-    --add-data "server\web\static;server\web\static" ^
-    --add-data "server\assets;server\assets" ^
-    --add-data "browser_extension;browser_extension" ^
-    --collect-submodules "server" ^
-    --icon "eventhub.ico" ^
-    bezoekerslijst_app.py
+    EventHub.spec
 if errorlevel 1 goto :build_error
 
 xcopy /E /I /Y "browser_extension" "dist\EventHub\Browserassistent" >nul
 if errorlevel 1 goto :build_error
 
+xcopy /E /I /Y "assets" "dist\EventHub\assets" >nul
+if errorlevel 1 goto :build_error
+".venv\Scripts\python.exe" verify_windows_assets.py "dist\EventHub"
+if errorlevel 1 goto :build_error
+
 ".venv\Scripts\python.exe" -m PyInstaller ^
     --noconfirm ^
     --clean ^
-    --windowed ^
-    --onedir ^
-    --name "EventHub Server" ^
-    --add-data "server\web\templates;server\web\templates" ^
-    --add-data "server\web\static;server\web\static" ^
-    --add-data "server\assets;server\assets" ^
-    --collect-submodules "server" ^
-    --icon "server\assets\eventhub_server.ico" ^
-    server\manager\main.py
+    "EventHub Server.spec"
 if errorlevel 1 goto :build_error
 
 echo.
+".venv\Scripts\python.exe" verify_windows_packages.py
+if errorlevel 1 goto :build_error
 echo Klaar: dist\EventHub\EventHub.exe
 echo Standalone: dist\EventHub Server\EventHub Server.exe
 if /I "%~1"=="--no-start" exit /b 0

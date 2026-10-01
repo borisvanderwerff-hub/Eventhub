@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 
 from bezoekerslijst_app import BezoekerslijstWindow
 from bezoekerslijst_core import set_present
+from bezoekerslijst_core import ONBEKEND, set_attendance
 
 
 EVENT_NAME = "Meeloopdag Marine april 2026"
@@ -51,7 +52,7 @@ class StubWindow:
 
 
 def scenario(event_date=EVENT_DATE):
-    event = {"id": "e1", "name": EVENT_NAME, "date": event_date.strftime("%d-%m-%Y")}
+    event = {"id": "e1", "name": EVENT_NAME, "date": event_date.strftime("%d-%m-%Y"), "status": "Afgerond"}
     records = [
         deelnemer("Jan", "01-06-2008", "VMBO Basis", "Man", True),
         deelnemer("Sanne", "14-11-2004", "HAVO", "Vrouw", True),
@@ -92,16 +93,34 @@ class SnapshotContentTests(unittest.TestCase):
         )
 
     def test_distributions_split_attendance_so_noshows_stay_traceable(self):
-        """Schema 2: zonder deze splitsing is niet meer te zien wie wegbleef."""
-        self.assertEqual(self.snapshot["schema"], 2)
+        """Zonder deze splitsing is niet meer te zien wie wegbleef.
+
+        Schema 3 telt de no-shows apart mee: 'niet aanwezig' is sinds de vier
+        standen niet meer hetzelfde als 'niet gekomen', want afgemeld en
+        onbekend zitten er ook in. Schema 4 zet ook de afmeldingen per groep,
+        zodat te zien is bij welke groep die vandaan komen.
+        """
+        self.assertEqual(self.snapshot["schema"], 6)
         opleiding = self.snapshot["verdeling"]["Opleidingsniveau"]
-        self.assertEqual(opleiding["HAVO"], {"aangemeld": 2, "aanwezig": 2})
-        self.assertEqual(opleiding["MBO"], {"aangemeld": 1, "aanwezig": 0})
-        self.assertEqual(opleiding["VMBO Basis"], {"aangemeld": 1, "aanwezig": 1})
+        self.assertEqual(opleiding["HAVO"],
+                         {"aangemeld": 2, "aanwezig": 2, "noshow": 0, "afgemeld": 0, "onbekend": 0})
+        self.assertEqual(opleiding["MBO"],
+                         {"aangemeld": 1, "aanwezig": 0, "noshow": 1, "afgemeld": 0, "onbekend": 0})
+        self.assertEqual(opleiding["VMBO Basis"],
+                         {"aangemeld": 1, "aanwezig": 1, "noshow": 0, "afgemeld": 0, "onbekend": 0})
 
         geslacht = self.snapshot["verdeling"]["Geslacht"]
-        self.assertEqual(geslacht["Man"], {"aangemeld": 2, "aanwezig": 1})
-        self.assertEqual(geslacht["Vrouw"], {"aangemeld": 2, "aanwezig": 2})
+        self.assertEqual(geslacht["Man"],
+                         {"aangemeld": 2, "aanwezig": 1, "noshow": 1, "afgemeld": 0, "onbekend": 0})
+        self.assertEqual(geslacht["Vrouw"],
+                         {"aangemeld": 2, "aanwezig": 2, "noshow": 0, "afgemeld": 0, "onbekend": 0})
+
+    def test_regular_participants_remain_available_as_an_anonymous_aggregate(self):
+        regular = self.snapshot["regulier"]
+        self.assertEqual(regular["aangemeld"], 3)
+        self.assertEqual(regular["aanwezig"], 2)
+        self.assertEqual(regular["noshows"], 1)
+        self.assertEqual(regular["verdeling"]["Geslacht"]["Vrouw"]["aangemeld"], 1)
 
     def test_snapshot_holds_no_personal_data(self):
         """Niets in de momentopname mag naar een persoon herleidbaar zijn."""
@@ -111,6 +130,12 @@ class SnapshotContentTests(unittest.TestCase):
 
 
 class SnapshotLifecycleTests(unittest.TestCase):
+    def test_unknown_attendance_is_not_captured_yet(self):
+        window, event = scenario()
+        set_attendance(window.records[0], EVENT_NAME, ONBEKEND)
+        self.assertFalse(window._capture_event_statistics(event))
+        self.assertNotIn("statistiek", event)
+
     def test_past_events_are_captured_automatically(self):
         window, event = scenario(date.today() - timedelta(days=1))
         self.assertTrue(window._refresh_past_event_statistics())

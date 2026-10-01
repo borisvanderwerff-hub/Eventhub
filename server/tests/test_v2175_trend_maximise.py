@@ -5,6 +5,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from bezoekerslijst_app import TrendPanel
@@ -36,63 +37,39 @@ class FakeButton(FakeWidget):
 
 
 class FakePanel:
-    """Draait de echte schakellogica zonder Qt."""
+    """Draait de compatibiliteitsingang zonder Qt."""
 
     set_maximised = TrendPanel.set_maximised
 
     def __init__(self, chrome_count=3):
         self.maximised = False
+        self.opened = 0
         self.table = FakeWidget()
         self.chrome = [FakeWidget() for _ in range(chrome_count)]
         self.expand_button = FakeButton()
 
+    def open_chart_window(self):
+        self.opened += 1
 
-class ToggleTests(unittest.TestCase):
-    def test_maximising_hides_the_table_and_the_surrounding_widgets(self):
+
+class FullScreenTests(unittest.TestCase):
+    def test_maximising_opens_a_separate_window(self):
         panel = FakePanel()
         panel.set_maximised(True)
 
-        self.assertTrue(panel.maximised)
-        self.assertTrue(panel.table.hidden)
-        self.assertTrue(all(widget.hidden for widget in panel.chrome))
-
-    def test_restoring_brings_everything_back(self):
-        panel = FakePanel()
-        panel.set_maximised(True)
-        panel.set_maximised(False)
-
-        self.assertFalse(panel.maximised)
+        self.assertEqual(panel.opened, 1)
         self.assertFalse(panel.table.hidden)
         self.assertFalse(any(widget.hidden for widget in panel.chrome))
 
-    def test_button_reflects_the_state(self):
+    def test_false_does_not_open_a_window(self):
         panel = FakePanel()
-        panel.set_maximised(True)
-        self.assertTrue(panel.expand_button.checked)
-        self.assertEqual(panel.expand_button.label, "⤡")
-        self.assertIn("Terug naar", panel.expand_button.tooltip)
-
         panel.set_maximised(False)
-        self.assertFalse(panel.expand_button.checked)
-        self.assertEqual(panel.expand_button.label, "⤢")
-        self.assertIn("maximaliseren", panel.expand_button.tooltip)
-
-    def test_toggling_twice_is_stable(self):
-        panel = FakePanel()
-        for _ in range(3):
-            panel.set_maximised(True)
-            panel.set_maximised(False)
-        self.assertFalse(panel.table.hidden)
-
-    def test_panel_without_surrounding_widgets_still_works(self):
-        panel = FakePanel(chrome_count=0)
-        panel.set_maximised(True)
-        self.assertTrue(panel.table.hidden)
+        self.assertEqual(panel.opened, 0)
 
 
 class WiringTests(unittest.TestCase):
     def setUp(self):
-        self.source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        self.source = desktop_source(ROOT)
 
     def _block(self, name, cls_prefix="    def "):
         start = self.source.index(f"{cls_prefix}{name}(self")
@@ -100,13 +77,28 @@ class WiringTests(unittest.TestCase):
 
     def test_button_is_small_and_carries_no_label_text(self):
         block = self._block("__init__", "    def ")
-        self.assertIn('self.expand_button = QPushButton("⤢")', self.source)
-        self.assertIn("setFixedWidth(38)", self.source)
+        self.assertIn('button = QPushButton("⤢")', self.source)
+        self.assertIn("button.setFixedSize(38, 38)", self.source)
+        self.assertIn("self.expand_button = button", self.source)
 
-    def test_f11_maximises_the_chart_when_trends_is_open(self):
+    def test_normal_view_keeps_the_old_focused_layout(self):
+        self.assertIn("self.summary.setVisible(False)", self.source)
+        self.assertIn("self.table.setVisible(False)", self.source)
+
+    def test_full_screen_button_is_overlaid_on_the_chart(self):
+        self.assertIn("def _chart_container(self, chart: TrendChart):", self.source)
+        self.assertIn("Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight", self.source)
+        self.assertIn("self.open_chart_window(source)", self.source)
+
+    def test_f11_opens_the_chart_window_when_trends_is_open(self):
         block = self._block("toggle_event_focus_mode")
         self.assertIn("self.trends_page", block)
-        self.assertIn("panel.set_maximised(not panel.maximised)", block)
+        self.assertIn("panel.open_chart_window()", block)
+
+    def test_full_screen_is_a_real_separate_dialog(self):
+        self.assertIn("class TrendChartDialog(QDialog):", self.source)
+        self.assertIn("dialog.showMaximized()", self.source)
+        self.assertIn('QPushButton("Terug naar Trends")', self.source)
 
     def test_f11_is_enabled_when_the_trends_page_opens(self):
         block = self._block("show_trends_page")
@@ -117,10 +109,10 @@ class WiringTests(unittest.TestCase):
         block = self.source[start:self.source.index("\n    def ", start + 1)]
         self.assertIn("self.own_trend_panel.chrome = [", block)
         self.assertIn("self.loose_trend_panel.chrome = [", block)
-        # De beheerbalk en het setoverzicht horen alleen bij de losse analyse.
+        # De compacte beheerknop hoort alleen bij de losse analyse.
         loose = block[block.index("self.loose_trend_panel.chrome = ["):]
-        self.assertIn("manage", loose)
-        self.assertIn("self.trend_source_list", loose)
+        self.assertIn("self.trend_manage_button", loose)
+        self.assertNotIn("self.trend_source_list", loose)
 
     def test_the_controls_stay_visible_so_you_can_keep_switching(self):
         """Maximaliseren mag de meetwaarde-keuze niet wegnemen."""

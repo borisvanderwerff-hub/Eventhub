@@ -6,7 +6,6 @@ from datetime import date, datetime, timedelta
 from html import escape
 import base64
 import hashlib
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
 import os
@@ -16,14 +15,13 @@ import shutil
 import sqlite3
 import sys
 import tempfile
-import threading
 import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 
-from PySide6.QtCore import QDate, QEvent, QItemSelectionModel, QMarginsF, QPoint, QRect, QRectF, QSettings, QSize, QStandardPaths, Qt, QTime, QTimer, QUrl, QUrlQuery
+from PySide6.QtCore import QEvent, QItemSelectionModel, QMarginsF, QSettings, QSize, QStandardPaths, Qt, QTimer, QUrl, QUrlQuery
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -31,12 +29,9 @@ from PySide6.QtGui import (
     QDesktopServices,
     QFont,
     QIcon,
-    QImage,
     QPageLayout,
     QPageSize,
     QPainter,
-    QPainterPath,
-    QPen,
     QPixmap,
     QRegion,
     QTextDocument,
@@ -46,7 +41,6 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
-    QCalendarWidget,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -64,14 +58,11 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QProgressBar,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSplashScreen,
     QStackedLayout,
-    QSpinBox,
     QSplitter,
     QStackedWidget,
     QStyle,
@@ -80,19 +71,26 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QSystemTrayIcon,
     QTextBrowser,
-    QTimeEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from emt_documents import export_evaluation, export_fivewh
+from emt_history import (snapshot_for_event, historical_scope, bucket_value,
+                         distribution as historical_distribution, cross_table as historical_crosstab,
+                         export_dimensions as historical_export_dimensions)
+from emt_event_templates import template_event_data, event_from_template
+from emt_event_templates_ui import TemplateEditor, TemplateManager, LinkEventsDialog
 from emt_models import (
     DEFAULT_PROFILE,
     DEFAULT_TASK_TEMPLATES,
     EVENT_STATUSES,
     EVENT_TYPES,
     empty_event,
+    event_tasks,
     parse_date,
+    prepare_template,
+    template_scope_text,
     prepare_event,
     prepare_task,
     task_allowed_for_event_type,
@@ -104,47 +102,79 @@ from emt_models import (
 )
 from emt_rudder import (
     RUDDER_EVENTS_OVERVIEW_URL,
-    RUDDER_EVENT_FORMAT,
     canonical_rudder_url,
     human_sync_time,
     is_rudder_event_linked,
     matching_eventhub_template,
     rudder_eventhub_updates,
     rudder_export_package,
+    rudder_id_from_filename,
     sanitize_rudder_event_payload,
 )
 
 from bezoekerslijst_core import (
+    AANWEZIG,
+    AFGEMELD,
+    AFWEZIG,
+    ATTENDANCE_LABELS,
+    ATTENDANCE_STATUSES,
     CALLBACK_DONE_STATUSES,
     CALLBACK_STATUSES,
+    EVENT_NAME_DATE_SUFFIX,
+    ONBEKEND,
     STRING_FIELDS,
+    apply_attendance_conflicts,
+    attendance_counts,
     attendance_map,
+    attendance_status,
     callback_is_done,
     callback_status,
+    clear_absence_for_events,
+    common_event_name,
     detach_event_from_records,
+    distinctive_labels,
+    event_base_name,
     export_participant_template,
     export_statistics_workbook,
     export_workbook,
+    has_status_in_scope,
+    INSCHRIJVING,
+    OVERGESLAGEN,
+    absorb_duplicate,
     import_registration_files,
-    initials_text,
+    include_again,
     is_introducee,
+    is_cancelled,
+    is_skipped,
+    is_no_show,
     is_present,
     is_present_in_scope,
     matches_event_filter,
+    merge_duplicate_registrations,
+    merge_event_into,
     normalize,
     primary_visitor_name,
     record_events,
     registration_lookup,
+    registrations,
     rename_attendance_event,
-    set_present,
+    repair_orphan_attendance,
+    richest_record,
+    set_attendance,
+    skip_reason,
+    turnout_percentage,
     visitor_type,
 )
-from emt_education import crosstab as education_crosstab
-from emt_live_manual import MANUAL_TITLE, manual_html
+from emt_report_ui import ReportBuilderDialog
+from emt_education import (
+    collapse_columns as education_collapse,
+    crosstab as education_crosstab,
+    education_level,
+    profile_label,
+)
+from emt_live_manual import manual_html
 from emt_retention import (
-    RETENTION_CHOICES,
     RETENTION_DEFAULT_DAYS,
-    RETENTION_MAX_DAYS,
     RETENTION_WARNING_DAYS,
     apply_retention_cleanup,
     clamp_retention_days,
@@ -154,31 +184,126 @@ from emt_retention import (
     scrub_payload,
 )
 from emt_trends import (
-    EVENT_DIMENSIONS as TREND_EVENT_DIMENSIONS,
-    GROUP_DIMENSIONS as TREND_GROUP_DIMENSIONS,
-    METRICS as TREND_METRICS,
-    PERIODS as TREND_PERIODS,
     age_group as trend_age_group,
-    build_series as build_trend_series,
+    analysis_file_name,
+    analysis_payload,
     collect_summaries as collect_trend_summaries,
-    describe_change as describe_trend_change,
+    participant_scope as trend_participant_scope,
+    read_analysis,
     read_bundle as read_trend_bundle,
-    series_totals as trend_series_totals,
     summaries_from_records as trend_summaries_from_records,
 )
 from theme.styles import build_stylesheet
+# De schermonderdelen staan in eigen modules (emt_widgets, emt_dialogs, ...).
+# Ze worden hier opnieuw
+# beschikbaar gesteld, zodat bestaande code en tests ze via bezoekerslijst_app
+# kunnen blijven gebruiken.
+from emt_base import (  # noqa: F401
+    APP_DATA_ORGANISATION,
+    APP_ICON_PATH,
+    APP_NAME,
+    APP_VERSION,
+    HEADER_WAVE_PATH,
+    LOGO_PATH,
+    NEON_WAVES_PATH,
+    SETTINGS_ICON_PATH,
+    SIDEBAR_ICON_DIR,
+    application_data_root,
+    bundled_resource,
+    documents_directory,
+    event_activity_line,
+    event_end_moment,
+    event_has_passed,
+    event_last_seen,
+    event_last_touched,
+    event_recency_key,
+    exports_directory,
+    parse_timestamp,
+    program_directory,
+    projects_directory,
+)
+from emt_widgets import (  # noqa: F401
+    EventCard,
+    EventOverviewCard,
+    EventPickerButton,
+    EventPickerDialog,
+    FitWidthScrollArea,
+    NeonEdgeOverlay,
+    ScrollSafeComboBox,
+    StartupSplash,
+    _center_on_screen_near,
+    _fit_dialog_to_screen,
+    _make_button_compact,
+    _picker_button,
+    _picker_dialog,
+    _style_calendar,
+    valid_time_text,
+    with_date_picker,
+    with_time_picker,
+)
+from emt_whatsapp_ui import (  # noqa: F401
+    CALLBACK_STATUS_COLOURS,
+    WHATSAPP_DEFAULT_TEMPLATE,
+    WHATSAPP_LEGACY_SIGNATURE_SUFFIXES,
+    WHATSAPP_PLACEHOLDER_HINT,
+    WHATSAPP_STATUSES,
+    WHATSAPP_TEMPLATES_SETTING,
+    WHATSAPP_TEMPLATE_NAME_MAX,
+    WHATSAPP_TEMPLATE_PICKER_ROWS,
+    WhatsAppQueueDialog,
+    WhatsAppTemplatesDialog,
+    _profile_signature,
+    _whatsapp_phone,
+    callback_status_colour,
+    callback_status_icon,
+    default_whatsapp_templates,
+    load_whatsapp_templates,
+    normalize_whatsapp_templates,
+    save_whatsapp_templates,
+    whatsapp_event_name,
+)
+from emt_dialogs import (  # noqa: F401
+    AUTOMATIC_STATUS,
+    ApplicationSettingsDialog,
+    EVALUATION_TARGET_GROUPS,
+    EvaluationDialog,
+    EventDialog,
+    FIVEWH_FIELDS,
+    FiveWhDialog,
+    NewEventSourceDialog,
+    NewProjectDialog,
+    ProfileDetailsDialog,
+    ProfileDialog,
+    TaskDialog,
+    _scroll_form_page,
+)
+from emt_live_ui import (  # noqa: F401
+    LiveCheckinDialog,
+    LiveSessionSetupDialog,
+    RudderAttendanceService,
+    RudderLocalBridge,
+    _AttendanceRequest,
+    apply_live_attendance,
+)
+from emt_tutorial import (  # noqa: F401
+    TutorialOverlay,
+)
+from emt_trends_panel import (  # noqa: F401
+    CrosstabHeatmap,
+    STATISTICS_CHART_TYPES,
+    StatisticsChart,
+    TrendChart,
+    TrendChartDialog,
+    TrendPanel,
+)
 
 
-APP_NAME = "EventHub"
-APP_VERSION = "0.1.6 Beta"
+from emt_event_board import EventBoardMixin, event_name_with_date
+
 FILE_FILTER = "EventHub-bestand (*.bvp)"
 EXCEL_FILTER = "Excel-bestanden (*.xlsx *.xlsm *.xls)"
-LOGO_PATH = Path(__file__).with_name("eventhub_logo.png")
-APP_ICON_PATH = Path(__file__).with_name("eventhub.ico")
-SETTINGS_ICON_PATH = Path(__file__).with_name("settings_gear.png")
-SIDEBAR_ICON_DIR = Path(__file__).with_name("assets") / "sidebar"
-NEON_WAVES_PATH = Path(__file__).with_name("assets") / "backgrounds" / "neon_waves.png"
-HEADER_WAVE_PATH = Path(__file__).with_name("assets") / "backgrounds" / "header_wave.png"
+
+
 SIDEBAR_ICON_PATHS = {
     "events": SIDEBAR_ICON_DIR / "evenementen.png",
     "tasks": SIDEBAR_ICON_DIR / "taken.png",
@@ -196,12 +321,6 @@ FIVEWH_TEMPLATE = TEMPLATE_DIR / "5WH - Leeg.docx"
 EVALUATION_TEMPLATE = TEMPLATE_DIR / "Evaluatieformulier Blanco.docx"
 PARTICIPANT_TEMPLATE = TEMPLATE_DIR / "Bezoekerslijst (DCPL) - Leeg.xlsx"
 MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024
-
-
-def _make_button_compact(button: QPushButton) -> QPushButton:
-    """Keep an action button at its natural text width inside roomy layouts."""
-    button.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-    return button
 
 
 def _centered_sidebar_icon(path: Path, fallback: QIcon, glyph_size: int = 32) -> QIcon:
@@ -242,156 +361,6 @@ def _centered_sidebar_icon(path: Path, fallback: QIcon, glyph_size: int = 32) ->
     return icon
 
 
-EVENT_NAME_DATE_SUFFIX = re.compile(
-    r"\s*(?:\(\d{2}[_-]\d{2}[_-]\d{4}\)|\(\d{2}-\d{2}-\'\d{2}\)|—\s*\d{2}-\d{2}-\d{4})\s*$"
-)
-
-
-def event_name_with_date(name: str, event_date: str) -> str:
-    """Return one stable event title whose date is always visible."""
-    raw_name = str(name or "").strip()
-    sequence_match = re.search(r"\s+\((\d+)\)\s*$", raw_name)
-    sequence = f" ({sequence_match.group(1)})" if sequence_match else ""
-    if sequence_match:
-        raw_name = raw_name[:sequence_match.start()].rstrip()
-    base = EVENT_NAME_DATE_SUFFIX.sub("", raw_name).strip() or "Onbenoemd evenement"
-    parsed = parse_date(event_date)
-    dated = f"{base} ({parsed.strftime("%d-%m-'%y")})" if parsed else base
-    return dated + sequence
-
-
-def _picker_button(tooltip: str) -> QPushButton:
-    button = QPushButton("📅")
-    button.setObjectName("secondaryButton")
-    # De gewone knopmarge van 14px aan weerszijden laat op deze breedte niets
-    # over voor het teken; de stylesheet zet die marge terug via deze vlag.
-    button.setProperty("picker", "true")
-    button.setFixedWidth(34)
-    button.setToolTip(tooltip)
-    button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-    return button
-
-
-def with_date_picker(line_edit: QLineEdit) -> QWidget:
-    """Zet een kalenderknop naast een datumveld.
-
-    Het tekstveld blijft leidend: typen kan gewoon en leeg laten mag. Dat is
-    de reden om geen QDateEdit te gebruiken, want die heeft altijd een waarde
-    en kan dus niet leeg zijn.
-
-    De kalender opent pas na een klik op de knop, zodat hij niet in de weg
-    zit wanneer iemand de datum simpelweg intypt.
-    """
-    holder = QWidget()
-    layout = QHBoxLayout(holder)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(6)
-    layout.addWidget(line_edit, 1)
-    button = _picker_button("Datum kiezen uit een kalender")
-    layout.addWidget(button)
-
-    def open_calendar():
-        popup = QDialog(holder)
-        popup.setWindowFlags(Qt.WindowType.Popup)
-        popup_layout = QVBoxLayout(popup)
-        popup_layout.setContentsMargins(6, 6, 6, 6)
-        calendar = QCalendarWidget()
-        calendar.setGridVisible(True)
-        calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
-        # Openen op de datum die er al staat; anders op vandaag.
-        bestaand = parse_date(line_edit.text())
-        calendar.setSelectedDate(
-            QDate(bestaand.year, bestaand.month, bestaand.day) if bestaand else QDate.currentDate()
-        )
-        popup_layout.addWidget(calendar)
-
-        def kies(date_value):
-            line_edit.setText(date_value.toString("dd-MM-yyyy"))
-            line_edit.editingFinished.emit()
-            popup.accept()
-
-        calendar.clicked.connect(kies)
-        popup.move(button.mapToGlobal(QPoint(0, button.height() + 2)))
-        popup.exec()
-
-    button.clicked.connect(open_calendar)
-    return holder
-
-
-def with_time_picker(line_edit: QLineEdit) -> QWidget:
-    """Zet een tijdknop naast een tijdveld.
-
-    Zelfde opzet als bij de datum: het tekstveld blijft leidend en mag leeg
-    blijven. De keuze gaat per kwartier, want dat is waar evenementtijden in
-    de praktijk op vallen; afwijkende tijden typt u gewoon.
-    """
-    holder = QWidget()
-    layout = QHBoxLayout(holder)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(6)
-    layout.addWidget(line_edit, 1)
-    button = _picker_button("Tijd kiezen")
-    layout.addWidget(button)
-
-    def open_times():
-        popup = QDialog(holder)
-        popup.setWindowFlags(Qt.WindowType.Popup)
-        popup_layout = QVBoxLayout(popup)
-        popup_layout.setContentsMargins(6, 6, 6, 6)
-        popup_layout.setSpacing(6)
-        editor = QTimeEdit()
-        editor.setDisplayFormat("HH:mm")
-        huidig = QTime.fromString(str(line_edit.text() or "").strip(), "HH:mm")
-        editor.setTime(huidig if huidig.isValid() else QTime(9, 0))
-        popup_layout.addWidget(editor)
-        confirm = QPushButton("Kiezen")
-        confirm.setObjectName("primaryButton")
-        popup_layout.addWidget(confirm)
-
-        def kies():
-            line_edit.setText(editor.time().toString("HH:mm"))
-            line_edit.editingFinished.emit()
-            popup.accept()
-
-        confirm.clicked.connect(kies)
-        popup.move(button.mapToGlobal(QPoint(0, button.height() + 2)))
-        popup.exec()
-
-    button.clicked.connect(open_times)
-    return holder
-
-
-def valid_time_text(value: str) -> bool:
-    """Accept an empty time or a 24-hour HH:MM value."""
-    raw = str(value or "").strip()
-    if not raw:
-        return True
-    return bool(re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", raw))
-
-
-class NeonEdgeOverlay(QWidget):
-    """Subtiele, muistransparante EventHub-decoratie boven het werkgebied."""
-
-    def __init__(self, image_path: Path, dark_mode: bool, parent=None):
-        super().__init__(parent)
-        self.setObjectName("neonEdgeOverlay")
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        self.setAutoFillBackground(False)
-        self._pixmap = QPixmap(str(image_path)) if image_path.exists() else QPixmap()
-        self._dark_mode = bool(dark_mode)
-
-    def set_dark_mode(self, enabled: bool):
-        self._dark_mode = bool(enabled)
-        self.update()
-
-    def paintEvent(self, event):
-        if self._pixmap.isNull():
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        painter.setOpacity(0.15 if self._dark_mode else 0.07)
-        painter.drawPixmap(self.rect(), self._pixmap)
 
 
 class ArtworkHeader(QFrame):
@@ -417,187 +386,6 @@ class ArtworkHeader(QFrame):
         painter.drawPixmap(max(0, self.width() - mirrored.width()), 0, mirrored)
 
 
-# Vaste naam van de map met applicatiegegevens: back-ups, herstelkopie,
-# logboeken en cache.
-APP_DATA_ORGANISATION = "DCPL"
-
-
-def application_data_root():
-    """De map met applicatiegegevens, altijd op dezelfde plek.
-
-    Eerder werd dit uit QStandardPaths gehaald, maar dat leidt de naam af van
-    de applicatienaam die pas in main() wordt gezet. Wie deze functie eerder
-    aanriep, bijvoorbeeld vanuit een test of een los script, kreeg een map
-    vernoemd naar het draaiende programma. Zo belandden logbestanden naast de
-    installatiebestanden van Python.
-
-    De locatie wordt daarom rechtstreeks bepaald, net als in server/paths.py.
-    """
-    if sys.platform.startswith("win"):
-        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
-        root = Path(base) if base else Path.home() / "AppData" / "Local"
-        root = root / APP_DATA_ORGANISATION / APP_NAME
-    elif sys.platform == "darwin":
-        root = Path.home() / "Library" / "Application Support" / APP_DATA_ORGANISATION / APP_NAME
-    else:
-        base = os.environ.get("XDG_DATA_HOME")
-        root = (Path(base) if base else Path.home() / ".local" / "share") / APP_DATA_ORGANISATION / APP_NAME
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
-class RudderLocalBridge:
-    """One-use loopback bridge between EventHub and the browser extension."""
-
-    def __init__(self, payload: dict | None = None, lifetime_seconds: int = 300,
-                 receive_event=False, batch: bool = False):
-        self.payload = payload
-        self.receive_event = bool(receive_event)
-        # In batchmodus blijft de brug open tot de assistent klaar is of de
-        # levensduur verstrijkt; anders sluit hij na het eerste evenement.
-        self.batch = bool(batch)
-        self._received_payload = None
-        self._received_batch: list[dict] = []
-        self._lock = threading.Lock()
-        self.token = uuid.uuid4().hex + uuid.uuid4().hex
-        self.lifetime_seconds = max(30, int(lifetime_seconds))
-        self.server = None
-        self.thread = None
-        self.timer = None
-        bridge = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                parsed = urllib.parse.urlparse(self.path)
-                query = urllib.parse.parse_qs(parsed.query)
-                supplied_token = (query.get("token") or [""])[0]
-                expected_path = "/event" if bridge.payload and bridge.payload.get("format") == RUDDER_EVENT_FORMAT else "/attendance"
-                if bridge.receive_event or parsed.path != expected_path or supplied_token != bridge.token:
-                    self.send_error(404)
-                    return
-                body = json.dumps(bridge.payload, ensure_ascii=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(body)
-                threading.Thread(target=bridge.stop, daemon=True).start()
-
-            def do_POST(self):
-                parsed = urllib.parse.urlparse(self.path)
-                query = urllib.parse.parse_qs(parsed.query)
-                supplied_token = (query.get("token") or [""])[0]
-                if not bridge.receive_event or parsed.path != "/event" or supplied_token != bridge.token:
-                    self.send_error(404)
-                    return
-                try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                except ValueError:
-                    length = 0
-                if length <= 0 or length > 512 * 1024:
-                    self.send_error(413)
-                    return
-                try:
-                    payload = json.loads(self.rfile.read(length).decode("utf-8"))
-                    if not isinstance(payload, dict):
-                        raise ValueError("not an object")
-                except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
-                    self.send_error(400)
-                    return
-                with bridge._lock:
-                    bridge._received_payload = payload
-                    if bridge.batch:
-                        bridge._received_batch.append(payload)
-                    received = len(bridge._received_batch) if bridge.batch else 1
-                body = json.dumps({"ok": True, "received": received}).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(body)
-                # In batchmodus blijft de brug open voor het volgende evenement.
-                if not bridge.batch:
-                    threading.Thread(target=bridge.stop, daemon=True).start()
-
-            def do_OPTIONS(self):
-                self.send_response(204)
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-                self.send_header("Access-Control-Allow-Headers", "Content-Type")
-                self.end_headers()
-
-            def log_message(self, _format, *_args):
-                return
-
-        self._handler_class = Handler
-
-    def start(self):
-        self.stop()
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler_class)
-        self.server.daemon_threads = True
-        self.thread = threading.Thread(target=self.server.serve_forever, name="EventHub-Rudder-Bridge", daemon=True)
-        self.thread.start()
-        self.timer = threading.Timer(self.lifetime_seconds, self.stop)
-        self.timer.daemon = True
-        self.timer.start()
-        return self.server.server_address[1], self.token
-
-    def take_received_batch(self):
-        """Haal de tot nu toe ontvangen evenementen op en maak de lijst leeg."""
-        with self._lock:
-            received, self._received_batch = list(self._received_batch), []
-        return received
-
-    def take_received_payload(self):
-        with self._lock:
-            payload, self._received_payload = self._received_payload, None
-        return payload
-
-    def stop(self):
-        timer, self.timer = self.timer, None
-        if timer is not None and timer is not threading.current_thread():
-            timer.cancel()
-        server, self.server = self.server, None
-        if server is not None:
-            try:
-                server.shutdown()
-            except Exception:
-                pass
-            server.server_close()
-
-
-def program_directory():
-    if getattr(sys, "frozen", False):
-        executable = Path(sys.executable).resolve()
-        for parent in executable.parents:
-            if parent.suffix == ".app":
-                return parent.parent
-        return executable.parent
-    return Path(__file__).resolve().parent
-
-
-def documents_directory():
-    location = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
-    base = Path(location) if location else Path.home() / "Documents"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
-
-
-def projects_directory():
-    base = documents_directory() / "EventHub"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
-
-
-def exports_directory():
-    base = projects_directory() / "Exports"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
-
 FIELD_LABELS = {
     "Evenement": "Evenement", "Identifier": "Identifier", "Voornaam": "Voornaam",
     "Tussenvoegsel": "Tussenvoegsel", "Achternaam": "Achternaam", "Email": "E-mail",
@@ -606,12 +394,13 @@ FIELD_LABELS = {
     "Profiel": "Profiel / opleidingsrichting", "Type": "Type",
     "Aanwezigheid": "Aanwezigheid (bron)", "Gebruik": "Gebruik",
     "Bezoekerstype": "Type bezoeker", "IntroduceeVan": "Introducé van",
+    "Inschrijving": "Inschrijving",
 }
 
 ALL_VISITOR_FIELDS = [
     "Evenement", "Bezoekerstype", "IntroduceeVan", "Achternaam", "Tussenvoegsel", "Voornaam", "Geboortedatum",
     "Geboorteplaats", "Telefoonnummer", "Email", "Opleiding", "Profiel", "Geslacht",
-    "Identifier", "Type", "Aanwezigheid", "Gebruik",
+    "Identifier", "Type", "Aanwezigheid", "Gebruik", "Inschrijving",
 ]
 
 VIEW_LABELS = {
@@ -620,34 +409,31 @@ VIEW_LABELS = {
     "presence": "Presentie",
 }
 
-WHATSAPP_STATUSES = ["Nog te sturen", "Geopend", "Verzonden", "Overgeslagen"]
-WHATSAPP_DEFAULT_TEMPLATE = (
-    "Beste [voornaam],\n\n"
-    "Bedankt voor je aanmelding voor [evenement] op [datum].\n\n"
-    "[Vul hier het bericht in]"
-)
 
-# Oude standaardtemplates bevatten de afsluiting al in de berichttekst.
-# De actuele WhatsApp-flow voegt uitsluitend de profielhandtekening toe,
-# zodat er nooit twee handtekeningen onder hetzelfde bericht staan.
-WHATSAPP_LEGACY_SIGNATURE_SUFFIXES = (
-    "Met vriendelijke groet,\n[contactpersoon]\nDCPL",
-    "Met vriendelijke groet,\n[contactpersoon]",
-)
-STATISTICS_CHART_TYPES = [
-    ("Horizontale balken", "horizontal"),
-    ("Verticale balken", "vertical"),
-    ("Donutdiagram", "donut"),
+# Vaste volgorde van de leeftijdsgroepen: op het scherm en in de export
+# dezelfde, en oplopend in plaats van op aantal.
+AGE_GROUPS = ["Jonger dan 18", "18–20", "21–24", "25–29", "30–39", "40 en ouder", "Onbekend"]
+
+CROSSTAB_VIEWS = [
+    ("Grafiek", "grafiek"),
+    ("Tabel", "tabel"),
 ]
+CROSSTAB_VALUES = [
+    ("Aantallen", "aantallen"),
+    ("Percentage per niveau", "percentage"),
+]
+# Boven dit aantal profielen wordt de staart gebundeld tot een kolom Overig.
+# Met achtentwintig kolommen naast elkaar is het raster onleesbaar.
+CROSSTAB_COLUMN_LIMIT = 8
+_NO_HISTORICAL_CROSSTAB = object()
+
 STATISTICS_CHART_DEFAULTS = {
     "education": "horizontal",
     "profile": "horizontal",
     "gender": "donut",
     "age": "vertical",
+    "listing": "donut",
 }
-# Kiest de gebruiker deze, dan bepaalt EventHub de status zelf op basis van
-# datum en openstaande taken; elke andere keuze blijft staan.
-AUTOMATIC_STATUS = "Automatisch bepalen"
 
 EVENT_SORT_MODES = [
     ("Slim: eerst wat komt", "smart"),
@@ -658,8 +444,10 @@ EVENT_SORT_MODES = [
 
 STATISTICS_PRESENCE_FILTERS = [
     ("Alle bezoekers", "all"),
-    ("Alleen aanwezig geweest", "present"),
-    ("Alleen no-shows (niet aanwezig)", "noshow"),
+    ("Alleen aanwezig geweest", AANWEZIG),
+    ("Alleen no-shows (niet gekomen)", AFWEZIG),
+    ("Alleen afgemeld", AFGEMELD),
+    ("Alleen onbekend", ONBEKEND),
 ]
 
 DEFAULT_VISIBLE_FIELDS_BY_VIEW = {
@@ -682,54 +470,25 @@ EDITABLE_VISITOR_FIELDS = {
 }
 
 UPDATE_LOG_HTML = """
-<h2>Nieuw in EventHub 0.1.6 Beta</h2>
+<h2>Nieuw in EventHub 0.2.1 Beta</h2>
 <ul>
-  <li><b>Live sessie vanaf Home:</b> bij Vandaag staat de knop Live sessie weer zichtbaar naast Evenement openen.</li>
-  <li><b>Home-layout hersteld:</b> de twee acties staan samen in een vaste actierij zodat de liveknop niet meer uit beeld kan vallen.</li>
+  <li><b>WhatsApp-sjablonen:</b> beheer via Instellingen een eigen lijst met berichten en kies er één in de WhatsApp-wachtrij.</li>
+  <li><b>Contactstatus in kleur:</b> After sales toont per kandidaat een gekleurde stip: groen afgehandeld, oranje opnieuw proberen, rood niet meer benaderen, grijs nog bellen.</li>
+  <li><b>Opgelost:</b> de datum van het evenement stond twee keer in een WhatsApp-bericht.</li>
+  <li><b>Aanmeldingen in het evenementkeuzevenster:</b> bij After sales, Event Control en Ander evenement toont elke kaart hoeveel aanmeldingen er zijn, en hoeveel daarvan introducé.</li>
+  <li><b>Kalender in een eigen venster:</b> datum- en tijdkeuze openen als klein venster midden in beeld, met Vandaag, Leegmaken en Nederlandse dagnamen, en vallen niet meer buiten het scherm.</li>
+  <li><b>Opgelost:</b> het kandidaatpaneel in After sales viel op kleine of geschaalde schermen deels weg. Velden blijven nu leesbaar, de kalenderknop blijft in beeld en het paneel scrolt als de ruimte op is.</li>
+  <li><b>Rondleiding bijgewerkt:</b> templatebeheer en installatie van de browserextensie komen nu aan bod, met aparte uitleg voor Trends en exporteren.</li>
+  <li><b>Browserextensie installeren:</b> de installatiehulp staat nu bij Algemene instellingen.</li>
+  <li><b>Kleiner installatiepakket:</b> onnodige testonderdelen en dubbele browseronderdelen worden niet meer meegeleverd.</li>
+</ul>
+<h3>Eerder in 0.2.0 Beta</h3>
+<ul>
+  <li><b>EventControl veiliger:</b> livesessies, dashboards en incheckpunten blijven gekoppeld aan het gekozen evenement.</li>
+  <li><b>Aanwezigheid afronden:</b> EventHub toont vooraf wat er met nog onbeoordeelde deelnemers gebeurt.</li>
+  <li><b>Compactere livesessie:</b> de actuele sessiestatus en het dashboard staan voortaan bij elkaar.</li>
 </ul>
 """
-
-
-FIVEWH_FIELDS = [
-    ("event_address", "Locatie en adres evenement"),
-    ("briefing_address", "Locatie en adres briefing"),
-    ("build_time", "Tijdstip opbouw"),
-    ("briefing_time", "Tijdstip briefing"),
-    ("event_time", "Tijdstip(pen) evenement"),
-    ("debrief_time", "Tijdstip debriefing"),
-    ("teardown_time", "Tijdstip afbouw"),
-    ("roster", "Rooster: één regel per persoon als Naam | Taak"),
-    ("poc_questions", "POC bij vragen"),
-    ("poc_location", "POC locatie"),
-    ("objective", "Doelstelling / boodschap"),
-    ("target_audience", "Doelgroep"),
-    ("current_status", "Hoe staan we ervoor"),
-    ("defence_activities_map", "Plattegrond activiteiten Defensie"),
-    ("event_map", "Plattegrond event"),
-    ("support", "Steun"),
-    ("vacancies", "Meest actuele vacatureoverzicht"),
-    ("access", "Toegangsregeling"),
-    ("attire", "Tenue"),
-    ("catering", "Voeding"),
-    ("route", "Route"),
-    ("parking", "Parkeren"),
-    ("materials", "Materiaal (folders en goodies)"),
-    ("accommodation", "Overnachting"),
-    ("first_aid", "BHV / EHBO"),
-    ("evaluation", "Evaluatie"),
-    ("risks", "Risico's op het gebied van Arbo en milieu"),
-    ("measures", "Genomen maatregelen"),
-    ("program", "Programma"),
-]
-
-
-EVALUATION_TARGET_GROUPS = [
-    (15, "Ouders"), (16, "Decanen/studiebegeleiders"), (17, "Jongeren"),
-    (18, "Vrouwen (16-35 jaar)"), (19, "Multiculturele doelgroep"),
-    (20, "Technisch"), (21, "Maritiem"), (22, "Verpleegkundigen"),
-    (23, "Logistiek"), (24, "VMBO"), (25, "MBO"), (26, "HAVO/VWO"),
-    (27, "HBO"), (28, "WO"),
-]
 
 
 def empty_record() -> dict:
@@ -744,6 +503,11 @@ def empty_record() -> dict:
         "WhatsAppStatus": "Nog te sturen",
         "WhatsAppGeopendOp": "",
         "WhatsAppVerzondenOp": "",
+        # Via welke aanmeldpagina deze deelnemer binnenkwam; gevuld zodra
+        # evenementen worden samengevoegd.
+        INSCHRIJVING: "",
+        # Reden waarom deze regel nergens meer meetelt; leeg is gewoon meetellen.
+        OVERGESLAGEN: "",
         # Aanwezigheid per evenementnaam; zie attendance_map() voor de migratie
         # van de losse boolean uit bestandsversie 10 en ouder.
         "Aanwezig": {},
@@ -765,6 +529,8 @@ def prepare_record(source: dict) -> dict:
     record["WhatsAppStatus"] = whatsapp_status if whatsapp_status in WHATSAPP_STATUSES else "Nog te sturen"
     record["WhatsAppGeopendOp"] = str(source.get("WhatsAppGeopendOp", "") or "").strip()
     record["WhatsAppVerzondenOp"] = str(source.get("WhatsAppVerzondenOp", "") or "").strip()
+    record[INSCHRIJVING] = str(source.get(INSCHRIJVING, "") or "").strip()
+    record[OVERGESLAGEN] = str(source.get(OVERGESLAGEN, "") or "").strip()
     # attendance_map() leest zowel het oude boolean-formaat als de dict en
     # levert altijd een dict; hiermee migreert een bestaand dossier bij openen.
     # De evenementnamen komen uit het al opgeschoonde record, niet uit de bron.
@@ -773,625 +539,6 @@ def prepare_record(source: dict) -> dict:
         "Evenement": record["Evenement"],
     })
     return record
-
-
-def apply_live_attendance(records: list[dict], participants: list[dict], event_name: str = "") -> int:
-    """Apply server attendance to linked EventHub records without guessing duplicates."""
-    by_id = {str(record.get("_id", "")): record for record in records if record.get("_id")}
-    fallback = {}
-    for record in records:
-        key = (normalize(record.get("Voornaam", "")), normalize(record.get("Achternaam", "")),
-               str(record.get("Geboortedatum", "") or "").strip())
-        fallback.setdefault(key, []).append(record)
-    changed = 0
-    for participant in participants:
-        record = by_id.get(str(participant.get("id", "")))
-        if record is None:
-            key = (normalize(participant.get("voornaam", "")), normalize(participant.get("achternaam", "")),
-                   str(participant.get("geboortedatum", "") or "").strip())
-            matches = fallback.get(key, [])
-            record = matches[0] if len(matches) == 1 else None
-        if record is None:
-            continue
-        present = bool(participant.get("checkin_time")) or participant.get("attendance_status") in {"present", "checked_out"}
-        # Schrijf alleen naar het evenement van deze sessie. Voorheen werd hier
-        # één gedeelde boolean gezet, waardoor het inchecken bij een tweede
-        # evenement de registratie van het eerste wiste.
-        targets = [event_name] if event_name else record_events(record)
-        for target in targets:
-            if set_present(record, target, present):
-                changed += 1
-    return changed
-
-
-class LiveSessionSetupDialog(QDialog):
-    """Run-specific settings before an EventHub event is put live."""
-
-    def __init__(self, event: dict, location_text: str, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Nieuwe livesessie instellen")
-        self.setMinimumWidth(520)
-        self.checkout_required = False
-
-        layout = QVBoxLayout(self)
-        title = QLabel("Nieuwe livesessie")
-        title.setObjectName("sectionTitle")
-        hint = QLabel(
-            "De evenementgegevens en deelnemers worden automatisch uit het dossier overgenomen. "
-            "Kies hieronder alleen de instellingen voor deze live-run."
-        )
-        hint.setObjectName("hintLabel")
-        hint.setWordWrap(True)
-        layout.addWidget(title)
-        layout.addWidget(hint)
-        layout.addSpacing(8)
-
-        summary = QFrame()
-        summary.setObjectName("summaryCard")
-        form = QFormLayout(summary)
-        form.addRow("Evenement", QLabel(str(event.get("name", "") or "Onbenoemd evenement")))
-        form.addRow("Datum", QLabel(str(event.get("date", "") or "Niet opgegeven")))
-        location_label = QLabel(location_text or "Niet opgegeven")
-        location_label.setWordWrap(True)
-        form.addRow("Locatie", location_label)
-        layout.addWidget(summary)
-
-        self.checkout_checkbox = QCheckBox("Uitchecken registreren (toon wie nog in het pand is)")
-        self.checkout_checkbox.setToolTip(
-            "Schakel dit in wanneer vertrek tijdens deze livesessie ook geregistreerd moet worden."
-        )
-        layout.addWidget(self.checkout_checkbox)
-        layout.addStretch(1)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
-        start_button = buttons.addButton("Livesessie starten", QDialogButtonBox.ButtonRole.AcceptRole)
-        start_button.setObjectName("primaryButton")
-        buttons.rejected.connect(self.reject)
-        buttons.accepted.connect(self._accept_setup)
-        layout.addWidget(buttons)
-
-    def _accept_setup(self):
-        self.checkout_required = self.checkout_checkbox.isChecked()
-        self.accept()
-
-
-class StartupSplash(QSplashScreen):
-    def __init__(self):
-        canvas = QPixmap(560, 340)
-        canvas.fill(QColor("#0d1117"))
-        if NEON_WAVES_PATH.exists():
-            waves = QPixmap(str(NEON_WAVES_PATH))
-            if not waves.isNull():
-                painter = QPainter(canvas)
-                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-                painter.setOpacity(0.72)
-                painter.drawPixmap(canvas.rect(), waves)
-                painter.end()
-        super().__init__(canvas, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-        self.setFixedSize(560, 340)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(42, 32, 42, 30)
-        layout.setSpacing(10)
-
-        logo = QLabel()
-        if LOGO_PATH.exists():
-            logo.setPixmap(QPixmap(str(LOGO_PATH)).scaled(
-                100, 100, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-            ))
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title = QLabel("EventHub")
-        title.setObjectName("splashTitle")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        version = QLabel(f"Versie {APP_VERSION}")
-        version.setObjectName("splashVersion")
-        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.stage = QLabel("Programma voorbereiden…")
-        self.stage.setObjectName("splashStage")
-        self.stage.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 100)
-        self.progress.setValue(3)
-        self.progress.setTextVisible(False)
-
-        layout.addWidget(logo)
-        layout.addWidget(title)
-        layout.addWidget(version)
-        layout.addStretch()
-        layout.addWidget(self.stage)
-        layout.addWidget(self.progress)
-        self.setStyleSheet("""
-            QLabel { color: #ffffff; background: transparent; font-family: 'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI'; }
-            QLabel#splashTitle { font-size: 20pt; font-weight: 700; }
-            QLabel#splashVersion { color: #00d4ff; font-size: 10pt; font-weight: 600; }
-            QLabel#splashStage { color: #a8b5c7; font-size: 9.5pt; }
-            QProgressBar { background: #151c26; border: 1px solid #2d3a4b; border-radius: 6px; height: 12px; }
-            QProgressBar::chunk { background: #6c2cff; border-radius: 5px; }
-        """)
-
-    def set_progress(self, value: int, message: str):
-        self.progress.setValue(value)
-        self.stage.setText(message)
-        QApplication.processEvents()
-
-
-class StatisticsChart(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.data: list[tuple[str, int]] = []
-        self.chart_type = "horizontal"
-        self.setMinimumHeight(220)
-
-    def set_data(self, data):
-        self.data = list(data)
-        self._update_minimum_height()
-        self.update()
-
-    def set_chart_type(self, chart_type: str):
-        allowed = {value for _, value in STATISTICS_CHART_TYPES}
-        self.chart_type = chart_type if chart_type in allowed else "horizontal"
-        self._update_minimum_height()
-        self.update()
-
-    def _update_minimum_height(self):
-        if self.chart_type == "horizontal":
-            self.setMinimumHeight(max(220, 34 * len(self.data) + 36))
-        else:
-            self.setMinimumHeight(290)
-
-    def paintEvent(self, event):
-        del event
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#ffffff"))
-        painter.setFont(QFont("Segoe UI", 9))
-        if not self.data:
-            painter.setPen(QColor("#7b6d82"))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Nog geen gegevens beschikbaar")
-            return
-
-        if self.chart_type == "vertical":
-            self._paint_vertical(painter)
-        elif self.chart_type == "donut":
-            self._paint_donut(painter)
-        else:
-            self._paint_horizontal(painter)
-
-    def _paint_horizontal(self, painter: QPainter):
-
-        maximum = max(value for _, value in self.data) or 1
-        label_width = min(190, max(115, self.width() // 3))
-        bar_left = label_width + 18
-        bar_width = max(80, self.width() - bar_left - 45)
-        row_height = max(28, min(38, (self.height() - 18) // max(1, len(self.data))))
-        metrics = painter.fontMetrics()
-        for index, (label, value) in enumerate(self.data):
-            y = 12 + index * row_height
-            text_rect = QRectF(8, y, label_width, row_height - 8)
-            painter.setPen(QColor("#46324f"))
-            painter.drawText(
-                text_rect,
-                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
-                metrics.elidedText(str(label), Qt.TextElideMode.ElideRight, label_width - 4),
-            )
-            background = QRectF(bar_left, y + 5, bar_width, row_height - 14)
-            painter.setBrush(QColor("#eee6f2"))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(background, 5, 5)
-            filled = QRectF(bar_left, y + 5, max(4, bar_width * value / maximum), row_height - 14)
-            painter.setBrush(QColor("#6c2cff"))
-            painter.drawRoundedRect(filled, 5, 5)
-            painter.setPen(QColor("#386bff"))
-            painter.drawText(
-                QRectF(bar_left + bar_width + 8, y, 35, row_height - 8),
-                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                str(value),
-            )
-
-    def _paint_vertical(self, painter: QPainter):
-        maximum = max(value for _, value in self.data) or 1
-        chart_left = 34
-        chart_top = 24
-        chart_bottom = self.height() - 72
-        chart_width = max(120, self.width() - chart_left - 12)
-        chart_height = max(100, chart_bottom - chart_top)
-        slot_width = chart_width / max(1, len(self.data))
-        bar_width = max(12.0, min(54.0, slot_width * 0.62))
-        metrics = painter.fontMetrics()
-
-        painter.setPen(QPen(QColor("#d9cfe0"), 1))
-        painter.drawLine(chart_left, chart_bottom, chart_left + chart_width, chart_bottom)
-        for index, (label, value) in enumerate(self.data):
-            center_x = chart_left + slot_width * (index + 0.5)
-            height = max(4.0, chart_height * value / maximum)
-            bar = QRectF(center_x - bar_width / 2, chart_bottom - height, bar_width, height)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#6c2cff"))
-            painter.drawRoundedRect(bar, 5, 5)
-            painter.setPen(QColor("#386bff"))
-            painter.drawText(
-                QRectF(center_x - slot_width / 2, chart_bottom - height - 22, slot_width, 20),
-                Qt.AlignmentFlag.AlignCenter,
-                str(value),
-            )
-            label_width = max(28, int(slot_width - 4))
-            painter.setPen(QColor("#46324f"))
-            painter.drawText(
-                QRectF(center_x - slot_width / 2, chart_bottom + 6, slot_width, 48),
-                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
-                metrics.elidedText(str(label), Qt.TextElideMode.ElideRight, label_width),
-            )
-
-    def _paint_donut(self, painter: QPainter):
-        total = sum(value for _, value in self.data)
-        if total <= 0:
-            return
-        palette = [
-            QColor("#6c2cff"), QColor("#00d4ff"), QColor("#e8b84c"), QColor("#386bff"),
-            QColor("#b84b72"), QColor("#7a6ccf"), QColor("#5d8c45"), QColor("#b15e35"),
-            QColor("#4a9c9c"), QColor("#8b6a50"),
-        ]
-        size = min(self.height() - 38, max(140, int(self.width() * 0.46)))
-        donut = QRectF(18, (self.height() - size) / 2, size, size)
-        start_angle = 90 * 16
-        for index, (_, value) in enumerate(self.data):
-            span = -int(round(360 * 16 * value / total))
-            painter.setPen(QPen(QColor("#ffffff"), 2))
-            painter.setBrush(palette[index % len(palette)])
-            painter.drawPie(donut, start_angle, span)
-            start_angle += span
-        hole_size = size * 0.52
-        hole = QRectF(
-            donut.center().x() - hole_size / 2,
-            donut.center().y() - hole_size / 2,
-            hole_size,
-            hole_size,
-        )
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#ffffff"))
-        painter.drawEllipse(hole)
-        painter.setPen(QColor("#46324f"))
-        painter.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        painter.drawText(hole, Qt.AlignmentFlag.AlignCenter, str(total))
-
-        painter.setFont(QFont("Segoe UI", 9))
-        legend_left = int(donut.right() + 20)
-        legend_width = max(80, self.width() - legend_left - 10)
-        row_height = min(28, max(20, (self.height() - 20) // max(1, len(self.data))))
-        metrics = painter.fontMetrics()
-        top = max(8, (self.height() - row_height * len(self.data)) // 2)
-        for index, (label, value) in enumerate(self.data):
-            y = top + index * row_height
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(palette[index % len(palette)])
-            painter.drawRoundedRect(QRectF(legend_left, y + 4, 13, 13), 3, 3)
-            painter.setPen(QColor("#46324f"))
-            text = f"{label} — {value} ({value / total:.0%})"
-            painter.drawText(
-                QRectF(legend_left + 20, y, legend_width - 20, row_height),
-                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                metrics.elidedText(text, Qt.TextElideMode.ElideRight, legend_width - 22),
-            )
-
-
-class TrendChart(QWidget):
-    """Verloop over tijd, met één lijn per groep.
-
-    StatisticsChart tekent categorieën naast elkaar; voor een ontwikkeling is
-    de volgorde van de punten juist de betekenis, vandaar een eigen widget.
-    """
-
-    PALETTE = [
-        "#8b6cff", "#22c8dd", "#ff9f45", "#3ecf8e", "#ff6f9c",
-        "#4da3ff", "#d4b74a", "#c98a6b", "#8fa3bd", "#c07de0",
-    ]
-
-    # EventHub draait standaard donker; de grafiek tekent zelf en kan de
-    # stylesheet dus niet volgen.
-    dark = True
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.series = {"groups": [], "points": [], "metric": "aangemeld"}
-        self.setMinimumHeight(360)
-
-    def set_series(self, series: dict):
-        self.series = series or {"groups": [], "points": [], "metric": "aangemeld"}
-        self.update()
-
-    def set_dark_mode(self, dark: bool):
-        self.dark = bool(dark)
-        self.update()
-
-    def _formatted(self, value: float) -> str:
-        if self.series.get("metric") == "opkomst_percentage":
-            return f"{value:g}%"
-        return f"{value:g}"
-
-    @staticmethod
-    def _nice_step(span: float) -> float:
-        """Een ronde stapgrootte, zodat de as 20/40/60 toont in plaats van 17,2."""
-        if span <= 0:
-            return 1.0
-        rough = span / 4
-        magnitude = 1.0
-        while magnitude * 10 <= rough:
-            magnitude *= 10
-        while magnitude > rough and magnitude > 1e-9:
-            magnitude /= 10
-        for multiplier in (1, 2, 2.5, 5, 10):
-            if rough <= magnitude * multiplier:
-                return magnitude * multiplier
-        return magnitude * 10
-
-    def paintEvent(self, event):
-        del event
-        surface = QColor("#111827" if self.dark else "#ffffff")
-        grid = QColor("#26334a" if self.dark else "#e3e7ee")
-        text = QColor("#f5f7fb" if self.dark else "#17233a")
-        muted = QColor("#93a4ba" if self.dark else "#7b6d82")
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), surface)
-        painter.setFont(QFont("Segoe UI", 9))
-
-        points = self.series.get("points") or []
-        groups = self.series.get("groups") or []
-        if not points or not groups:
-            painter.setPen(muted)
-            painter.drawText(
-                self.rect(), Qt.AlignmentFlag.AlignCenter,
-                "Nog geen cijfers beschikbaar.\nEvenementen krijgen cijfers zodra hun datum is geweest.",
-            )
-            return
-
-        # De legenda krijgt een eigen strook; zonder die extra ruimte valt hij
-        # bij meerdere groepen buiten de widget.
-        legend_rows = 0 if len(groups) <= 1 else (len(groups[:8]) + 3) // 4
-        left, top, right = 66, 22, 24
-        bottom = 34 + legend_rows * 20
-        width = max(1, self.width() - left - right)
-        height = max(1, self.height() - top - bottom)
-
-        values = [value for point in points for value in point["values"].values()]
-        highest = max(values + [0.0]) or 1.0
-        step = self._nice_step(highest)
-        top_value = step * (int(highest / step) + (1 if highest % step else 0)) or step
-
-        painter.setPen(grid)
-        ticks = int(round(top_value / step))
-        for index in range(ticks + 1):
-            value = step * index
-            y = top + height - round(height * value / top_value)
-            painter.drawLine(left, y, left + width, y)
-            painter.setPen(muted)
-            painter.drawText(
-                0, y - 9, left - 10, 18,
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                self._formatted(round(value, 1)),
-            )
-            painter.setPen(grid)
-
-        count = len(points)
-        spacing = width / max(1, count - 1) if count > 1 else 0
-
-        def x_for(index):
-            return left + (width / 2 if count == 1 else index * spacing)
-
-        def y_for(value):
-            return top + height - (height * value / top_value)
-
-        for group_index, group in enumerate(groups):
-            colour = QColor(self.PALETTE[group_index % len(self.PALETTE)])
-            painter.setPen(QPen(colour, 2))
-            previous = None
-            for index, point in enumerate(points):
-                x, y = x_for(index), y_for(point["values"].get(group, 0.0))
-                if previous is not None:
-                    painter.drawLine(int(previous[0]), int(previous[1]), int(x), int(y))
-                previous = (x, y)
-            painter.setBrush(colour)
-            painter.setPen(QPen(colour, 1))
-            for index, point in enumerate(points):
-                x, y = x_for(index), y_for(point["values"].get(group, 0.0))
-                painter.drawEllipse(int(x) - 4, int(y) - 4, 8, 8)
-
-        # Waarden bij de punten: zonder deze labels is de tabel eronder nodig om
-        # te zien waar een lijn precies staat.
-        label_every = max(1, count // max(1, int(width / 70)))
-        painter.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
-        for group_index, group in enumerate(groups):
-            painter.setPen(QColor(self.PALETTE[group_index % len(self.PALETTE)]))
-            for index, point in enumerate(points):
-                if index % label_every and index != count - 1:
-                    continue
-                value = point["values"].get(group, 0.0)
-                x, y = x_for(index), y_for(value)
-                box_x = min(max(2, int(x) - 34), self.width() - 70)
-                painter.drawText(
-                    box_x, max(2, int(y) - 22), 68, 16,
-                    Qt.AlignmentFlag.AlignCenter, self._formatted(value),
-                )
-        painter.setFont(QFont("Segoe UI", 9))
-
-        # Puntlabels onder de as, gedund zodat ze niet over elkaar vallen.
-        painter.setPen(muted)
-        every = max(1, count // max(1, int(width / 110)))
-        for index, point in enumerate(points):
-            if index % every and index != count - 1:
-                continue
-            x = x_for(index)
-            box_x = min(max(2, int(x) - 60), self.width() - 122)
-            painter.drawText(
-                box_x, top + height + 4, 120, 15,
-                Qt.AlignmentFlag.AlignCenter, str(point["label"])[:24],
-            )
-
-        # Legenda alleen bij een echte uitsplitsing, in rijen van vier zodat hij
-        # ook bij smalle vensters binnen beeld blijft.
-        if legend_rows:
-            column_width = width / 4
-            for group_index, group in enumerate(groups[:8]):
-                row, column = divmod(group_index, 4)
-                x = left + column * column_width
-                y = top + height + 20 + row * 20
-                colour = QColor(self.PALETTE[group_index % len(self.PALETTE)])
-                painter.setBrush(colour)
-                painter.setPen(colour)
-                painter.drawEllipse(int(x), int(y) + 4, 8, 8)
-                painter.setPen(text)
-                painter.drawText(
-                    int(x) + 14, int(y), int(column_width) - 20, 16,
-                    Qt.AlignmentFlag.AlignLeft, str(group)[:20],
-                )
-
-
-class TrendPanel(QWidget):
-    """Bediening, grafiek, samenvatting en tabel voor één trendweergave.
-
-    Bestaat als eigen widget omdat er twee werkgebieden zijn — de eigen
-    evenementen en een losse analyse van ingeladen bezoekerslijsten — die
-    dezelfde bediening horen te hebben zonder die code te dupliceren.
-    """
-
-    def __init__(self, provider, parent=None):
-        super().__init__(parent)
-        self.provider = provider
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 10, 0, 0)
-        layout.setSpacing(10)
-
-        controls = QFrame()
-        controls.setObjectName("toolbar")
-        controls_layout = QHBoxLayout(controls)
-        controls_layout.setContentsMargins(14, 10, 14, 10)
-        controls_layout.setSpacing(10)
-
-        # Niet 'metric': QWidget heeft al een metric()-methode, en Qt roept die
-        # tijdens het tekenen aan. Een combobox op die naam laat de applicatie
-        # omvallen zodra de stylesheet opnieuw wordt toegepast.
-        self.metric_choice = QComboBox()
-        for label, value in TREND_METRICS:
-            self.metric_choice.addItem(label, value)
-        self.dimension = QComboBox()
-        for label, value in TREND_EVENT_DIMENSIONS:
-            self.dimension.addItem(label, value)
-        for label in TREND_GROUP_DIMENSIONS:
-            self.dimension.addItem(label, label)
-        self.period = QComboBox()
-        for label, value in TREND_PERIODS:
-            self.period.addItem(label, value)
-        self.period.setCurrentIndex(2)
-
-        for caption_text, widget in (
-            ("Meetwaarde:", self.metric_choice),
-            ("Uitsplitsen naar:", self.dimension),
-            ("Periode:", self.period),
-        ):
-            caption = QLabel(caption_text)
-            caption.setObjectName("hintLabel")
-            controls_layout.addWidget(caption)
-            widget.setMinimumWidth(150)
-            widget.currentIndexChanged.connect(self.refresh)
-            controls_layout.addWidget(widget)
-        controls_layout.addStretch()
-        self.export_button = _make_button_compact(QPushButton("Exporteren naar PDF"))
-        self.export_button.setObjectName("secondaryButton")
-        controls_layout.addWidget(self.export_button)
-        # Klein en zonder tekst: de grafiek is het onderwerp, niet deze knop.
-        self.expand_button = QPushButton("⤢")
-        self.expand_button.setObjectName("secondaryButton")
-        self.expand_button.setCheckable(True)
-        self.expand_button.setProperty("picker", "true")
-        self.expand_button.setFixedWidth(38)
-        self.expand_button.setToolTip("Grafiek maximaliseren binnen het venster (F11)")
-        self.expand_button.clicked.connect(lambda: self.set_maximised(not self.maximised))
-        controls_layout.addWidget(self.expand_button)
-        layout.addWidget(controls)
-
-        self.summary = QLabel("")
-        self.summary.setObjectName("statusLabel")
-        self.summary.setWordWrap(True)
-        layout.addWidget(self.summary)
-
-        self.chart = TrendChart()
-        self.chart.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        layout.addWidget(self.chart, 1)
-
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Periode", "Groep", "Waarde"])
-        self.table.setObjectName("dashboardTable")
-        self.table.verticalHeader().setVisible(False)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        value_header = self.table.horizontalHeader()
-        value_header.setStretchLastSection(False)
-        value_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        value_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        value_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setMaximumHeight(122)
-        layout.addWidget(self.table)
-
-        self.empty_message = "Nog geen cijfers beschikbaar."
-        # Widgets buiten dit paneel die bij maximaliseren mee moeten verdwijnen;
-        # de pagina vult deze aan, want het paneel kent zijn omgeving niet.
-        self.chrome: list = []
-        self.maximised = False
-
-    def set_maximised(self, maximised: bool):
-        """Verberg alles behalve de bediening en de grafiek."""
-        self.maximised = bool(maximised)
-        self.table.setVisible(not self.maximised)
-        for widget in self.chrome:
-            widget.setVisible(not self.maximised)
-        self.expand_button.setChecked(self.maximised)
-        self.expand_button.setText("⤡" if self.maximised else "⤢")
-        self.expand_button.setToolTip(
-            "Terug naar het volledige overzicht (F11)" if self.maximised
-            else "Grafiek maximaliseren binnen het venster (F11)"
-        )
-
-    def current_series(self) -> dict:
-        return self.chart.series
-
-    def value_text(self, value: float) -> str:
-        return f"{value:g}%" if self.chart.series.get("metric") == "opkomst_percentage" else f"{value:g}"
-
-    def refresh(self, *_):
-        summaries = self.provider() or []
-        series = build_trend_series(
-            summaries,
-            metric=str(self.metric_choice.currentData() or "aangemeld"),
-            dimension=str(self.dimension.currentData() or ""),
-            period=str(self.period.currentData() or "event"),
-        )
-        self.chart.set_series(series)
-
-        rows = [
-            (point["label"], group, self.value_text(value))
-            for point in series["points"] for group, value in point["values"].items()
-        ]
-        self.table.setRowCount(len(rows))
-        for row_index, values in enumerate(rows):
-            for column, text in enumerate(values):
-                item = QTableWidgetItem(str(text))
-                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                self.table.setItem(row_index, column, item)
-
-        if not summaries:
-            self.summary.setText(self.empty_message)
-            return
-        parts = [f"{series['events']} evenement(en)"]
-        if len(series["groups"]) > 1:
-            biggest = max(trend_series_totals(series), key=lambda item: item[1], default=None)
-            if biggest:
-                parts.append(f"grootste groep: {biggest[0]} ({self.value_text(biggest[1])})")
-        parts.append(describe_trend_change(series))
-        if series.get("incomplete"):
-            parts.append(
-                "Let op: voor een deel van de evenementen is de aanwezigheid per groep niet "
-                "vastgelegd; die tellen niet mee."
-            )
-        self.summary.setText("  ·  ".join(parts))
 
 
 class StatisticsCard(QFrame):
@@ -1405,7 +552,7 @@ class StatisticsCard(QFrame):
         heading_row = QHBoxLayout()
         heading = QLabel(title)
         heading.setObjectName("statisticsTitle")
-        self.chart_type_picker = QComboBox()
+        self.chart_type_picker = ScrollSafeComboBox()
         for label, value in STATISTICS_CHART_TYPES:
             self.chart_type_picker.addItem(label, value)
         selected = self.chart_type_picker.findData(chart_type)
@@ -1430,1866 +577,7 @@ class StatisticsCard(QFrame):
             self.change_callback(value)
 
 
-def _scroll_form_page():
-    content = QWidget()
-    content_layout = QVBoxLayout(content)
-    content_layout.setContentsMargins(14, 14, 14, 14)
-    content_layout.setSpacing(12)
-    scroll = QScrollArea()
-    scroll.setWidgetResizable(True)
-    scroll.setFrameShape(QFrame.Shape.NoFrame)
-    scroll.setWidget(content)
-    return scroll, content_layout
-
-
-def _fit_dialog_to_screen(dialog: QDialog, preferred_width: int, preferred_height: int,
-                          minimum_width: int = 480, minimum_height: int = 340):
-    """Houd dialoogknoppen bereikbaar, ook op kleinere laptopschermen."""
-    screen = QApplication.primaryScreen()
-    if screen is None:
-        dialog.resize(preferred_width, preferred_height)
-        return
-    available = screen.availableGeometry()
-    width = min(preferred_width, max(minimum_width, available.width() - 80))
-    height = min(preferred_height, max(minimum_height, available.height() - 100))
-    dialog.setMinimumSize(min(minimum_width, width), min(minimum_height, height))
-    dialog.resize(width, height)
-
-
-def _whatsapp_phone(value) -> str:
-    raw = str(value or "").strip()
-    digits = re.sub(r"\D", "", raw)
-    if digits.startswith("00"):
-        digits = digits[2:]
-    elif digits.startswith("0"):
-        digits = "31" + digits[1:]
-    elif len(digits) == 9 and digits.startswith("6"):
-        digits = "31" + digits
-    return digits if 8 <= len(digits) <= 15 else ""
-
-
-def _profile_signature(profile: dict) -> str:
-    """Build the WhatsApp profile signature; the 06-number is intentionally omitted."""
-    first_name = str(profile.get("signature_first_name", "") or "").strip()
-    if not first_name:
-        first_name = str(profile.get("name", "") or "").strip().split(" ", 1)[0]
-    rank = str(profile.get("signature_rank", "") or "").strip()
-    department = str(profile.get("signature_department", "") or "").strip()
-    organization = str(
-        profile.get("signature_organization", "Ministerie van Defensie")
-        or "Ministerie van Defensie"
-    ).strip()
-    return "\n".join(filter(None, [" ".join(filter(None, [rank, first_name])), department, organization]))
-
-
-class WhatsAppQueueDialog(QDialog):
-    def __init__(self, records: list[dict], event: dict, profile: dict, parent=None):
-        super().__init__(parent)
-        self.records = records
-        self.event_data = event
-        self.profile = profile
-        self.index = 0
-        self.changed = False
-        self.original_template = str(event.get("whatsapp_template", "") or WHATSAPP_DEFAULT_TEMPLATE)
-        # Migreer alleen de bekende oude standaardafsluitingen. Eigen handmatig
-        # geschreven berichttekst blijft onaangeroerd. De profielhandtekening
-        # wordt hieronder één keer toegevoegd en bevat standaard geen 06-nummer.
-        for legacy_suffix in WHATSAPP_LEGACY_SIGNATURE_SUFFIXES:
-            suffix = legacy_suffix.strip()
-            if self.original_template.strip().endswith(suffix):
-                self.original_template = self.original_template.strip()[:-len(suffix)].rstrip()
-                break
-        self.setWindowTitle("WhatsApp-wachtrij — After sales")
-        _fit_dialog_to_screen(self, 900, 720, 660, 480)
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-
-        intro = QLabel(
-            "WhatsApp; markeer het daarna hier als verzonden. Openen is namelijk nog geen verzenden — zelfs Meta "
-                        "kan geen verzending bevestigen."
-        )
-        intro.setObjectName("hintLabel")
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-
-        self.progress_label = QLabel()
-        self.progress_label.setObjectName("sectionTitle")
-        self.person_label = QLabel()
-        self.person_label.setWordWrap(True)
-        layout.addWidget(self.progress_label)
-        layout.addWidget(self.person_label)
-
-        template_group = QGroupBox("Berichtsjabloon voor dit evenement")
-        template_layout = QVBoxLayout(template_group)
-        placeholder_label = QLabel(
-            "Beschikbaar: [voornaam], [tussenvoegsel], [achternaam], [volledige naam], [evenement], "
-            "[datum], [locatie], [plaats], [contactpersoon] en [contactnummer]."
-        )
-        placeholder_label.setWordWrap(True)
-        placeholder_label.setObjectName("hintLabel")
-        self.template_edit = QPlainTextEdit(self.original_template)
-        self.template_edit.setMinimumHeight(150)
-        self.template_edit.textChanged.connect(self._update_preview)
-        template_layout.addWidget(placeholder_label)
-        template_layout.addWidget(self.template_edit)
-        self.add_signature = QCheckBox("Handtekening uit mijn profiel toevoegen")
-        self.add_signature.setChecked(True)
-        self.add_signature.toggled.connect(self._update_preview)
-        template_layout.addWidget(self.add_signature)
-        layout.addWidget(template_group)
-
-        preview_group = QGroupBox("Voorbeeld voor de huidige kandidaat")
-        preview_layout = QVBoxLayout(preview_group)
-        self.preview = QPlainTextEdit()
-        self.preview.setReadOnly(True)
-        self.preview.setMinimumHeight(120)
-        preview_layout.addWidget(self.preview)
-        layout.addWidget(preview_group, 1)
-
-        navigation = QHBoxLayout()
-        self.previous_button = QPushButton("Vorige")
-        self.previous_button.clicked.connect(self._previous)
-        self.open_button = QPushButton("WhatsApp openen")
-        self.open_button.setObjectName("primaryButton")
-        self.open_button.clicked.connect(self._open_whatsapp)
-        self.sent_button = QPushButton("Verzonden → volgende")
-        self.sent_button.setObjectName("secondaryButton")
-        self.sent_button.clicked.connect(self._mark_sent)
-        self.skip_button = QPushButton("Overslaan → volgende")
-        self.skip_button.clicked.connect(self._skip)
-        self.next_button = QPushButton("Volgende")
-        self.next_button.clicked.connect(self._next)
-        close_button = QPushButton("Sluiten")
-        close_button.clicked.connect(self.accept)
-        navigation.addWidget(self.previous_button)
-        navigation.addWidget(self.open_button)
-        navigation.addWidget(self.sent_button)
-        navigation.addWidget(self.skip_button)
-        navigation.addWidget(self.next_button)
-        navigation.addStretch()
-        navigation.addWidget(close_button)
-        layout.addLayout(navigation)
-        self._render_current()
-
-    def _person_name(self, record: dict) -> str:
-        return " ".join(filter(None, [
-            str(record.get("Voornaam", "") or "").strip(),
-            str(record.get("Tussenvoegsel", "") or "").strip(),
-            str(record.get("Achternaam", "") or "").strip(),
-        ])) or "Onbekende kandidaat"
-
-    def _message_for(self, record: dict) -> str:
-        full_name = self._person_name(record)
-        location = " — ".join(filter(None, [
-            str(self.event_data.get("place", "") or "").strip(),
-            str(self.event_data.get("location", "") or "").strip(),
-        ]))
-        replacements = {
-            "[voornaam]": str(record.get("Voornaam", "") or "").strip(),
-            "[tussenvoegsel]": str(record.get("Tussenvoegsel", "") or "").strip(),
-            "[achternaam]": str(record.get("Achternaam", "") or "").strip(),
-            "[volledige naam]": full_name,
-            "[evenement]": str(self.event_data.get("name", "") or record.get("Evenement", "") or "").strip(),
-            "[datum]": str(self.event_data.get("date", "") or "").strip(),
-            "[locatie]": location,
-            "[plaats]": str(self.event_data.get("place", "") or "").strip(),
-            "[contactpersoon]": str(self.profile.get("name", "") or "").strip(),
-            "[contactnummer]": str(self.profile.get("phone", "") or "").strip(),
-        }
-        message = self.template_edit.toPlainText()
-        for placeholder, value in replacements.items():
-            message = re.sub(re.escape(placeholder), lambda _match, value=value: value, message, flags=re.IGNORECASE)
-        message = message.strip()
-        if self.add_signature.isChecked():
-            signature = _profile_signature(self.profile)
-            if signature:
-                message = f"{message}\n\n{signature}" if message else signature
-        return message
-
-    def _current(self) -> dict:
-        return self.records[self.index]
-
-    def _render_current(self):
-        record = self._current()
-        phone = str(record.get("Telefoonnummer", "") or "").strip()
-        whatsapp_status = str(record.get("WhatsAppStatus", "Nog te sturen") or "Nog te sturen")
-        self.progress_label.setText(f"Kandidaat {self.index + 1} van {len(self.records)}")
-        self.person_label.setText(
-            f"<b>{escape(self._person_name(record))}</b> &nbsp; • &nbsp; {escape(phone)} &nbsp; • &nbsp; "
-            f"WhatsApp-status: <b>{escape(whatsapp_status)}</b>"
-        )
-        self.previous_button.setEnabled(self.index > 0)
-        self.next_button.setEnabled(self.index < len(self.records) - 1)
-        self.skip_button.setText("Overslaan → volgende" if self.index < len(self.records) - 1 else "Overslaan")
-        self.sent_button.setText("Verzonden → volgende" if self.index < len(self.records) - 1 else "Verzonden")
-        self._update_preview()
-
-    def _update_preview(self):
-        if self.records:
-            self.preview.setPlainText(self._message_for(self._current()))
-
-    def _open_whatsapp(self):
-        record = self._current()
-        phone = _whatsapp_phone(record.get("Telefoonnummer", ""))
-        if not phone:
-            QMessageBox.warning(self, "Ongeldig telefoonnummer", "Dit telefoonnummer kan niet als WhatsApp-nummer worden geopend.")
-            return
-        message = self._message_for(record)
-        if not message:
-            QMessageBox.information(self, "Leeg bericht", "Vul eerst een bericht in.")
-            return
-        if re.search(r"\[vul hier", message, flags=re.IGNORECASE):
-            QMessageBox.information(
-                self,
-                "Bericht nog niet ingevuld",
-                "Vervang eerst '[Vul hier het bericht in]' door de daadwerkelijke tekst.",
-            )
-            return
-        url = QUrl(f"https://wa.me/{phone}")
-        query = QUrlQuery()
-        query.addQueryItem("text", message)
-        url.setQuery(query)
-        if not QDesktopServices.openUrl(url):
-            QMessageBox.warning(self, "WhatsApp niet geopend", "WhatsApp of WhatsApp Web kon niet worden geopend.")
-            return
-        record["WhatsAppStatus"] = "Geopend"
-        record["WhatsAppGeopendOp"] = datetime.now().strftime("%d-%m-%Y %H:%M")
-        self.changed = True
-        self._render_current()
-
-    def _mark_sent(self):
-        record = self._current()
-        record["WhatsAppStatus"] = "Verzonden"
-        record["WhatsAppVerzondenOp"] = datetime.now().strftime("%d-%m-%Y %H:%M")
-        record["Terugbelstatus"] = "WhatsApp verzonden"
-        record["Teruggebeld"] = True
-        if not str(record.get("LaatsteContact", "") or "").strip():
-            record["LaatsteContact"] = date.today().strftime("%d-%m-%Y")
-        self.changed = True
-        if self.index < len(self.records) - 1:
-            self.index += 1
-        self._render_current()
-
-    def _skip(self):
-        self._current()["WhatsAppStatus"] = "Overgeslagen"
-        self.changed = True
-        if self.index < len(self.records) - 1:
-            self.index += 1
-        self._render_current()
-
-    def _previous(self):
-        if self.index > 0:
-            self.index -= 1
-            self._render_current()
-
-    def _next(self):
-        if self.index < len(self.records) - 1:
-            self.index += 1
-            self._render_current()
-
-    def done(self, result: int):
-        template = self.template_edit.toPlainText().strip()
-        if template != self.original_template.strip():
-            self.event_data["whatsapp_template"] = template
-            self.changed = True
-        super().done(result)
-
-
-class ProfileDialog(QDialog):
-    def __init__(
-        self,
-        profile: dict,
-        parent=None,
-        required: bool = False,
-        startup_mode: str = "relevant",
-        upcoming_days: int = 30,
-        autosave_enabled: bool = True,
-        autosave_delay_seconds: int = 3,
-        backups_enabled: bool = True,
-        backup_count: int = 5,
-        dark_mode: bool = False,
-    ):
-        super().__init__(parent)
-        self.required = required
-        self.setWindowTitle("Eerste configuratie" if required else "Mijn profiel")
-        _fit_dialog_to_screen(self, 680, 650, 520, 420)
-        if required:
-            self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
-        layout = QVBoxLayout(self)
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(8, 8, 8, 8)
-        content_layout.setSpacing(12)
-        intro = QLabel(
-            "Vul uw profiel één keer in. Deze gegevens worden uitsluitend lokaal bewaard en automatisch gebruikt "
-            "in 5WH's en evaluatieformulieren. Updates vragen hierna niet opnieuw om deze gegevens."
-            if required else
-            "Deze gegevens worden lokaal bewaard en automatisch gebruikt in 5WH's en evaluatieformulieren."
-        )
-        intro.setWordWrap(True)
-        content_layout.addWidget(intro)
-        form = QFormLayout()
-        self.name = QLineEdit(str(profile.get("name", "") or ""))
-        self.function = QLineEdit(str(profile.get("function", "") or ""))
-        self.email = QLineEdit(str(profile.get("email", "") or ""))
-        self.email.setPlaceholderText("naam@werkenbijdefensie.nl")
-        self.phone = QLineEdit(str(profile.get("phone", "") or ""))
-        self.phone.setPlaceholderText("06-12345678")
-        form.addRow("Naam:", self.name)
-        form.addRow("Functie:", self.function)
-        form.addRow("E-mailadres:", self.email)
-        form.addRow("06-nummer:", self.phone)
-        content_layout.addLayout(form)
-
-        startup_group = QGroupBox("Opstartscherm")
-        startup_layout = QFormLayout(startup_group)
-        self.startup_mode = QComboBox()
-        self.startup_mode.addItem("Alleen bij relevante meldingen of evenementen", "relevant")
-        self.startup_mode.addItem("Altijd tonen", "always")
-        self.startup_mode.addItem("Niet tonen", "never")
-        mode_index = self.startup_mode.findData(startup_mode)
-        self.startup_mode.setCurrentIndex(mode_index if mode_index >= 0 else 0)
-        self.upcoming_days = QComboBox()
-        for days in (7, 14, 30, 60):
-            self.upcoming_days.addItem(f"{days} dagen vooruit", days)
-        days_index = self.upcoming_days.findData(int(upcoming_days or 30))
-        self.upcoming_days.setCurrentIndex(days_index if days_index >= 0 else 2)
-        startup_layout.addRow("Welkomstscherm:", self.startup_mode)
-        startup_layout.addRow("Aankomende evenementen:", self.upcoming_days)
-        content_layout.addWidget(startup_group)
-
-        save_group = QGroupBox("Opslaan en herstel")
-        save_layout = QFormLayout(save_group)
-        self.autosave_enabled = QCheckBox("Wijzigingen automatisch opslaan")
-        self.autosave_enabled.setChecked(bool(autosave_enabled))
-        self.autosave_delay = QComboBox()
-        for seconds in (3, 10, 30, 60):
-            self.autosave_delay.addItem(f"Na {seconds} seconden rust", seconds)
-        delay_index = self.autosave_delay.findData(int(autosave_delay_seconds or 3))
-        self.autosave_delay.setCurrentIndex(delay_index if delay_index >= 0 else 0)
-        self.backups_enabled = QCheckBox("Automatische reservekopieën bewaren")
-        self.backups_enabled.setChecked(bool(backups_enabled))
-        self.backup_count = QComboBox()
-        for count in (3, 5, 10):
-            self.backup_count.addItem(f"Laatste {count} versies", count)
-        backup_index = self.backup_count.findData(int(backup_count or 5))
-        self.backup_count.setCurrentIndex(backup_index if backup_index >= 0 else 1)
-        self.autosave_delay.setEnabled(self.autosave_enabled.isChecked())
-        self.backup_count.setEnabled(self.backups_enabled.isChecked())
-        self.autosave_enabled.toggled.connect(self.autosave_delay.setEnabled)
-        self.backups_enabled.toggled.connect(self.backup_count.setEnabled)
-        save_layout.addRow("Autosave:", self.autosave_enabled)
-        save_layout.addRow("Opslaan:", self.autosave_delay)
-        save_layout.addRow("Reservekopieën:", self.backups_enabled)
-        save_layout.addRow("Bewaren:", self.backup_count)
-        content_layout.addWidget(save_group)
-
-        appearance_group = QGroupBox("Weergave")
-        appearance_layout = QFormLayout(appearance_group)
-        self.dark_mode = QCheckBox("☾ Dark mode")
-        self.dark_mode.setChecked(bool(dark_mode))
-        appearance_layout.addRow("Thema:", self.dark_mode)
-        content_layout.addWidget(appearance_group)
-        content_layout.addStretch()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(content)
-        layout.addWidget(scroll, 1)
-        button_flags = QDialogButtonBox.StandardButton.Save
-        if not required:
-            button_flags |= QDialogButtonBox.StandardButton.Cancel
-        buttons = QDialogButtonBox(button_flags)
-        buttons.button(QDialogButtonBox.StandardButton.Save).clicked.connect(self._try_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def _try_accept(self):
-        profile = self.value()
-        if self.required:
-            missing = [
-                label for key, label in (
-                    ("name", "naam"), ("function", "functie"),
-                    ("email", "e-mailadres"), ("phone", "06-nummer"),
-                ) if not profile[key]
-            ]
-            if missing:
-                QMessageBox.information(
-                    self,
-                    "Profiel nog niet compleet",
-                    "Vul ook het volgende in: " + ", ".join(missing) + ".",
-                )
-                return
-        if profile["email"] and not profile["email"].lower().endswith("@werkenbijdefensie.nl"):
-            QMessageBox.warning(
-                self,
-                "E-mailadres controleren",
-                "Gebruik een @werkenbijdefensie.nl-adres.",
-            )
-            return
-        self.accept()
-
-    def value(self):
-        return {
-            "name": self.name.text().strip(),
-            "function": self.function.text().strip(),
-            "email": self.email.text().strip(),
-            "phone": self.phone.text().strip(),
-        }
-
-    def startup_preferences(self):
-        return {
-            "mode": str(self.startup_mode.currentData() or "relevant"),
-            "upcoming_days": int(self.upcoming_days.currentData() or 30),
-            "autosave_enabled": self.autosave_enabled.isChecked(),
-            "autosave_delay_seconds": int(self.autosave_delay.currentData() or 3),
-            "backups_enabled": self.backups_enabled.isChecked(),
-            "backup_count": int(self.backup_count.currentData() or 5),
-            "dark_mode": self.dark_mode.isChecked(),
-        }
-
-
-class ProfileDetailsDialog(QDialog):
-    """Profielgegevens zonder applicatie-instellingen."""
-
-    def __init__(self, profile: dict, parent=None, required: bool = False):
-        super().__init__(parent)
-        self.required = required
-        self.setWindowTitle("Eerste configuratie" if required else "Mijn profiel aanpassen")
-        _fit_dialog_to_screen(self, 590, 590, 500, 430)
-        if required:
-            self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
-        layout = QVBoxLayout(self)
-        intro = QLabel(
-            "Vul uw profiel één keer in. Deze gegevens blijven lokaal en worden gebruikt in documentexports en WhatsApp-berichten."
-            if required else
-            "Deze gegevens blijven lokaal en worden automatisch gebruikt in 5WH's, evaluatieformulieren en desgewenst WhatsApp-berichten."
-        )
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-        form = QFormLayout()
-        self.name = QLineEdit(str(profile.get("name", "") or ""))
-        self.function = QLineEdit(str(profile.get("function", "") or ""))
-        self.email = QLineEdit(str(profile.get("email", "") or ""))
-        self.email.setPlaceholderText("naam@werkenbijdefensie.nl")
-        self.phone = QLineEdit(str(profile.get("phone", "") or ""))
-        self.phone.setPlaceholderText("06-12345678")
-        form.addRow("Naam:", self.name)
-        form.addRow("Functie:", self.function)
-        form.addRow("E-mailadres:", self.email)
-        form.addRow("06-nummer:", self.phone)
-        layout.addLayout(form)
-
-        signature_group = QGroupBox("Handtekening")
-        signature_layout = QFormLayout(signature_group)
-        self.signature_rank = QLineEdit(str(profile.get("signature_rank", "") or ""))
-        self.signature_rank.setPlaceholderText("evt. afgekort")
-        self.signature_first_name = QLineEdit(str(profile.get("signature_first_name", "") or ""))
-        if not self.signature_first_name.text().strip():
-            self.signature_first_name.setText(str(profile.get("name", "") or "").strip().split(" ", 1)[0])
-        self.signature_department = QLineEdit(str(profile.get("signature_department", "") or ""))
-        self.signature_organization = QLineEdit(
-            str(profile.get("signature_organization", "Ministerie van Defensie") or "Ministerie van Defensie")
-        )
-        self.signature_organization.setReadOnly(True)
-        signature_layout.addRow("Rang:", self.signature_rank)
-        signature_layout.addRow("Voornaam:", self.signature_first_name)
-        signature_layout.addRow("Afdeling:", self.signature_department)
-        signature_layout.addRow("Organisatie:", self.signature_organization)
-        layout.addWidget(signature_group)
-        layout.addStretch()
-        flags = QDialogButtonBox.StandardButton.Save
-        if not required:
-            flags |= QDialogButtonBox.StandardButton.Cancel
-        buttons = QDialogButtonBox(flags)
-        buttons.button(QDialogButtonBox.StandardButton.Save).clicked.connect(self._try_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def value(self):
-        return {
-            "name": self.name.text().strip(),
-            "function": self.function.text().strip(),
-            "email": self.email.text().strip(),
-            "phone": self.phone.text().strip(),
-            "signature_rank": self.signature_rank.text().strip(),
-            "signature_first_name": self.signature_first_name.text().strip(),
-            "signature_department": self.signature_department.text().strip(),
-            "signature_organization": "Ministerie van Defensie",
-        }
-
-    def _try_accept(self):
-        profile = self.value()
-        if self.required:
-            missing = [label for key, label in (
-                ("name", "naam"), ("function", "functie"),
-                ("email", "e-mailadres"), ("phone", "06-nummer"),
-            ) if not profile[key]]
-            if missing:
-                QMessageBox.information(self, "Profiel nog niet compleet", "Vul ook in: " + ", ".join(missing) + ".")
-                return
-        if profile["email"] and not profile["email"].lower().endswith("@werkenbijdefensie.nl"):
-            QMessageBox.warning(self, "E-mailadres controleren", "Gebruik een @werkenbijdefensie.nl-adres.")
-            return
-        self.accept()
-
-
-class ApplicationSettingsDialog(QDialog):
-    """Centrale instellingen voor opstarten, opslag, herstel en weergave."""
-
-    def __init__(self, parent, preferences: dict):
-        super().__init__(parent)
-        self.setWindowTitle("EventHub-instellingen")
-        _fit_dialog_to_screen(self, 650, 610, 520, 430)
-        layout = QVBoxLayout(self)
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-
-        startup_group = QGroupBox("Opstartinstellingen")
-        startup_layout = QFormLayout(startup_group)
-        self.startup_mode = QComboBox()
-        self.startup_mode.addItem("Alleen bij relevante meldingen of evenementen", "relevant")
-        self.startup_mode.addItem("Altijd tonen", "always")
-        self.startup_mode.addItem("Niet tonen", "never")
-        self.startup_mode.setCurrentIndex(max(0, self.startup_mode.findData(preferences["mode"])))
-        self.upcoming_days = QComboBox()
-        for days in (7, 14, 30, 60):
-            self.upcoming_days.addItem(f"{days} dagen vooruit", days)
-        self.upcoming_days.setCurrentIndex(max(0, self.upcoming_days.findData(preferences["upcoming_days"])))
-        startup_layout.addRow("Welkomstscherm:", self.startup_mode)
-        startup_layout.addRow("Aankomende evenementen:", self.upcoming_days)
-        content_layout.addWidget(startup_group)
-
-        save_group = QGroupBox("Opslaan en herstel")
-        save_layout = QFormLayout(save_group)
-        self.autosave_enabled = QCheckBox("Wijzigingen automatisch opslaan")
-        self.autosave_enabled.setChecked(preferences["autosave_enabled"])
-        self.autosave_delay = QComboBox()
-        for seconds in (3, 10, 30, 60):
-            self.autosave_delay.addItem(f"Na {seconds} seconden rust", seconds)
-        self.autosave_delay.setCurrentIndex(max(0, self.autosave_delay.findData(preferences["autosave_delay_seconds"])))
-        self.backups_enabled = QCheckBox("Automatische reservekopieën bewaren")
-        self.backups_enabled.setChecked(preferences["backups_enabled"])
-        self.backup_count = QComboBox()
-        for count in (3, 5, 10):
-            self.backup_count.addItem(f"Laatste {count} versies", count)
-        self.backup_count.setCurrentIndex(max(0, self.backup_count.findData(preferences["backup_count"])))
-        self.autosave_delay.setEnabled(self.autosave_enabled.isChecked())
-        self.backup_count.setEnabled(self.backups_enabled.isChecked())
-        self.autosave_enabled.toggled.connect(self.autosave_delay.setEnabled)
-        self.backups_enabled.toggled.connect(self.backup_count.setEnabled)
-        save_layout.addRow("Autosave:", self.autosave_enabled)
-        save_layout.addRow("Opslaan:", self.autosave_delay)
-        save_layout.addRow("Reservekopieën:", self.backups_enabled)
-        save_layout.addRow("Bewaren:", self.backup_count)
-        storage_button = _make_button_compact(QPushButton("Opslaglocaties bekijken"))
-        storage_button.setObjectName("secondaryButton")
-        storage_button.clicked.connect(parent.show_storage_locations)
-        recovery_button = _make_button_compact(QPushButton("Herstelbestanden beheren"))
-        recovery_button.setObjectName("secondaryButton")
-        recovery_button.clicked.connect(parent.manage_recovery_files)
-        save_layout.addRow(storage_button, recovery_button)
-        content_layout.addWidget(save_group)
-
-        privacy_group = QGroupBox("Bewaartermijn persoonsgegevens")
-        privacy_layout = QFormLayout(privacy_group)
-        self.retention_days = QComboBox()
-        for days in RETENTION_CHOICES:
-            label = f"{days} dagen na het evenement"
-            if days == RETENTION_DEFAULT_DAYS:
-                label += "  (standaard)"
-            self.retention_days.addItem(label, days)
-        self.retention_days.setCurrentIndex(
-            max(0, self.retention_days.findData(clamp_retention_days(preferences["retention_days"])))
-        )
-        privacy_note = QLabel(
-            "Na deze termijn worden de deelnemersgegevens van een evenement <b>automatisch en onomkeerbaar</b> "
-            "verwijderd uit het dossier, de reservekopieën en de livesessiegegevens. Er wordt niet om "
-            f"bevestiging gevraagd. Het meldingenoverzicht (🔔) kondigt dit {RETENTION_WARNING_DAYS} dagen "
-            "van tevoren aan, zodat u op tijd kunt exporteren. De opkomstcijfers en verdelingen blijven als "
-            f"geanonimiseerd overzicht bij het evenement bewaard. Langer dan {RETENTION_MAX_DAYS} dagen is "
-            "niet mogelijk."
-        )
-        privacy_note.setTextFormat(Qt.TextFormat.RichText)
-        privacy_note.setObjectName("hintLabel")
-        privacy_note.setWordWrap(True)
-        privacy_layout.addRow("Verwijderen na:", self.retention_days)
-        privacy_layout.addRow(privacy_note)
-        review_button = _make_button_compact(QPushButton("Nu controleren zonder te wissen"))
-        review_button.setObjectName("secondaryButton")
-        review_button.clicked.connect(parent.review_retention_cleanup)
-        privacy_layout.addRow(review_button)
-        content_layout.addWidget(privacy_group)
-
-        appearance_group = QGroupBox("Weergave")
-        appearance_layout = QFormLayout(appearance_group)
-        self.dark_mode = QCheckBox("☾ Dark mode")
-        self.dark_mode.setChecked(preferences["dark_mode"])
-        appearance_layout.addRow("Thema:", self.dark_mode)
-        content_layout.addWidget(appearance_group)
-        content_layout.addStretch()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(content)
-        layout.addWidget(scroll, 1)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def value(self):
-        return {
-            "mode": str(self.startup_mode.currentData() or "relevant"),
-            "upcoming_days": int(self.upcoming_days.currentData() or 30),
-            "autosave_enabled": self.autosave_enabled.isChecked(),
-            "autosave_delay_seconds": int(self.autosave_delay.currentData() or 3),
-            "backups_enabled": self.backups_enabled.isChecked(),
-            "backup_count": int(self.backup_count.currentData() or 5),
-            "retention_days": clamp_retention_days(self.retention_days.currentData()),
-            "dark_mode": self.dark_mode.isChecked(),
-        }
-
-
-class NewEventSourceDialog(QDialog):
-    """Small first step for a new EventHub event."""
-
-    def __init__(self, parent=None, templates_available=False):
-        super().__init__(parent)
-        self.choice = ""
-        self.setWindowTitle("Nieuw evenement")
-        _fit_dialog_to_screen(self, 560, 390, 480, 340)
-        layout = QVBoxLayout(self)
-        title = QLabel("Hoe wilt u het evenement aanmaken?")
-        title.setObjectName("sectionTitle")
-        layout.addWidget(title)
-        intro = QLabel("Kies een lege start, hergebruik een EventHub-template of neem gegevens over uit Rudder.")
-        intro.setWordWrap(True)
-        intro.setObjectName("hintLabel")
-        layout.addWidget(intro)
-
-        options = (
-            ("empty", "Leeg evenement", "Vul naam, soort, datum en locatie zelf in."),
-            ("template", "Vanuit EventHub-template", "Hergebruik taken en instellingen; pas vooral de datum aan."),
-            ("rudder", "Eén evenement uit Rudder", "Open het Rudder-overzicht en neem één evenement met één klik over."),
-            ("rudder_bulk", "Meerdere evenementen uit Rudder", "Filter in Rudder op uw eigen naam en haal alles in één keer binnen."),
-        )
-        for key, label, description in options:
-            row = QFrame()
-            row.setObjectName("toolbar")
-            row_layout = QHBoxLayout(row)
-            text_layout = QVBoxLayout()
-            option_title = QLabel(label)
-            option_title.setStyleSheet("font-weight: 700;")
-            option_text = QLabel(description)
-            option_text.setObjectName("hintLabel")
-            option_text.setWordWrap(True)
-            text_layout.addWidget(option_title)
-            text_layout.addWidget(option_text)
-            row_layout.addLayout(text_layout, 1)
-            button = _make_button_compact(QPushButton("Kiezen"))
-            button.setObjectName("primaryButton" if key == "empty" else "secondaryButton")
-            button.setEnabled(key != "template" or templates_available)
-            if key == "template" and not templates_available:
-                button.setToolTip("Er zijn nog geen EventHub-templates opgeslagen.")
-            button.clicked.connect(lambda _checked=False, selected=key: self._choose(selected))
-            row_layout.addWidget(button)
-            layout.addWidget(row)
-        layout.addStretch()
-        cancel = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
-        cancel.rejected.connect(self.reject)
-        layout.addWidget(cancel)
-
-    def _choose(self, choice):
-        self.choice = choice
-        self.accept()
-
-
-class NewProjectDialog(QDialog):
-    """Zelfstandig formulier voor het aanmaken en aanpassen van een evenement."""
-
-    def __init__(self, parent=None, event: dict | None = None, project_templates: list[dict] | None = None, template_mode=False, template_only=False):
-        super().__init__(parent)
-        self.project_data = deepcopy(event) if event else None
-        self.project_templates = deepcopy(project_templates or [])
-        self.template_mode = bool(template_mode)
-        self.template_only = bool(template_only)
-        editing = self.project_data is not None
-        self.setWindowTitle(
-            "Evenement aanpassen" if editing else "Nieuw evenementtemplate" if self.template_mode else "Nieuw evenement"
-        )
-        self.setModal(True)
-        _fit_dialog_to_screen(self, 700, 720 if editing else 500, 560, 360)
-        layout = QVBoxLayout(self)
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(10, 10, 10, 10)
-        content_layout.setSpacing(12)
-        intro = QLabel(
-            "Pas de evenementgegevens aan. Gekoppelde deelnemers, taken en documenten blijven behouden."
-            if editing else
-            "Maak een template aan. De evenementdatum wordt ingevuld wanneer u een nieuw evenement vanuit dit template maakt."
-            if self.template_mode else
-            "Maak het evenement aan. Daarna opent direct het werkgebied voor "
-            "deelnemerslijsten, nazorg, presentie, statistieken, taken en documenten."
-        )
-        intro.setWordWrap(True)
-        content_layout.addWidget(intro)
-        form = QFormLayout()
-        if not editing and not self.template_mode:
-            self.template_choice = QComboBox()
-            if not self.template_only:
-                self.template_choice.addItem("Leeg evenement", "")
-            for template in self.project_templates:
-                self.template_choice.addItem(
-                    str(template.get("name", "Naamloos template") or "Naamloos template"),
-                    str(template.get("id", "") or ""),
-                )
-            self.template_choice.currentIndexChanged.connect(self._template_changed)
-            form.addRow("Evenementtemplate:", self.template_choice)
-        self.name = QLineEdit(str((self.project_data or {}).get("name", "") or ""))
-        self.name.setPlaceholderText("Bijvoorbeeld: Meeloopdag Drone Operaties")
-        self.event_type = QComboBox()
-        self.event_type.addItems(EVENT_TYPES)
-        self.event_type.setCurrentText(str((self.project_data or {}).get("event_type", "Meeloopdag") or "Meeloopdag"))
-        self.project_date = QLineEdit(str((self.project_data or {}).get("date", "") or ""))
-        self.project_date.setPlaceholderText("dd-mm-jjjj")
-        self.start_time = QLineEdit(str((self.project_data or {}).get("start_time", "") or ""))
-        self.start_time.setPlaceholderText("09:00")
-        self.end_time = QLineEdit(str((self.project_data or {}).get("end_time", "") or ""))
-        self.end_time.setPlaceholderText("13:00")
-        self.location = QLineEdit(str((self.project_data or {}).get("location", "") or ""))
-        self.location.setPlaceholderText("Bijvoorbeeld: Gebouw IJsduiker, Den Helder")
-        self.location_address = QLineEdit(str((self.project_data or {}).get("location_address", "") or ""))
-        self.location_address.setPlaceholderText("Straat, huisnummer, postcode en plaats")
-        self.maximum_registrants = QLineEdit(str((self.project_data or {}).get("maximum_registrants", "") or ""))
-        self.maximum_registrants.setPlaceholderText("Bijvoorbeeld: 50")
-        form.addRow("Naam*:", self.name)
-        form.addRow("Soort evenement*:", self.event_type)
-        if not self.template_mode:
-            form.addRow("Datum*:", with_date_picker(self.project_date))
-        time_row = QWidget()
-        time_layout = QHBoxLayout(time_row)
-        time_layout.setContentsMargins(0, 0, 0, 0)
-        time_layout.setSpacing(8)
-        time_layout.addWidget(with_time_picker(self.start_time))
-        time_layout.addWidget(QLabel("tot"))
-        time_layout.addWidget(with_time_picker(self.end_time))
-        form.addRow("Tijd:", time_row)
-        form.addRow("Locatie:", self.location)
-        form.addRow("Adres:", self.location_address)
-        form.addRow("Max. registraties:", self.maximum_registrants)
-        if editing:
-            self.region = QLineEdit(str(self.project_data.get("region", "") or ""))
-            self.place = QLineEdit(str(self.project_data.get("place", "") or ""))
-            self.external_contact = QLineEdit(str(self.project_data.get("external_contact", "") or ""))
-            self.external_contact_reachability = QLineEdit(
-                str(self.project_data.get("external_contact_reachability", "") or "")
-            )
-            self.status = QComboBox()
-            # Zonder deze keuze kon een handmatige status niet blijven staan: de
-            # automatische bepaling zette hem bij de eerstvolgende weergave terug.
-            self.status.addItem(AUTOMATIC_STATUS, AUTOMATIC_STATUS)
-            for value in EVENT_STATUSES:
-                self.status.addItem(value, value)
-            if self.project_data.get("status_manual"):
-                self.status.setCurrentText(
-                    str(self.project_data.get("status", "In voorbereiding") or "In voorbereiding")
-                )
-            else:
-                self.status.setCurrentText(AUTOMATIC_STATUS)
-            self.status.setToolTip(
-                "Automatisch bepalen volgt de datum en de openstaande taken. Kies een vaste "
-                "status om die te laten staan."
-            )
-            self.description = QPlainTextEdit()
-            self.description.setPlainText(str(self.project_data.get("description", "") or ""))
-            self.description.setMaximumHeight(90)
-            self.target_audience = QPlainTextEdit()
-            self.target_audience.setPlainText(str(self.project_data.get("target_audience", "") or ""))
-            self.target_audience.setMaximumHeight(80)
-            self.location_instructions = QPlainTextEdit()
-            self.location_instructions.setPlainText(str(self.project_data.get("location_instructions", "") or ""))
-            self.location_instructions.setMaximumHeight(80)
-            form.addRow("Regio:", self.region)
-            form.addRow("Plaats:", self.place)
-            form.addRow("Externe contactpersoon:", self.external_contact)
-            form.addRow("Bereikbaarheid contactpersoon:", self.external_contact_reachability)
-            form.addRow("Locatie-instructies:", self.location_instructions)
-            form.addRow("Status:", self.status)
-            form.addRow("Korte beschrijving:", self.description)
-            form.addRow("Doelgroep:", self.target_audience)
-        content_layout.addLayout(form)
-        content_layout.addStretch()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(content)
-        layout.addWidget(scroll, 1)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
-        save_button.setText(
-            "Wijzigingen opslaan" if editing
-            else "Template aanmaken" if self.template_mode
-            else "Evenement aanmaken"
-        )
-        save_button.clicked.connect(self._validate_and_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        self.name.setFocus()
-        if self.template_only and hasattr(self, "template_choice") and self.template_choice.count():
-            self._template_changed()
-
-    def _template_changed(self):
-        if not hasattr(self, "template_choice"):
-            return
-        template_id = str(self.template_choice.currentData() or "")
-        template = next(
-            (item for item in self.project_templates if str(item.get("id", "") or "") == template_id),
-            None,
-        )
-        if not template:
-            self.name.clear()
-            self.event_type.setCurrentText("Meeloopdag")
-            self.location.clear()
-            self.location_address.clear()
-            self.start_time.clear()
-            self.end_time.clear()
-            self.maximum_registrants.clear()
-            return
-        source = template.get("event", {}) if isinstance(template.get("event"), dict) else {}
-        self.name.setText(str(source.get("name", "") or template.get("name", "") or ""))
-        self.event_type.setCurrentText(str(source.get("event_type", "Meeloopdag") or "Meeloopdag"))
-        self.location.setText(str(source.get("location", "") or ""))
-        self.location_address.setText(str(source.get("location_address", "") or ""))
-        self.start_time.setText(str(source.get("start_time", "") or ""))
-        self.end_time.setText(str(source.get("end_time", "") or ""))
-        self.maximum_registrants.setText(str(source.get("maximum_registrants", "") or ""))
-        self.project_date.clear()
-        self.project_date.setFocus()
-
-    def _validate_and_accept(self):
-        if not self.name.text().strip():
-            QMessageBox.information(self, "Naam ontbreekt", "Vul een naam voor het evenement in.")
-            self.name.setFocus()
-            return
-        if not self.template_mode and not self.project_date.text().strip():
-            QMessageBox.information(self, "Datum ontbreekt", "Vul de datum van het evenement in.")
-            self.project_date.setFocus()
-            return
-        if not self.template_mode and parse_date(self.project_date.text()) is None:
-            QMessageBox.information(self, "Datum ongeldig", "Gebruik bijvoorbeeld 29-09-2026.")
-            self.project_date.setFocus()
-            return
-        if not valid_time_text(self.start_time.text()) or not valid_time_text(self.end_time.text()):
-            QMessageBox.information(self, "Tijd ongeldig", "Gebruik voor tijden het formaat uu:mm, bijvoorbeeld 09:00 en 13:30.")
-            (self.start_time if not valid_time_text(self.start_time.text()) else self.end_time).setFocus()
-            return
-        if self.start_time.text().strip() and self.end_time.text().strip() and self.end_time.text().strip() <= self.start_time.text().strip():
-            QMessageBox.information(self, "Tijd ongeldig", "De eindtijd moet later zijn dan de starttijd.")
-            self.end_time.setFocus()
-            return
-        maximum = self.maximum_registrants.text().strip()
-        if maximum and (not maximum.isdigit() or int(maximum) <= 0):
-            QMessageBox.information(self, "Maximum ongeldig", "Vul bij maximaal aantal registraties een positief geheel getal in.")
-            self.maximum_registrants.setFocus()
-            return
-        if self.event_type.currentText() != "Online voorlichting" and not self.location.text().strip():
-            QMessageBox.information(self, "Locatie ontbreekt", "Vul de locatie van het evenement in.")
-            self.location.setFocus()
-            return
-        self.accept()
-
-    def value(self):
-        result = {
-            "name": self.name.text().strip(),
-            "event_type": self.event_type.currentText(),
-            "date": self.project_date.text().strip(),
-            "start_time": self.start_time.text().strip(),
-            "end_time": self.end_time.text().strip(),
-            "location": self.location.text().strip() or ("Online" if self.event_type.currentText() == "Online voorlichting" else ""),
-            "location_address": self.location_address.text().strip(),
-            "maximum_registrants": self.maximum_registrants.text().strip(),
-        }
-        if self.project_data is not None:
-            result.update({
-                "region": self.region.text().strip(),
-                "place": self.place.text().strip(),
-                "external_contact": self.external_contact.text().strip(),
-                "external_contact_reachability": self.external_contact_reachability.text().strip(),
-                "status": (
-                    str(self.project_data.get("status", "") or "Concept")
-                    if self.status.currentText() == AUTOMATIC_STATUS
-                    else self.status.currentText()
-                ),
-                "status_manual": self.status.currentText() != AUTOMATIC_STATUS,
-                "description": self.description.toPlainText().strip(),
-                "target_audience": self.target_audience.toPlainText().strip(),
-                "location_instructions": self.location_instructions.toPlainText().strip(),
-            })
-        return result
-
-    def selected_template(self):
-        if not hasattr(self, "template_choice"):
-            return None
-        template_id = str(self.template_choice.currentData() or "")
-        return next(
-            (deepcopy(item) for item in self.project_templates if str(item.get("id", "") or "") == template_id),
-            None,
-        )
-
-
-class EventDialog(QDialog):
-    def __init__(self, event: dict, parent=None):
-        super().__init__(parent)
-        self.project_data = deepcopy(event)
-        self.setWindowTitle("Nieuw evenement" if not event.get("name") else "Evenement aanpassen")
-        _fit_dialog_to_screen(self, 700, 670, 560, 360)
-        layout = QVBoxLayout(self)
-        scroll, content = _scroll_form_page()
-        form = QFormLayout()
-        self.name = QLineEdit(str(event.get("name", "") or ""))
-        self.event_date = QLineEdit(str(event.get("date", "") or ""))
-        self.event_date.setPlaceholderText("dd-mm-jjjj")
-        self.region = QLineEdit(str(event.get("region", "") or ""))
-        self.place = QLineEdit(str(event.get("place", "") or ""))
-        self.location = QLineEdit(str(event.get("location", "") or ""))
-        self.external_contact = QLineEdit(str(event.get("external_contact", "") or ""))
-        self.external_contact_reachability = QLineEdit(str(event.get("external_contact_reachability", "") or ""))
-        self.status = QComboBox()
-        self.status.addItems(EVENT_STATUSES)
-        self.status.setCurrentText(str(event.get("status", "Concept") or "Concept"))
-        self.description = QPlainTextEdit(str(event.get("description", "") or ""))
-        self.description.setMinimumHeight(95)
-        self.target_audience = QPlainTextEdit(str(event.get("target_audience", "") or ""))
-        self.target_audience.setMinimumHeight(80)
-        form.addRow("Naam evenement*:", self.name)
-        self.event_type = QComboBox()
-        self.event_type.addItems(EVENT_TYPES)
-        self.event_type.setCurrentText(str(event.get("event_type", "Meeloopdag") or "Meeloopdag"))
-        form.addRow("Soort evenement:", self.event_type)
-        form.addRow("Datum:", self.event_date)
-        form.addRow("Regio:", self.region)
-        form.addRow("Plaats:", self.place)
-        form.addRow("Locatie:", self.location)
-        form.addRow("Externe contactpersoon:", self.external_contact)
-        form.addRow("Bereikbaarheid contactpersoon:", self.external_contact_reachability)
-        form.addRow("Status:", self.status)
-        form.addRow("Korte beschrijving:", self.description)
-        form.addRow("Doelgroep:", self.target_audience)
-        content.addLayout(form)
-        content.addStretch()
-        layout.addWidget(scroll, 1)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Save).clicked.connect(self._try_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def _try_accept(self):
-        if not self.name.text().strip():
-            QMessageBox.information(self, "Naam ontbreekt", "Geef het evenement een naam.")
-            self.name.setFocus()
-            return
-        if self.event_date.text().strip() and parse_date(self.event_date.text()) is None:
-            QMessageBox.information(
-                self,
-                "Datum ongeldig",
-                "Gebruik voor de evenementdatum bijvoorbeeld 29-09-2026.",
-            )
-            self.event_date.setFocus()
-            return
-        self.accept()
-
-    def value(self):
-        result = deepcopy(self.project_data)
-        result.update({
-            "name": self.name.text().strip(),
-            "event_type": self.event_type.currentText(),
-            "date": self.event_date.text().strip(),
-            "region": self.region.text().strip(),
-            "place": self.place.text().strip(),
-            "location": self.location.text().strip(),
-            "external_contact": self.external_contact.text().strip(),
-            "external_contact_reachability": self.external_contact_reachability.text().strip(),
-            "status": self.status.currentText(),
-            "description": self.description.toPlainText().strip(),
-            "target_audience": self.target_audience.toPlainText().strip(),
-        })
-        return result
-
-
-class TaskDialog(QDialog):
-    def __init__(self, task: dict | None = None, parent=None):
-        super().__init__(parent)
-        self.task = prepare_task(task)
-        self.setWindowTitle("Taak instellen")
-        _fit_dialog_to_screen(self, 640, 430, 500, 340)
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.title = QLineEdit(self.task["title"])
-        self.offset = QSpinBox()
-        self.offset.setRange(0, 365)
-        self.offset.setValue(self.task["offset_days"])
-        self.relative = QComboBox()
-        self.relative.addItem("vóór het evenement", "before")
-        self.relative.addItem("na het evenement", "after")
-        self.relative.setCurrentIndex(1 if self.task["relative"] == "after" else 0)
-        self.reminder = QSpinBox()
-        self.reminder.setRange(0, 365)
-        self.reminder.setValue(self.task["reminder_days"])
-        self.reminder.setSuffix(" dagen vooraf")
-        self.notes = QPlainTextEdit(self.task["notes"])
-        self.notes.setMinimumHeight(90)
-        form.addRow("Taak*:", self.title)
-        deadline_row = QWidget()
-        deadline_layout = QHBoxLayout(deadline_row)
-        deadline_layout.setContentsMargins(0, 0, 0, 0)
-        deadline_layout.addWidget(self.offset)
-        deadline_layout.addWidget(self.relative, 1)
-        form.addRow("Uitvoeren:", deadline_row)
-        form.addRow("Melding tonen:", self.reminder)
-        form.addRow("Notities:", self.notes)
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def value(self):
-        result = deepcopy(self.task)
-        result.update({
-            "title": self.title.text().strip(),
-            "offset_days": self.offset.value(),
-            "relative": self.relative.currentData(),
-            "reminder_days": self.reminder.value(),
-            "notes": self.notes.toPlainText(),
-        })
-        return prepare_task(result)
-
-
-class FiveWhDialog(QDialog):
-    def __init__(self, event: dict, profile: dict, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"5WH invullen — {event.get('name', 'evenement')}")
-        _fit_dialog_to_screen(self, 900, 720, 620, 420)
-        self.data = deepcopy(event.get("fivewh", {}))
-        self.data.setdefault("event_address", "\n".join(filter(None, [event.get("location", ""), event.get("place", "")])))
-        self.data.setdefault("objective", event.get("description", ""))
-        self.data.setdefault("target_audience", event.get("target_audience", ""))
-        profile_name = " — ".join(filter(None, [profile.get("name", ""), profile.get("function", "")]))
-        profile_contact = " | ".join(filter(None, [profile.get("email", ""), profile.get("phone", "")]))
-        self.data.setdefault("poc_questions", "\n".join(filter(None, [profile_name, profile_contact])))
-        layout = QVBoxLayout(self)
-        intro = QLabel("Vul alleen de gegevens in die nodig zijn. De export gebruikt rechtstreeks het vaste 5WH-format.")
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-        tabs = QTabWidget()
-        groups = [
-            ("Wat & wie", FIVEWH_FIELDS[:12]),
-            ("Hoe", FIVEWH_FIELDS[12:22]),
-            ("Steun & veiligheid", FIVEWH_FIELDS[22:]),
-        ]
-        self.editors = {}
-        short_fields = {"build_time", "briefing_time", "event_time", "debrief_time", "teardown_time"}
-        for title, fields in groups:
-            scroll, content = _scroll_form_page()
-            form = QFormLayout()
-            for key, label in fields:
-                if key in short_fields:
-                    editor = QLineEdit(str(self.data.get(key, "") or ""))
-                else:
-                    editor = QPlainTextEdit(str(self.data.get(key, "") or ""))
-                    editor.setMinimumHeight(68)
-                self.editors[key] = editor
-                form.addRow(label + ":", editor)
-            content.addLayout(form)
-            content.addStretch()
-            tabs.addTab(scroll, title)
-        layout.addWidget(tabs, 1)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def value(self):
-        result = deepcopy(self.data)
-        for key, editor in self.editors.items():
-            result[key] = editor.text().strip() if isinstance(editor, QLineEdit) else editor.toPlainText().strip()
-        return result
-
-
-class EvaluationDialog(QDialog):
-    def __init__(self, event: dict, profile: dict, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"Evaluatie invullen — {event.get('name', 'evenement')}")
-        _fit_dialog_to_screen(self, 960, 740, 640, 420)
-        self.data = deepcopy(event.get("evaluation", {}))
-        defaults = {
-            "date": event.get("date", ""), "event_name": event.get("name", ""),
-            "region": event.get("region", ""), "place": event.get("place", ""),
-            "location": event.get("location", ""), "external_contact": event.get("external_contact", ""),
-            "external_contact_reachability": event.get("external_contact_reachability", ""),
-            "description": event.get("description", ""), "target_audience": event.get("target_audience", ""),
-            "filled_by": " — ".join(filter(None, [profile.get("name", ""), profile.get("function", "")])),
-        }
-        for key, value in defaults.items():
-            self.data.setdefault(key, value)
-        self.check_values = [bool(value) for value in self.data.get("checkboxes", [])]
-        self.check_values.extend([False] * (76 - len(self.check_values)))
-        self.check_values = self.check_values[:76]
-        self.text_editors = {}
-        self.exclusive_groups = []
-        self.target_checkboxes = []
-
-        layout = QVBoxLayout(self)
-        tabs = QTabWidget()
-        layout.addWidget(tabs, 1)
-
-        general_scroll, general_layout = _scroll_form_page()
-        general_form = QFormLayout()
-        for key, label, long_value in [
-            ("date", "Datum evenement/beurs", False), ("event_name", "Naam evenement/beurs", False),
-            ("region", "Regio", False), ("place", "Plaats", False), ("location", "Locatie", False),
-            ("external_contact", "Contactpersoon externe organisatie", False),
-            ("external_contact_reachability", "Bereikbaarheid contactpersoon", False),
-            ("description", "Korte beschrijving", True), ("target_audience", "Doelgroep", True),
-        ]:
-            self._add_text(general_form, key, label, long_value)
-        general_layout.addLayout(general_form)
-        general_layout.addStretch()
-        tabs.addTab(general_scroll, "Gegevens")
-
-        reach_scroll, reach_layout = _scroll_form_page()
-        reach_form = QFormLayout()
-        self._add_choice(reach_form, "Bezoekersaantallen evenement/beurs", list(range(0, 6)),
-                         ["< 100", "100-500", "500-1000", "1000-5000", "5000-10.000", "> 10.000"])
-        self._add_text(reach_form, "event_visitors_estimate", "Geschat aantal bij > 10.000", False)
-        self._add_choice(reach_form, "Bezoekersaantallen stand", list(range(6, 10)),
-                         ["< 100", "100-250", "250-500", "> 500"])
-        self._add_text(reach_form, "stand_visitors_estimate", "Geschat aantal bij > 500", False)
-        self._add_choice(reach_form, "Belangstellenden voor baan", list(range(10, 15)),
-                         ["< 25", "25-50", "50-100", "100-150", "> 150"])
-        self._add_text(reach_form, "job_interest_estimate", "Geschat aantal bij > 150", False)
-        for key, label in [
-            ("age_under_16", "% jonger dan 16"), ("age_16_24", "% 16-24 jaar"),
-            ("age_25_35", "% 25-35 jaar"), ("age_over_35", "% ouder dan 35"),
-        ]:
-            self._add_text(reach_form, key, label, False)
-        reach_layout.addLayout(reach_form)
-        targets = QGroupBox("Duidelijk aanwezige doelgroepen")
-        targets_grid = QGridLayout(targets)
-        for position, (index, label) in enumerate(EVALUATION_TARGET_GROUPS):
-            checkbox = QCheckBox(label)
-            checkbox.setChecked(self.check_values[index])
-            self.target_checkboxes.append((index, checkbox))
-            targets_grid.addWidget(checkbox, position // 2, position % 2)
-        reach_layout.addWidget(targets)
-        reach_form2 = QFormLayout()
-        self._add_choice(reach_form2, "Piekmomenten", [29, 30], ["Nee", "Ja"])
-        self._add_text(reach_form2, "peak_details", "Zo ja, namelijk", True)
-        self._add_choice(reach_form2, "Eerder deze beurs gedraaid", [31, 32], ["Nee", "Ja"])
-        self._add_text(reach_form2, "previous_experience", "Ervaringen t.o.v. vorige keer", True)
-        self._add_choice(reach_form2, "Publiciteit organisatie", [33, 34, 35, 36], ["Goed", "Voldoende", "Matig", "Slecht"])
-        reach_layout.addLayout(reach_form2)
-        reach_layout.addStretch()
-        tabs.addTab(reach_scroll, "Bereik & doelgroep")
-
-        resources_scroll, resources_layout = _scroll_form_page()
-        resources_form = QFormLayout()
-        self._add_text(resources_form, "resources_general", "Evaluatie inzet en middelen", True)
-        self._add_choice(resources_form, "Vorm van de stand", [37, 38, 39, 40, 41, 42],
-                         ["Eilandstand", "Kopstand", "Afmeting", "Tent/paviljoen", "Inhuur ruimte", "Anders"])
-        self._add_text(resources_form, "stand_width", "Breedte stand (m)", False)
-        self._add_text(resources_form, "stand_depth", "Diepte stand (m)", False)
-        self._add_text(resources_form, "stand_other", "Andere standvorm", False)
-        self._add_choice(resources_form, "Locatie stand", [43, 44, 45, 46], ["Goed", "Voldoende", "Matig", "Slecht"])
-        self._add_text(resources_form, "stand_location_suggestions", "Suggesties standlocatie", True)
-        self._add_choice(resources_form, "Oppervlakte stand", [48, 49, 50], ["Te veel m²", "Precies goed", "Te weinig m²"])
-        self._add_text(resources_form, "stand_surface_notes", "Opmerkingen oppervlakte", True)
-        resources_layout.addLayout(resources_form)
-        resources_layout.addStretch()
-        tabs.addTab(resources_scroll, "Inzet & middelen")
-
-        support_scroll, support_layout = _scroll_form_page()
-        support_form = QFormLayout()
-        self._add_choice(support_form, "Aangevraagd materieel aanwezig", [52, 53], ["Ja", "Nee"])
-        self._add_text(support_form, "material_missing", "Ontbrekend materieel", True)
-        self._add_text(support_form, "material_notes", "Opmerkingen materieel", True)
-        self._add_choice(support_form, "Promotiemateriaal aanwezig", [56, 57], ["Ja", "Nee"])
-        self._add_text(support_form, "promotion_missing", "Ontbrekend promotiemateriaal", True)
-        self._add_text(support_form, "promotion_distributed", "Veel uitgedeeld aan doelgroep", True)
-        self._add_text(support_form, "promotion_notes", "Opmerkingen promotiemateriaal", True)
-        self._add_choice(support_form, "Voldoende wervingsmateriaal", [61, 62], ["Ja", "Nee"])
-        self._add_text(support_form, "recruitment_material_missing", "Zo nee, namelijk", True)
-        self._add_choice(support_form, "Wervingsmateriaal sloot aan", [63, 64], ["Ja", "Nee"])
-        self._add_choice(support_form, "Al het personeel aanwezig", [65, 66], ["Nee", "Ja"])
-        self._add_text(support_form, "personnel_missing", "Wie waren niet aanwezig", True)
-        self._add_choice(support_form, "Publiciteit vanuit AMC", [68, 69], ["Ja", "Nee"])
-        self._add_choice(support_form, "Wervingsondersteuning sloot aan", [70, 71], ["Ja", "Nee"])
-        self._add_text(support_form, "support_reason", "Ja, omdat", True)
-        self._add_text(support_form, "support_suggestions", "Suggesties", True)
-        support_layout.addLayout(support_form)
-        support_layout.addStretch()
-        tabs.addTab(support_scroll, "Wervingsondersteuning")
-
-        conclusion_scroll, conclusion_layout = _scroll_form_page()
-        conclusion_form = QFormLayout()
-        self._add_choice(conclusion_form, "Voor herhaling vatbaar", [73, 74, 75], ["Ja, omdat", "Ja, mits", "Nee, omdat"])
-        self._add_text(conclusion_form, "repeat_yes_reason", "Ja, omdat", True)
-        self._add_text(conclusion_form, "repeat_conditions", "Ja, mits", True)
-        self._add_text(conclusion_form, "repeat_no_reason", "Nee, omdat", True)
-        self._add_text(conclusion_form, "additional_comments", "Aanvullende opmerkingen en suggesties", True)
-        self._add_text(conclusion_form, "filled_by", "Ingevuld door", False)
-        conclusion_layout.addLayout(conclusion_form)
-        conclusion_layout.addStretch()
-        tabs.addTab(conclusion_scroll, "Conclusie")
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def _add_text(self, form: QFormLayout, key: str, label: str, long_value: bool):
-        if long_value:
-            editor = QPlainTextEdit(str(self.data.get(key, "") or ""))
-            editor.setMinimumHeight(75)
-        else:
-            editor = QLineEdit(str(self.data.get(key, "") or ""))
-        self.text_editors[key] = editor
-        form.addRow(label + ":", editor)
-
-    def _add_choice(self, form: QFormLayout, label: str, indices: list[int], labels: list[str]):
-        combo = QComboBox()
-        combo.addItem("Niet ingevuld", None)
-        for index, text_label in zip(indices, labels):
-            combo.addItem(text_label, index)
-        selected = next((index for index in indices if self.check_values[index]), None)
-        if selected is not None:
-            combo.setCurrentIndex(indices.index(selected) + 1)
-        self.exclusive_groups.append((combo, indices))
-        form.addRow(label + ":", combo)
-
-    def value(self):
-        result = deepcopy(self.data)
-        for key, editor in self.text_editors.items():
-            result[key] = editor.text().strip() if isinstance(editor, QLineEdit) else editor.toPlainText().strip()
-        checks = [False] * 76
-        for combo, indices in self.exclusive_groups:
-            selected = combo.currentData()
-            if selected in indices:
-                checks[selected] = True
-        for index, checkbox in self.target_checkboxes:
-            checks[index] = checkbox.isChecked()
-        marker_fields = {
-            47: "stand_location_suggestions", 51: "stand_surface_notes", 54: "material_missing",
-            55: "material_notes", 58: "promotion_missing", 59: "promotion_distributed",
-            60: "promotion_notes", 67: "personnel_missing", 72: "support_suggestions",
-        }
-        for index, key in marker_fields.items():
-            checks[index] = bool(str(result.get(key, "") or "").strip())
-        result["checkboxes"] = checks
-        return result
-
-
-class TutorialOverlay(QWidget):
-    """Interactieve rondleiding die het besproken onderdeel in EventHub uitlicht."""
-
-    def __init__(self, host: QWidget, steps: list[dict], finished_callback):
-        super().__init__(host)
-        self.host = host
-        self.steps = steps
-        self.finished_callback = finished_callback
-        self.step_index = 0
-        self._closing = False
-        self._last_target_geometry = None
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
-        dark_mode = bool(getattr(host, "dark_mode_enabled", False))
-        card_background = "#171b24" if dark_mode else "#ffffff"
-        card_text = "#f3f6fb" if dark_mode else "#172235"
-        card_muted = "#b7c1d0" if dark_mode else "#637187"
-        secondary_background = "#252c38" if dark_mode else "#eef3f9"
-        secondary_border = "#4b586b" if dark_mode else "#d8e0eb"
-
-        self.card = QFrame(self)
-        self.card.setObjectName("tutorialCard")
-        self.card.setStyleSheet(
-            f"QFrame#tutorialCard {{ background: {card_background}; border: 2px solid #91e8ba; border-radius: 12px; }}"
-            f"QFrame#tutorialCard QLabel {{ background: transparent; color: {card_text}; }}"
-            f"QLabel#tutorialCounter {{ color: {card_muted}; font-size: 9pt; }}"
-            "QLabel#tutorialTitle { color: #91e8ba; font-size: 16pt; font-weight: 700; }"
-            f"QPushButton#tutorialSecondary {{ background: {secondary_background}; color: {card_text}; "
-            f"border: 1px solid {secondary_border}; border-radius: 7px; padding: 8px 12px; }}"
-            "QPushButton#tutorialPrimary { background: #6c2cff; color: #ffffff; border: 1px solid #6c2cff; "
-            "border-radius: 7px; padding: 8px 12px; font-weight: 700; }"
-        )
-        card_layout = QVBoxLayout(self.card)
-        card_layout.setContentsMargins(20, 17, 20, 17)
-        card_layout.setSpacing(9)
-        self.counter = QLabel()
-        self.counter.setObjectName("tutorialCounter")
-        self.title = QLabel()
-        self.title.setObjectName("tutorialTitle")
-        self.body = QLabel()
-        self.body.setWordWrap(True)
-        self.body.setTextFormat(Qt.TextFormat.RichText)
-        card_layout.addWidget(self.counter)
-        card_layout.addWidget(self.title)
-        card_layout.addWidget(self.body)
-
-        actions = QHBoxLayout()
-        self.previous_button = QPushButton("Vorige")
-        self.previous_button.setObjectName("tutorialSecondary")
-        self.previous_button.clicked.connect(self.previous_step)
-        skip_button = QPushButton("Rondleiding sluiten")
-        skip_button.setObjectName("tutorialSecondary")
-        skip_button.clicked.connect(lambda: self.finish(False))
-        self.next_button = QPushButton("Volgende")
-        self.next_button.setObjectName("tutorialPrimary")
-        self.next_button.clicked.connect(self.next_step)
-        actions.addWidget(self.previous_button)
-        actions.addWidget(skip_button)
-        actions.addStretch()
-        actions.addWidget(self.next_button)
-        card_layout.addLayout(actions)
-
-        self.host.installEventFilter(self)
-        self.tracking_timer = QTimer(self)
-        self.tracking_timer.setInterval(80)
-        self.tracking_timer.timeout.connect(self._track_target)
-        self.tracking_timer.start()
-        self.setGeometry(self.host.rect())
-        self.show()
-        self.raise_()
-        self.setFocus()
-        self.activate_step(0)
-
-    def eventFilter(self, watched, event):
-        if watched is self.host and event.type() in (QEvent.Type.Resize, QEvent.Type.Move, QEvent.Type.LayoutRequest):
-            self.setGeometry(self.host.rect())
-            self._schedule_reposition()
-        return super().eventFilter(watched, event)
-
-    def _resolve_target(self):
-        if not self.steps:
-            return None, None
-        target_factory = self.steps[self.step_index].get("target")
-        try:
-            resolved = target_factory() if callable(target_factory) else target_factory
-        except (AttributeError, RuntimeError, TypeError, KeyError):
-            # Een rondleidingstarget mag de applicatie nooit laten crashen.
-            # Als een UI-element in een latere versie is verplaatst of verwijderd,
-            # toont de stap gewoon zonder spotlight.
-            return None, None
-        if isinstance(resolved, tuple) and len(resolved) == 2:
-            target, local_rect = resolved
-        else:
-            target, local_rect = resolved, None
-        if not isinstance(target, QWidget):
-            return None, None
-        return target, local_rect if isinstance(local_rect, QRect) else target.rect()
-
-    def _target_rect(self):
-        target, local_rect = self._resolve_target()
-        if not isinstance(target, QWidget) or not target.isVisible():
-            return None
-        try:
-            # Screen coordinates avoid rounding/offset errors between a
-            # QMainWindow, its central widget, stacked pages and scroll areas.
-            top_left = self.mapFromGlobal(target.mapToGlobal(local_rect.topLeft()))
-        except RuntimeError:
-            return None
-        rect = QRect(top_left, local_rect.size()).adjusted(-7, -7, 7, 7)
-        # Clip against every visible parent. This matters especially inside
-        # QScrollArea viewports: without it the spotlight followed the widget's
-        # theoretical position instead of the pixels actually on screen.
-        ancestor = target.parentWidget()
-        while ancestor is not None and ancestor is not self.host:
-            if not ancestor.isVisible():
-                return None
-            try:
-                ancestor_top_left = self.mapFromGlobal(ancestor.mapToGlobal(QPoint(0, 0)))
-                ancestor_rect = ancestor.rect().translated(ancestor_top_left)
-                rect = rect.intersected(ancestor_rect)
-            except RuntimeError:
-                return None
-            ancestor = ancestor.parentWidget()
-        return rect.intersected(self.rect().adjusted(8, 8, -8, -8))
-
-    def _target_widget(self):
-        target, _local_rect = self._resolve_target()
-        return target
-
-    def _ensure_target_visible(self):
-        target = self._target_widget()
-        if target is None:
-            return
-        ancestor = target.parentWidget()
-        while ancestor is not None:
-            if isinstance(ancestor, QScrollArea):
-                try:
-                    ancestor.ensureWidgetVisible(target, 24, 24)
-                except RuntimeError:
-                    pass
-                break
-            ancestor = ancestor.parentWidget()
-
-    def _schedule_reposition(self):
-        for delay in (0, 60, 180):
-            QTimer.singleShot(delay, self._stabilize_target)
-
-    def _stabilize_target(self):
-        if self._closing:
-            return
-        self._ensure_target_visible()
-        self._track_target()
-
-    def _track_target(self):
-        if self._closing or not self.isVisible():
-            return
-        if self.geometry() != self.host.rect():
-            self.setGeometry(self.host.rect())
-        rect = self._target_rect()
-        geometry = (rect.x(), rect.y(), rect.width(), rect.height()) if rect and rect.isValid() else None
-        if geometry != self._last_target_geometry:
-            self._last_target_geometry = geometry
-            self._position_card()
-        else:
-            self.update()
-
-    def paintEvent(self, event):
-        del event
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        shade = QPainterPath()
-        shade.addRect(QRectF(self.rect()))
-        target_rect = self._target_rect()
-        if target_rect and target_rect.isValid():
-            opening = QPainterPath()
-            opening.addRoundedRect(QRectF(target_rect), 9, 9)
-            shade = shade.subtracted(opening)
-        painter.fillPath(shade, QColor(20, 13, 25, 175))
-        if target_rect and target_rect.isValid():
-            painter.setPen(QPen(QColor("#91e8ba"), 4))
-            painter.drawRoundedRect(QRectF(target_rect), 9, 9)
-
-    def activate_step(self, index: int):
-        if not self.steps:
-            self.finish(False)
-            return
-        self.step_index = max(0, min(index, len(self.steps) - 1))
-        step = self.steps[self.step_index]
-        prepare = step.get("prepare")
-        if callable(prepare):
-            prepare()
-        self._last_target_geometry = None
-        self.counter.setText(f"Stap {self.step_index + 1} van {len(self.steps)}")
-        self.title.setText(str(step.get("title", "Rondleiding")))
-        self.body.setText(str(step.get("body", "")))
-        self.previous_button.setEnabled(self.step_index > 0)
-        self.next_button.setText("Rondleiding afronden" if self.step_index == len(self.steps) - 1 else "Volgende")
-        self._ensure_target_visible()
-        self._schedule_reposition()
-        self.update()
-
-    def _position_card(self):
-        if self._closing:
-            return
-        width = min(480, max(360, self.width() - 70))
-        self.card.setFixedWidth(width)
-        self.card.adjustSize()
-        card_width = self.card.width()
-        card_height = self.card.height()
-        target = self._target_rect()
-        if target and target.isValid():
-            x = max(18, min(self.width() - card_width - 18, target.center().x() - card_width // 2))
-            if target.bottom() + 18 + card_height <= self.height() - 15:
-                y = target.bottom() + 18
-            elif target.top() - 18 - card_height >= 15:
-                y = target.top() - 18 - card_height
-            else:
-                y = max(18, (self.height() - card_height) // 2)
-        else:
-            x = max(18, (self.width() - card_width) // 2)
-            y = max(18, (self.height() - card_height) // 2)
-        self.card.move(x, y)
-        self.card.raise_()
-        self.update()
-
-    def next_step(self):
-        if self.step_index >= len(self.steps) - 1:
-            self.finish(True)
-        else:
-            self.activate_step(self.step_index + 1)
-
-    def previous_step(self):
-        if self.step_index > 0:
-            self.activate_step(self.step_index - 1)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Escape:
-            self.finish(False)
-            return
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Right):
-            self.next_step()
-            return
-        if event.key() == Qt.Key.Key_Left:
-            self.previous_step()
-            return
-        super().keyPressEvent(event)
-
-    def finish(self, completed: bool):
-        if self._closing:
-            return
-        self._closing = True
-        self.tracking_timer.stop()
-        self.host.removeEventFilter(self)
-        self.hide()
-        self.deleteLater()
-        self.finished_callback(bool(completed))
-
-
-class LiveCheckinDialog(QDialog):
-    """Native EventHub-client voor een bestaande Event Control-sessie."""
-
-    def __init__(self, parent=None, default_url: str = ""):
-        super().__init__(parent)
-        self.base_url = ""
-        self.client_id = ""
-        self.participants = []
-        self.live_settings = QSettings("Cohentra Digital", "EventHub Live Client")
-        self.offline_queue = json.loads(self.live_settings.value("offline_queue", "[]") or "[]")
-        self.session_frozen = False
-        self.checkout_required = False
-        self.checkin_stopped = False
-        self._stop_notice_shown = False
-        self.setWindowTitle("Event Control — verbinden")
-        _fit_dialog_to_screen(self, 980, 680, 700, 480)
-        layout = QVBoxLayout(self)
-
-        connection_box = QGroupBox("Verbinden met live sessie")
-        connection_layout = QGridLayout(connection_box)
-        self.live_url_input = QLineEdit(default_url)
-        self.live_url_input.setPlaceholderText("http://192.168.1.25:8080")
-        self.live_client_name_input = QLineEdit()
-        self.live_client_name_input.setPlaceholderText("Bijvoorbeeld: Balie ingang")
-        self.live_event_code_input = QLineEdit()
-        self.live_event_code_input.setPlaceholderText("4 cijfers")
-        self.live_event_code_input.setMaxLength(4)
-        self.live_event_code_input.setInputMask("0000")
-        self.live_connect_button = QPushButton("Verbinden")
-        self.live_connect_button.setObjectName("primaryButton")
-        self.live_connect_button.clicked.connect(self.connect_to_session)
-        self.live_discover_button = QPushButton("Hubs zoeken")
-        self.live_discover_button.setObjectName("secondaryButton")
-        self.live_discover_button.clicked.connect(self.discover_hubs)
-        connection_layout.addWidget(QLabel("Serveradres:"), 0, 0)
-        connection_layout.addWidget(self.live_url_input, 0, 1)
-        connection_layout.addWidget(QLabel("Naam apparaat/balie:"), 1, 0)
-        connection_layout.addWidget(self.live_client_name_input, 1, 1)
-        connection_layout.addWidget(QLabel("Sessiecode:"), 2, 0)
-        connection_layout.addWidget(self.live_event_code_input, 2, 1)
-        connection_layout.addWidget(self.live_connect_button, 0, 2, 3, 1)
-        connection_layout.addWidget(self.live_discover_button, 3, 1)
-        layout.addWidget(connection_box)
-
-        status_row = QHBoxLayout()
-        self.live_connection_status = QLabel("Niet verbonden")
-        self.live_connection_status.setObjectName("statusLabel")
-        self.live_search_input = QLineEdit()
-        self.live_search_input.setPlaceholderText("Zoek op naam, geboortedatum of geboorteplaats…")
-        self.live_search_input.setClearButtonEnabled(True)
-        self.live_search_input.setEnabled(False)
-        self.live_search_timer = QTimer(self)
-        self.live_search_timer.setSingleShot(True)
-        self.live_search_timer.setInterval(250)
-        self.live_search_timer.timeout.connect(self.refresh_participants)
-        self.live_search_input.textChanged.connect(lambda *_: self.live_search_timer.start())
-        refresh_button = QPushButton("Vernieuwen")
-        refresh_button.setObjectName("secondaryButton")
-        refresh_button.clicked.connect(self.refresh_participants)
-        status_row.addWidget(self.live_connection_status)
-        status_row.addWidget(self.live_search_input, 1)
-        status_row.addWidget(refresh_button)
-        layout.addLayout(status_row)
-
-        self.live_table = QTableWidget()
-        headers = ["Naam", "Geboortedatum", "Geboorteplaats", "Status"]
-        self.live_table.setColumnCount(len(headers))
-        self.live_table.setHorizontalHeaderLabels(headers)
-        self.live_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.live_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.live_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.live_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.live_table.cellDoubleClicked.connect(lambda *_: self.toggle_selected_participant())
-        layout.addWidget(self.live_table, 1)
-
-        actions = QHBoxLayout()
-        self.live_checkin_button = QPushButton("Inchecken")
-        self.live_checkin_button.setObjectName("primaryButton")
-        self.live_checkin_button.clicked.connect(lambda: self.set_selected_presence(True))
-        self.live_checkout_button = QPushButton("Ongedaan maken")
-        self.live_checkout_button.setObjectName("secondaryButton")
-        self.live_checkout_button.clicked.connect(lambda: self.set_selected_presence(False))
-        close_button = QPushButton("Sluiten")
-        close_button.clicked.connect(self.close)
-        self.live_checkin_button.setEnabled(False)
-        self.live_checkout_button.setEnabled(False)
-        actions.addWidget(self.live_checkin_button)
-        actions.addWidget(self.live_checkout_button)
-        actions.addStretch()
-        actions.addWidget(close_button)
-        layout.addLayout(actions)
-
-        self.heartbeat_timer = QTimer(self)
-        self.heartbeat_timer.setInterval(20000)
-        self.heartbeat_timer.timeout.connect(self.send_heartbeat)
-        self.sync_timer = QTimer(self)
-        self.sync_timer.setInterval(5000)
-        self.sync_timer.timeout.connect(self.sync_offline_queue)
-
-    def discover_hubs(self):
-        self.live_connection_status.setText("Hubs zoeken op het lokale netwerk…")
-        QApplication.processEvents()
-        try:
-            from server.network import discover_hubs
-            hubs = discover_hubs()
-        except Exception as exc:
-            QMessageBox.warning(self, "Hubdetectie mislukt", str(exc)); return
-        if not hubs:
-            QMessageBox.information(self, "Geen hubs gevonden", "Geen actieve EventHub-hub gevonden op dit netwerk.")
-            self.live_connection_status.setText("Niet verbonden"); return
-        labels = [f"{hub.get('name', 'EventHub-sessie')} — {hub['url']}" for hub in hubs]
-        selected, ok = QInputDialog.getItem(self, "Hub kiezen", "Actieve hubs:", labels, 0, False)
-        if ok:
-            self.live_url_input.setText(hubs[labels.index(selected)]["url"])
-        self.live_connection_status.setText("Hub gevonden — vul de sessiecode in.")
-
-    def _json_request(self, path: str, method: str = "GET", payload=None, operation_id: str = "",
-                      operation_created_at: str = ""):
-        url = self.base_url.rstrip("/") + path
-        data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        headers = {"Accept": "application/json"}
-        if data is not None:
-            headers["Content-Type"] = "application/json"
-        if self.client_id:
-            headers["X-Client-Id"] = self.client_id
-        if operation_id:
-            headers["X-Operation-Id"] = operation_id
-        if operation_created_at:
-            headers["X-Operation-Created-At"] = operation_created_at
-        request = urllib.request.Request(url, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=4) as response:
-                body = response.read().decode("utf-8")
-                return json.loads(body) if body else {}
-        except urllib.error.HTTPError as exc:
-            try:
-                message = json.loads(exc.read().decode("utf-8")).get("error", str(exc))
-            except Exception:
-                message = str(exc)
-            raise RuntimeError(message) from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError("De server is niet bereikbaar. Controleer adres, netwerk en firewall.") from exc
-
-    def connect_to_session(self):
-        base_url = self.live_url_input.text().strip().rstrip("/")
-        if not base_url.startswith(("http://", "https://")):
-            base_url = "http://" + base_url
-        parsed = urllib.parse.urlparse(base_url)
-        if not parsed.hostname:
-            QMessageBox.information(self, "Serveradres ontbreekt", "Vul het netwerkadres uit EventHub Server in.")
-            return
-        code = self.live_event_code_input.text().replace(" ", "").strip()
-        if not re.fullmatch(r"\d{4}", code):
-            QMessageBox.information(self, "Sessiecode controleren", "Vul de viercijferige sessiecode in.")
-            return
-        self.base_url = base_url
-        try:
-            client = self._json_request(
-                "/api/clients/register",
-                "POST",
-                {
-                    "client_name": self.live_client_name_input.text().strip() or "EventHub Desktop",
-                    "client_type": "EventHub Desktop",
-                    "role": "checkin",
-                    "event_code": code,
-                },
-            )
-        except RuntimeError as exc:
-            QMessageBox.warning(self, "Verbinden mislukt", str(exc))
-            return
-        self.client_id = str(client.get("id", ""))
-        self.live_connection_status.setText(f"● Verbonden als {client.get('client_name', 'EventHub Desktop')}")
-        for widget in (self.live_url_input, self.live_client_name_input, self.live_event_code_input, self.live_connect_button):
-            widget.setEnabled(False)
-        self.live_search_input.setEnabled(True)
-        self.live_checkin_button.setEnabled(True)
-        self.live_checkout_button.setEnabled(True)
-        self.heartbeat_timer.start()
-        self.sync_timer.start()
-        self.refresh_participants()
-
-    def refresh_participants(self):
-        if not self.client_id:
-            return
-        query = urllib.parse.quote(self.live_search_input.text().strip())
-        try:
-            self.participants = self._json_request(f"/api/participants/search?q={query}&limit=1000")
-        except RuntimeError as exc:
-            self.live_connection_status.setText(f"Verbinding onderbroken: {exc}")
-            cached = self.live_settings.value("participant_cache", "")
-            if cached:
-                try: self.participants = json.loads(cached)
-                except ValueError: pass
-                self._render_participants()
-            return
-        self.live_settings.setValue("participant_cache", json.dumps(self.participants))
-        self._render_participants()
-
-    def _render_participants(self):
-        query = self.live_search_input.text().strip().lower()
-        if query:
-            self.participants = [p for p in self.participants if query in " ".join(str(p.get(k, "")) for k in
-                                 ("voornaam", "tussenvoegsel", "achternaam", "geboortedatum", "geboorteplaats")).lower()]
-        def sort_key(participant):
-            return tuple(normalize(participant.get(field, "")) for field in
-                         ("achternaam", "tussenvoegsel", "voornaam"))
-        self.participants = sorted(self.participants, key=sort_key)
-        self.live_table.setRowCount(len(self.participants))
-        for row_index, participant in enumerate(self.participants):
-            surname = str(participant.get("achternaam", "") or "").strip()
-            given = " ".join(filter(None, [str(participant.get("voornaam", "") or "").strip(),
-                                            str(participant.get("tussenvoegsel", "") or "").strip()]))
-            display_name = f"{surname}, {given}" if surname and given else surname or given
-            values = [
-                display_name, participant.get("geboortedatum", ""), participant.get("geboorteplaats", ""),
-                {"present": "Binnen", "checked_out": "Uitgecheckt", "absent": "Afwezig"}.get(
-                    participant.get("attendance_status"), "Nog niet ingecheckt"),
-            ]
-            for column, value in enumerate(values):
-                item = QTableWidgetItem(str(value or ""))
-                item.setData(Qt.ItemDataRole.UserRole, participant.get("id", ""))
-                self.live_table.setItem(row_index, column, item)
-
-    def _selected_participant(self):
-        row = self.live_table.currentRow()
-        if row < 0 or row >= len(self.participants):
-            return None
-        return self.participants[row]
-
-    def set_selected_presence(self, present: bool):
-        participant = self._selected_participant()
-        if not participant:
-            QMessageBox.information(self, "Geen bezoeker gekozen", "Selecteer eerst een bezoeker.")
-            return
-        status = participant.get("attendance_status", "not_checked_in")
-        if present and status in {"checked_out", "absent"}:
-            QMessageBox.information(self, "Niet beschikbaar", "Deze bezoeker kan in deze fase niet opnieuw worden ingecheckt.")
-            return
-        action = "checkin" if present else ("checkout" if self.checkout_required else "undo")
-        if present and self.checkin_stopped:
-            QMessageBox.information(self, "Inchecken beëindigd", "Het inchecken is beëindigd door de beheerder.")
-            return
-        if self.session_frozen:
-            QMessageBox.information(self, "Inchecken gepauzeerd", "De beheerder heeft de sessie tijdelijk bevroren.")
-            return
-        operation_id = str(uuid.uuid4())
-        try:
-            self._json_request(f"/api/participants/{participant['id']}/{action}", "POST", {}, operation_id)
-        except RuntimeError as exc:
-            if "gepauzeerd" in str(exc).lower():
-                self.session_frozen = True
-                QMessageBox.information(self, "Inchecken gepauzeerd", str(exc)); return
-            if "beëindigd" in str(exc).lower():
-                self.checkin_stopped = True
-                if not self._stop_notice_shown:
-                    self._stop_notice_shown = True
-                    QMessageBox.information(self, "Inchecken beëindigd", str(exc))
-                self.live_connection_status.setText("● Verbonden · inchecken beëindigd")
-                return
-            self.offline_queue.append({"id": operation_id, "participant_id": participant["id"],
-                                       "action": action, "created_at": datetime.now().isoformat()})
-            self.live_settings.setValue("offline_queue", json.dumps(self.offline_queue))
-            participant["attendance_status"] = "present" if present else ("checked_out" if self.checkout_required else "not_checked_in")
-            self.live_connection_status.setText(f"● Offline · {len(self.offline_queue)} actie(s) wachten")
-            self._render_participants()
-            return
-        self.refresh_participants()
-
-    def sync_offline_queue(self):
-        if not self.client_id:
-            return
-        try:
-            state = self._json_request("/api/session/state")
-            self.session_frozen = bool(state.get("frozen"))
-            self.checkout_required = bool(state.get("checkout_required"))
-            self.checkin_stopped = bool(state.get("checkin_stopped"))
-            if not self.checkin_stopped:
-                self._stop_notice_shown = False
-            self.live_checkout_button.setText("Uitchecken" if self.checkout_required else "Ongedaan maken")
-            if self.checkin_stopped and not self._stop_notice_shown:
-                self._stop_notice_shown = True
-                QMessageBox.information(self, "Inchecken beëindigd",
-                    "Het inchecken is beëindigd door de beheerder." +
-                    (f"\n\nReden: {state.get('checkin_stopped_reason')}" if state.get("checkin_stopped_reason") else ""))
-            if self.session_frozen:
-                self.live_connection_status.setText("⏸ Inchecken gepauzeerd" + (f" — {state.get('reason')}" if state.get("reason") else "")); return
-            while self.offline_queue:
-                item = self.offline_queue[0]
-                if item.get("conflict"):
-                    self.live_connection_status.setText("● Conflict · controle door beheerder vereist")
-                    return
-                self._json_request(f"/api/participants/{item['participant_id']}/{item['action']}",
-                                   "POST", {}, item["id"], item.get("created_at", ""))
-                self.offline_queue.pop(0)
-                self.live_settings.setValue("offline_queue", json.dumps(self.offline_queue))
-            self.live_connection_status.setText("● Verbonden · alles bijgewerkt")
-        except RuntimeError as exc:
-            if ("conflict" in str(exc).lower() or "beëindigd" in str(exc).lower()) and self.offline_queue:
-                self.offline_queue[0]["conflict"] = True
-                self.live_settings.setValue("offline_queue", json.dumps(self.offline_queue))
-                self.live_connection_status.setText("● Conflict · controle door beheerder vereist")
-                return
-            if self.offline_queue:
-                self.live_connection_status.setText(f"● Offline · {len(self.offline_queue)} actie(s) wachten")
-
-    def toggle_selected_participant(self):
-        participant = self._selected_participant()
-        if participant:
-            self.set_selected_presence(participant.get("attendance_status") != "present")
-
-    def send_heartbeat(self):
-        if not self.client_id:
-            return
-        try:
-            self._json_request(f"/api/clients/{self.client_id}/heartbeat", "POST", {})
-        except RuntimeError:
-            self.live_connection_status.setText("Verbinding met de live sessie is onderbroken of door de beheerder beëindigd.")
-
-    def closeEvent(self, event: QCloseEvent):
-        self.heartbeat_timer.stop()
-        self.sync_timer.stop()
-        if self.client_id:
-            try:
-                self._json_request(f"/api/clients/{self.client_id}", "DELETE")
-            except RuntimeError:
-                pass
-        super().closeEvent(event)
-
-
-class BezoekerslijstWindow(QMainWindow):
+class BezoekerslijstWindow(EventBoardMixin, QMainWindow):
     def __init__(self, progress_callback=None):
         super().__init__()
         self._progress_callback = progress_callback or (lambda value, message: None)
@@ -3300,6 +588,8 @@ class BezoekerslijstWindow(QMainWindow):
         self.active_event_id = ""
         self.project_path: Path | None = None
         self.dirty = False
+        self.presence_changes_pending = False
+        self._presence_render_signature = None
         self.loading_tables = False
         self._identifier_lookup: dict[str, dict] = {}
         # Keep the legacy QSettings namespace so existing profiles/preferences
@@ -3312,6 +602,10 @@ class BezoekerslijstWindow(QMainWindow):
         self._autosave_error_reported = False
         self._live_server_windows = []
         self._rudder_bridge = None
+        # Zo kan de Browserassistent de presentie opvragen vanuit Rudder zelf,
+        # in plaats van dat jij een bestand moet aanwijzen.
+        self.rudder_attendance_service = RudderAttendanceService(self)
+        self.rudder_attendance_service.requested.connect(self._serve_rudder_attendance)
         self._allow_application_exit = False
         self._tray_icon = None
         self.event_focus_mode = True
@@ -3338,6 +632,7 @@ class BezoekerslijstWindow(QMainWindow):
         self._setup_system_tray()
         self._progress_callback(72, "Vormgeving en tabbladen laden…")
         self._apply_style()
+        self._load_analysis(self.current_analysis)
         self._render_all()
         self._progress_callback(94, "Gegevenscontroles voorbereiden…")
 
@@ -3393,7 +688,8 @@ class BezoekerslijstWindow(QMainWindow):
         settings_menu = QMenu(self.settings_button)
         settings_menu.addAction("Algemene instellingen", self.show_application_settings)
         settings_menu.addAction("Standaardtaken", self.show_standard_tasks_page)
-        settings_menu.addAction("Evenementtemplates beheren", self.manage_project_templates)
+        settings_menu.addAction("Templatebeheer", self.manage_project_templates)
+        settings_menu.addAction("WhatsApp-sjablonen", self.manage_whatsapp_templates)
         settings_menu.addSeparator()
         settings_menu.addAction("Opslaglocaties", self.show_storage_locations)
         settings_menu.addAction("Herstelbestanden beheren", self.manage_recovery_files)
@@ -3453,6 +749,11 @@ class BezoekerslijstWindow(QMainWindow):
         event_heading.addWidget(self.event_title_label)
         event_heading.addWidget(self.event_meta_label)
         event_title_row.addLayout(event_heading, 1)
+        self.switch_event_button = QPushButton("Ander evenement")
+        self.switch_event_button.setObjectName("secondaryButton")
+        self.switch_event_button.setToolTip("Snel naar een ander evenementdossier")
+        self.switch_event_button.clicked.connect(self.switch_event)
+        event_title_row.addWidget(self.switch_event_button, 0, Qt.AlignmentFlag.AlignTop)
         self.event_status_badge = QLabel("Status onbekend")
         self.event_status_badge.setObjectName("eventStatusBadge")
         event_title_row.addWidget(self.event_status_badge, 0, Qt.AlignmentFlag.AlignTop)
@@ -3499,6 +800,13 @@ class BezoekerslijstWindow(QMainWindow):
         self.edit_event_button.setObjectName("secondaryButton")
         self.edit_event_button.clicked.connect(self.edit_active_event)
         overview_heading_row.addWidget(self.edit_event_button, 0, Qt.AlignmentFlag.AlignBottom)
+        template_actions = QPushButton("•••")
+        template_actions.setObjectName("secondaryButton")
+        template_actions.setToolTip("Meer acties")
+        template_menu = QMenu(template_actions)
+        template_menu.addAction("Opslaan als template", self.save_active_event_as_template)
+        template_actions.setMenu(template_menu)
+        overview_heading_row.addWidget(template_actions, 0, Qt.AlignmentFlag.AlignBottom)
         event_overview_layout.addLayout(overview_heading_row)
 
         details_card = QFrame()
@@ -3549,9 +857,17 @@ class BezoekerslijstWindow(QMainWindow):
         self.callback_table.viewport().installEventFilter(self)
         self.access_table = self._new_table(self._presence_headers())
         self.access_table.setObjectName("presence")
+        self.access_table.installEventFilter(self)
+        self.access_table.viewport().installEventFilter(self)
+        # Vier standen passen niet in een vinkje; ze worden per rij gekozen.
+        self._attach_row_menu(self.access_table, [
+            (f"Aanwezigheid: {ATTENDANCE_LABELS[status]}",
+             lambda status=status: self._set_presence_status(status))
+            for status in ATTENDANCE_STATUSES
+        ])
         self.participant_table.itemChanged.connect(self._participant_changed)
         self.callback_table.itemChanged.connect(self._callback_changed)
-        self.access_table.itemChanged.connect(self._access_changed)
+        self.access_table.itemChanged.connect(self._presence_changed)
 
         participant_widget = QWidget()
         self.participant_tab = participant_widget
@@ -3572,26 +888,37 @@ class BezoekerslijstWindow(QMainWindow):
         self.participant_include_introducees.setChecked(True)
         self.settings.setValue("participants_include_introducees", True)
         self.participant_include_introducees.stateChanged.connect(self._participant_scope_changed)
-        participant_import_button = QPushButton("Bezoekerslijst importeren")
-        participant_import_button.setObjectName("primaryButton")
-        participant_import_button.setToolTip("Voeg één of meer Excel-aanmeldlijsten toe aan dit evenement.")
-        participant_import_button.clicked.connect(self.import_excel)
-        participant_columns_button = self._columns_button("participants")
-        participant_more_button = QPushButton("•••  Meer acties")
-        participant_more_button.setObjectName("secondaryButton")
-        participant_more_menu = QMenu(participant_more_button)
+        self.participant_import_button = QPushButton("Bezoekerslijst importeren")
+        self.participant_import_button.setObjectName("primaryButton")
+        self.participant_import_button.setToolTip("Voeg één of meer Excel-aanmeldlijsten toe aan dit evenement.")
+        self.participant_import_button.clicked.connect(self.import_excel)
+        self.participant_columns_button = self._columns_button("participants")
+        self.participant_more_button = QPushButton("•••  Meer acties")
+        self.participant_more_button.setObjectName("secondaryButton")
+        participant_more_menu = QMenu(self.participant_more_button)
         participant_excel_action = participant_more_menu.addAction("Excel exporteren")
         participant_excel_action.triggered.connect(self.export_participant_list)
         self.participant_preview_action = participant_more_menu.addAction("Afdrukvoorbeeld")
         self.participant_preview_action.triggered.connect(self.preview_participant_list)
         participant_pdf_action = participant_more_menu.addAction("Exporteren als PDF")
         participant_pdf_action.triggered.connect(self.export_participant_pdf)
-        participant_more_button.setMenu(participant_more_menu)
+        participant_more_menu.addSeparator()
+        participant_clear_action = participant_more_menu.addAction("Bezoekerslijst(en) wissen")
+        participant_clear_action.setToolTip(
+            "Koppel alle bezoekers los van dit evenement, bijvoorbeeld om de aanmeldlijsten opnieuw in te lezen."
+        )
+        participant_clear_action.triggered.connect(self.clear_event_visitor_lists)
+        self.participant_more_button.setMenu(participant_more_menu)
         participant_top.addWidget(self.participant_include_introducees)
-        participant_top.addWidget(participant_import_button)
-        participant_top.addWidget(participant_columns_button)
-        participant_top.addWidget(participant_more_button)
+        participant_top.addWidget(self.participant_import_button)
+        participant_top.addWidget(self.participant_columns_button)
+        participant_top.addWidget(self.participant_more_button)
         participant_layout.addLayout(participant_top)
+        self.participant_history_notice = QLabel("Geanonimiseerd — persoonsgegevens zijn verwijderd. Historische cijfers vindt u bij Statistieken.")
+        self.participant_history_notice.setObjectName("statusLabel")
+        self.participant_history_notice.setWordWrap(True)
+        self.participant_history_notice.hide()
+        participant_layout.addWidget(self.participant_history_notice)
         participant_layout.addWidget(self.participant_table, 1, Qt.AlignmentFlag.AlignLeft)
         # Houd de totale tabelbreedte dynamisch, maar laat hem nooit smaller
         # worden dan de beschikbare werkruimte wanneer de zichtbare kolommen
@@ -3616,11 +943,20 @@ class BezoekerslijstWindow(QMainWindow):
         callback_title_box.addWidget(callback_subtitle)
         callback_heading.addLayout(callback_title_box, 1)
         callback_heading.addWidget(QLabel("Evenement:"))
-        self.after_sales_event_combo = QComboBox()
-        self.after_sales_event_combo.setMinimumWidth(280)
-        self.after_sales_event_combo.currentIndexChanged.connect(self._after_sales_event_changed)
+        self.after_sales_event_combo = EventPickerButton(allow_none=True)
+        self.after_sales_event_combo.set_registration_counter(self._registration_lines)
+        self.after_sales_event_combo.setMinimumWidth(320)
+        self.after_sales_event_combo.changed.connect(self._after_sales_event_changed)
         callback_heading.addWidget(self.after_sales_event_combo)
         callback_layout.addLayout(callback_heading)
+
+        self.after_sales_context_hint = QLabel(
+            "Selecteer eerst een evenement om After sales te gebruiken."
+        )
+        self.after_sales_context_hint.setObjectName("statusLabel")
+        self.after_sales_context_hint.setWordWrap(True)
+        self.after_sales_context_hint.setVisible(False)
+        callback_layout.addWidget(self.after_sales_context_hint)
 
         after_sales_cards = QGridLayout()
         after_sales_cards.setSpacing(10)
@@ -3639,9 +975,10 @@ class BezoekerslijstWindow(QMainWindow):
         self.callback_search_box.setClearButtonEnabled(True)
         self.callback_search_box.setMinimumWidth(300)
         self.callback_search_box.textChanged.connect(self._filter_callbacks)
-        self.callback_status_filter = QComboBox()
+        self.callback_status_filter = ScrollSafeComboBox()
         self.callback_status_filter.addItems(["Alle statussen", "Actie nodig", "Opvolging gepland", "Afgehandeld"])
-        self.callback_status_filter.addItems(CALLBACK_STATUSES)
+        for status in CALLBACK_STATUSES:
+            self.callback_status_filter.addItem(callback_status_icon(status), status)
         self.callback_status_filter.currentTextChanged.connect(self._filter_callbacks)
         callback_columns_button = self._columns_button("callbacks")
         callback_top.addWidget(self.callback_search_box, 1)
@@ -3655,16 +992,16 @@ class BezoekerslijstWindow(QMainWindow):
         self.select_all_callbacks_button.setObjectName("secondaryButton")
         self.select_all_callbacks_button.setToolTip("Selecteert alle kandidaten. Zodra alles geselecteerd is, deselecteert deze knop alles weer.")
         self.select_all_callbacks_button.clicked.connect(self._toggle_all_callbacks)
-        select_callbacks_button = QPushButton("Gefilterde kandidaten selecteren")
-        select_callbacks_button.setObjectName("secondaryButton")
-        select_callbacks_button.setToolTip("Selecteert alleen de kandidaten die na de huidige zoekopdracht/filter zichtbaar zijn.")
-        select_callbacks_button.clicked.connect(self._select_visible_callbacks)
+        self.select_visible_callbacks_button = QPushButton("Gefilterde kandidaten selecteren")
+        self.select_visible_callbacks_button.setObjectName("secondaryButton")
+        self.select_visible_callbacks_button.setToolTip("Selecteert alleen de kandidaten die na de huidige zoekopdracht/filter zichtbaar zijn.")
+        self.select_visible_callbacks_button.clicked.connect(self._select_visible_callbacks)
         self.whatsapp_queue_button = QPushButton("Stuur WhatsApp")
         self.whatsapp_queue_button.setObjectName("primaryButton")
         self.whatsapp_queue_button.clicked.connect(self._start_whatsapp_queue)
         callback_actions.addWidget(self.callback_selection_label, 1)
         callback_actions.addWidget(self.select_all_callbacks_button)
-        callback_actions.addWidget(select_callbacks_button)
+        callback_actions.addWidget(self.select_visible_callbacks_button)
         callback_actions.addWidget(self.whatsapp_queue_button)
         callback_layout.addLayout(callback_actions)
 
@@ -3676,11 +1013,20 @@ class BezoekerslijstWindow(QMainWindow):
 
         self.callback_detail_card = QFrame()
         self.callback_detail_card.setObjectName("eventDetailsCard")
-        self.callback_detail_card.setMinimumWidth(320)
-        self.callback_detail_card.setMaximumWidth(520)
-        detail_layout = QVBoxLayout(self.callback_detail_card)
-        detail_layout.setContentsMargins(16, 12, 16, 12)
-        detail_layout.setSpacing(5)
+        self.callback_detail_card.setMaximumWidth(560)
+        card_layout = QVBoxLayout(self.callback_detail_card)
+        card_layout.setContentsMargins(3, 2, 2, 2)
+        card_layout.setSpacing(0)
+        self.callback_detail_scroll = FitWidthScrollArea(minimum_width=300)
+        self.callback_detail_scroll.setObjectName("callbackDetailScroll")
+        self.callback_detail_scroll.viewport().setObjectName("callbackDetailBody")
+        detail_body = QWidget()
+        detail_body.setObjectName("callbackDetailBody")
+        self.callback_detail_scroll.setWidget(detail_body)
+        card_layout.addWidget(self.callback_detail_scroll)
+        detail_layout = QVBoxLayout(detail_body)
+        detail_layout.setContentsMargins(13, 10, 12, 10)
+        detail_layout.setSpacing(6)
         self.callback_detail_name = QLabel("Selecteer een kandidaat")
         self.callback_detail_name.setObjectName("sectionTitle")
         self.callback_detail_name.setWordWrap(True)
@@ -3696,10 +1042,12 @@ class BezoekerslijstWindow(QMainWindow):
         detail_form.setColumnStretch(0, 0)
         detail_form.setColumnStretch(1, 1)
 
-        self.callback_detail_status = QComboBox()
+        self.callback_detail_status = ScrollSafeComboBox()
         self.callback_detail_status.setMinimumHeight(30)
-        self.callback_detail_status.setMaximumHeight(32)
-        self.callback_detail_status.addItems(CALLBACK_STATUSES)
+        self.callback_detail_status.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.callback_detail_status.setMinimumContentsLength(12)
+        for status in CALLBACK_STATUSES:
+            self.callback_detail_status.addItem(callback_status_icon(status), status)
         self.callback_detail_status.currentTextChanged.connect(self._callback_detail_status_changed)
 
         self.callback_detail_last_contact = QLabel("—")
@@ -3708,8 +1056,8 @@ class BezoekerslijstWindow(QMainWindow):
         self.callback_detail_last_contact.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         self.callback_detail_followup = QLineEdit()
-        self.callback_detail_followup.setMinimumHeight(30)
-        self.callback_detail_followup.setMaximumHeight(32)
+        # Geen vaste hoogte: op een geschaalde Windows-weergave viel de tekst dan half weg.
+        self.callback_detail_followup.setMinimumWidth(120)
         self.callback_detail_followup.setPlaceholderText("dd-mm-jjjj")
         self.callback_detail_followup.editingFinished.connect(self._save_callback_detail)
 
@@ -3729,6 +1077,9 @@ class BezoekerslijstWindow(QMainWindow):
             row_label.setObjectName("hintLabel")
             row_label.setMinimumHeight(30)
             row_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            row_label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+            # Velden houden hun eigen hoogte; bij te weinig ruimte scrolt het paneel.
+            field_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             detail_form.addWidget(row_label, row_index, 0)
             detail_form.addWidget(field_widget, row_index, 1)
 
@@ -3738,10 +1089,12 @@ class BezoekerslijstWindow(QMainWindow):
         detail_layout.addWidget(notes_label)
         self.callback_detail_notes = QPlainTextEdit()
         self.callback_detail_notes.setPlaceholderText("Notities over het contact of de volgende actie…")
-        self.callback_detail_notes.setMinimumHeight(64)
-        self.callback_detail_notes.setMaximumHeight(84)
+        self.callback_detail_notes.setMinimumHeight(
+            max(72, self.callback_detail_notes.fontMetrics().lineSpacing() * 3 + 28)
+        )
         self.callback_detail_notes.textChanged.connect(self._callback_detail_notes_changed)
-        detail_layout.addWidget(self.callback_detail_notes)
+        # De notities vullen de resterende ruimte; is die er niet, dan scrolt het paneel.
+        detail_layout.addWidget(self.callback_detail_notes, 1)
         self.callback_workspace_splitter.addWidget(self.callback_detail_card)
         # Het detailpaneel verschijnt pas zodra er daadwerkelijk een selectie is.
         # Zonder selectie gebruikt de kandidatentabel de volledige werkruimte.
@@ -3779,16 +1132,34 @@ class BezoekerslijstWindow(QMainWindow):
         print_button = QPushButton("Presentielijst afdrukken")
         print_button.setObjectName("primaryButton")
         print_button.clicked.connect(self.print_presence_list)
+        self.presence_save_button = QPushButton("Registratie afronden")
+        self.presence_save_button.setObjectName("primaryButton")
+        self.presence_save_button.setToolTip(
+            "Rond de registratie af. Nog onbeoordeelde deelnemers worden pas na uw bevestiging als afwezig vastgelegd."
+        )
+        self.presence_save_button.clicked.connect(self._finish_presence_registration)
+        self.presence_save_button.setVisible(False)
         presence_columns_button = self._columns_button("presence")
         access_top.addWidget(self.search_box, 1)
         access_top.addWidget(presence_columns_button)
         access_top.addWidget(print_button)
+        access_top.addWidget(self.presence_save_button)
         access_layout.addLayout(access_top)
-        access_hint = QLabel("De zoekopdracht beperkt alleen het scherm. De afdruk gebruikt het geopende evenement, maar negeert de zoektekst.")
+        access_hint = QLabel(
+            "Gebruik de pijltjestoetsen om door de deelnemers te gaan en de spatiebalk om Aanwezig aan of uit te vinken. "
+            "De zoekopdracht beperkt alleen het scherm; de afdruk negeert de zoektekst."
+        )
         access_hint.setObjectName("hintLabel")
         access_layout.addWidget(access_hint)
+        self.presence_live_lock_label = QLabel(
+            "Live registratie is actief voor dit evenement. Aanwezigheid wordt via de livesessie bijgehouden."
+        )
+        self.presence_live_lock_label.setObjectName("statusLabel")
+        self.presence_live_lock_label.setWordWrap(True)
+        self.presence_live_lock_label.setVisible(False)
+        access_layout.addWidget(self.presence_live_lock_label)
         access_layout.addWidget(self.access_table, 1)
-        self.event_control_tabs.insertTab(0, access_widget, "Presentieregistratie")
+        self.event_control_tabs.insertTab(0, access_widget, "Aanwezigheid")
         self.event_control_tabs.setCurrentWidget(access_widget)
 
         self.statistics_cards = {}
@@ -3797,6 +1168,7 @@ class BezoekerslijstWindow(QMainWindow):
             "profile": ("Profiel", "Meest voorkomende profielen en opleidingsrichtingen"),
             "gender": ("Geslacht", "Verdeling op basis van de aangeleverde registratiegegevens"),
             "age": ("Leeftijd", "Automatisch berekend uit de geboortedatum"),
+            "listing": ("Inschrijving", "Via welke aanmeldpagina de deelnemers binnenkwamen"),
         }
         for chart_key, (title, description) in statistics_definitions.items():
             chart_type = str(self.settings.value(
@@ -3817,7 +1189,7 @@ class BezoekerslijstWindow(QMainWindow):
         self.statistics_scope_label = QLabel("Grafieken op basis van reguliere bezoekers.")
         self.statistics_scope_label.setObjectName("hintLabel")
         presence_filter_label = QLabel("Aanwezigheid:")
-        self.statistics_presence_filter = QComboBox()
+        self.statistics_presence_filter = ScrollSafeComboBox()
         for label, value in STATISTICS_PRESENCE_FILTERS:
             self.statistics_presence_filter.addItem(label, value)
         stored_presence_filter = str(self.settings.value("statistics_presence_filter", "all") or "all")
@@ -3827,9 +1199,16 @@ class BezoekerslijstWindow(QMainWindow):
             "Beperk de statistieken tot bijvoorbeeld alleen de no-shows na afloop van het evenement."
         )
         self.statistics_presence_filter.currentIndexChanged.connect(self._statistics_scope_changed)
+        self.statistics_show_all = QCheckBox("Alle waarden tonen")
+        self.statistics_show_all.setChecked(self.settings.value("statistics_show_all", False, type=bool))
+        self.statistics_show_all.setToolTip(
+            "Standaard tonen de grafieken de grootste waarden en gaat de staart samen onder Overig. "
+            "Hiermee komt elke waarde apart in beeld, ook in de export."
+        )
+        self.statistics_show_all.stateChanged.connect(self._statistics_scope_changed)
         self.statistics_include_introducees = QCheckBox("Introducees meetellen in grafieken")
         self.statistics_include_introducees.setChecked(
-            self.settings.value("statistics_include_introducees", False, type=bool)
+            self.settings.value("statistics_include_introducees_v2", True, type=bool)
         )
         self.statistics_include_introducees.stateChanged.connect(self._statistics_scope_changed)
         statistics_export_button = QPushButton("Exporteren")
@@ -3839,6 +1218,7 @@ class BezoekerslijstWindow(QMainWindow):
         statistics_top.addWidget(self.statistics_scope_label, 1)
         statistics_top.addWidget(presence_filter_label)
         statistics_top.addWidget(self.statistics_presence_filter)
+        statistics_top.addWidget(self.statistics_show_all)
         statistics_top.addWidget(self.statistics_include_introducees)
         statistics_top.addWidget(statistics_export_button)
         statistics_tab_layout.addLayout(statistics_top)
@@ -3851,6 +1231,7 @@ class BezoekerslijstWindow(QMainWindow):
         statistics_grid.addWidget(self.statistics_cards["profile"], 0, 1)
         statistics_grid.addWidget(self.statistics_cards["gender"], 1, 0)
         statistics_grid.addWidget(self.statistics_cards["age"], 1, 1)
+        statistics_grid.addWidget(self.statistics_cards["listing"], 2, 0, 1, 2)
 
         # Extra weergave onder de bestaande grafieken; die blijven ongewijzigd.
         crosstab_box = QGroupBox("Opleidingsniveau x profiel")
@@ -3866,16 +1247,45 @@ class BezoekerslijstWindow(QMainWindow):
         crosstab_caption.setObjectName("statisticsCaption")
         crosstab_caption.setWordWrap(True)
         crosstab_layout.addWidget(crosstab_caption)
+
+        crosstab_controls = QHBoxLayout()
+        self.crosstab_view_picker = ScrollSafeComboBox()
+        for label, value in CROSSTAB_VIEWS:
+            self.crosstab_view_picker.addItem(label, value)
+        self._restore_picker(self.crosstab_view_picker, "crosstab_view", "grafiek")
+        self.crosstab_view_picker.setToolTip("Wissel tussen de heatmap en de tabel met exacte getallen.")
+        self.crosstab_view_picker.currentIndexChanged.connect(self._crosstab_options_changed)
+        self.crosstab_value_picker = ScrollSafeComboBox()
+        for label, value in CROSSTAB_VALUES:
+            self.crosstab_value_picker.addItem(label, value)
+        self._restore_picker(self.crosstab_value_picker, "crosstab_value", "aantallen")
+        self.crosstab_value_picker.setToolTip(
+            "Aantallen tellen personen; percentage toont het aandeel binnen een opleidingsniveau."
+        )
+        self.crosstab_value_picker.currentIndexChanged.connect(self._crosstab_options_changed)
+        crosstab_controls.addWidget(QLabel("Weergave:"))
+        crosstab_controls.addWidget(self.crosstab_view_picker)
+        crosstab_controls.addWidget(QLabel("Waarde:"))
+        crosstab_controls.addWidget(self.crosstab_value_picker)
+        crosstab_controls.addStretch()
+        crosstab_layout.addLayout(crosstab_controls)
+
+        self.crosstab_heatmap = CrosstabHeatmap()
         self.crosstab_table = QTableWidget(0, 0)
         self.crosstab_table.setObjectName("dashboardTable")
         self.crosstab_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.crosstab_table.setMinimumHeight(200)
-        crosstab_layout.addWidget(self.crosstab_table)
+        # Beide weergaven tonen dezelfde gegevens; de tabel blijft bereikbaar
+        # voor wie de exacte getallen naast elkaar wil zien.
+        self.crosstab_stack = QStackedWidget()
+        self.crosstab_stack.addWidget(self.crosstab_heatmap)
+        self.crosstab_stack.addWidget(self.crosstab_table)
+        crosstab_layout.addWidget(self.crosstab_stack)
         self.crosstab_note = QLabel("")
         self.crosstab_note.setObjectName("hintLabel")
         self.crosstab_note.setWordWrap(True)
         crosstab_layout.addWidget(self.crosstab_note)
-        statistics_grid.addWidget(crosstab_box, 2, 0, 1, 2)
+        statistics_grid.addWidget(crosstab_box, 3, 0, 1, 2)
         statistics_scroll = QScrollArea()
         statistics_scroll.setWidgetResizable(True)
         statistics_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -3901,6 +1311,12 @@ class BezoekerslijstWindow(QMainWindow):
         self.quality_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.quality_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.quality_table.cellDoubleClicked.connect(lambda *_: self.edit_selected_quality_record())
+        self._attach_row_menu(self.quality_table, [
+            ("Gegevens aanpassen", self.edit_selected_quality_record),
+            (None, None),
+            ("Dubbele inschrijving overslaan", self.skip_duplicate_registration),
+            ("Weer meetellen", self.include_record_again),
+        ])
         quality_layout.addWidget(self.quality_table, 1)
         self.tabs.addTab(quality_tab, "Gegevenscontrole")
 
@@ -4040,10 +1456,8 @@ class BezoekerslijstWindow(QMainWindow):
         file_menu.addAction("Volledige Excel-export", self.export_excel)
         file_menu.addSeparator()
         file_menu.addAction("Recent openen", self.open_recent_project)
-        file_menu.addAction("EventHub-bestanden zoeken", self.search_project_files)
         file_menu.addSeparator()
         file_menu.addAction("Vorige versie herstellen", self.restore_previous_version)
-        file_menu.addAction("Herstelbestanden beheren", self.manage_recovery_files)
         file_button.setMenu(file_menu)
         self.sidebar_layout.addWidget(file_button)
 
@@ -4256,20 +1670,9 @@ class BezoekerslijstWindow(QMainWindow):
         hero_layout.addLayout(hero_actions)
         home_content_layout.addWidget(hero)
 
-        overview_label = QLabel("OPERATIONEEL OVERZICHT")
-        overview_label.setObjectName("eyebrowLabel")
-        home_content_layout.addWidget(overview_label)
-
-        home_cards = QHBoxLayout()
-        home_cards.setSpacing(10)
-        self.home_event_count = self._summary_card("Evenementen", "0", "0 in voorbereiding")
-        self.home_task_count = self._summary_card("Open taken", "0", "0 meldingen actief")
-        self.home_visitor_count = self._summary_card("Bezoekers", "0", "Over alle evenementen")
-        for card in (self.home_event_count[0], self.home_task_count[0], self.home_visitor_count[0]):
-            card.setProperty("dashboardCard", True)
-            home_cards.addWidget(card)
-        home_content_layout.addLayout(home_cards)
-
+        # De tellerbalk met evenementen, open taken en bezoekers is vervallen.
+        # Een totaal over alle evenementen zegt niet welk evenement aandacht
+        # vraagt; dat staat nu op de kaart van het evenement zelf.
         upcoming_box = QGroupBox("Evenementen")
         upcoming_box.setObjectName("dashboardPanel")
         upcoming_box.setMinimumHeight(300)
@@ -4281,10 +1684,10 @@ class BezoekerslijstWindow(QMainWindow):
         self.event_search_box = QLineEdit()
         self.event_search_box.setPlaceholderText("Zoeken op naam, plaats, locatie, soort of datum…")
         self.event_search_box.setClearButtonEnabled(True)
-        self.event_search_box.setMinimumWidth(280)
+        self.event_search_box.setMinimumWidth(220)
         self.event_search_box.textChanged.connect(self._filter_events)
         search_row.addWidget(self.event_search_box, 1)
-        self.event_status_filter = QComboBox()
+        self.event_status_filter = ScrollSafeComboBox()
         self.event_status_filter.addItem("Alle statussen", "")
         self.event_status_filter.addItem("Alleen lopend en gepland", "_open")
         for status in EVENT_STATUSES:
@@ -4294,10 +1697,27 @@ class BezoekerslijstWindow(QMainWindow):
         self.event_status_filter.setCurrentIndex(0)
         self.event_status_filter.currentIndexChanged.connect(self._filter_events)
         search_row.addWidget(self.event_status_filter)
-        sort_caption = QLabel("Sorteren:")
-        sort_caption.setObjectName("hintLabel")
-        search_row.addWidget(sort_caption)
-        self.event_sort_mode = QComboBox()
+        # Dezelfde filters als in het keuzevenster, zodat beide schermen zich
+        # hetzelfde laten bedienen.
+        self.event_type_filter = ScrollSafeComboBox()
+        self.event_type_filter.addItem("Alle soorten", "")
+        for soort in EVENT_TYPES:
+            self.event_type_filter.addItem(soort, soort)
+        self.event_type_filter.currentIndexChanged.connect(self._filter_events)
+        search_row.addWidget(self.event_type_filter)
+        self.event_date_filter = QLineEdit()
+        self.event_date_filter.setPlaceholderText("dd-mm-jjjj")
+        self.event_date_filter.setClearButtonEnabled(True)
+        self.event_date_filter.setMaximumWidth(140)
+        self.event_date_filter.textChanged.connect(self._filter_events)
+        search_row.addWidget(with_date_picker(self.event_date_filter))
+        self.show_archived_events = QCheckBox("Gearchiveerd")
+        self.show_archived_events.setChecked(
+            self.settings.value("show_archived_events", False, type=bool)
+        )
+        self.show_archived_events.toggled.connect(self._show_archived_events_changed)
+        search_row.addWidget(self.show_archived_events)
+        self.event_sort_mode = ScrollSafeComboBox()
         for label, value in EVENT_SORT_MODES:
             self.event_sort_mode.addItem(label, value)
         stored = str(self.settings.value("event_sort_mode", "smart") or "smart")
@@ -4311,19 +1731,43 @@ class BezoekerslijstWindow(QMainWindow):
         self.event_filter_summary = QLabel("")
         self.event_filter_summary.setObjectName("hintLabel")
         search_row.addWidget(self.event_filter_summary)
+        search_row.addStretch(1)
+        self.view_toggle_button = QPushButton("Lijst")
+        self.view_toggle_button.setObjectName("viewToggleButton")
+        self.view_toggle_button.clicked.connect(self._toggle_event_view)
+        search_row.addWidget(self.view_toggle_button)
         upcoming_layout.addLayout(search_row)
 
         # De knoppen Openen, Aanpassen en Verwijderen zijn vervallen: dubbelklikken
-        # opent een evenement en de rechtermuisknop biedt dezelfde acties plus de
-        # status. Een permanent zichtbare verwijderknop naast een lijst is
-        # bovendien een ongeluk dat op zijn beurt wacht.
-        event_hint = QLabel(
-            "Dubbelklik op een evenement om het dossier te openen. "
-            "Met de rechtermuisknop past u de status aan, of bewerkt en verwijdert u het."
+        # opent een evenement, en de acties staan onder de knop met de drie
+        # puntjes op de kaart. Een permanent zichtbare verwijderknop naast een
+        # lijst is bovendien een ongeluk dat op zijn beurt wacht.
+        self._board_collapsed = {"geweest": True}
+        self._board_searching = False
+        self._board_selected_id = ""
+        self._event_cards = []
+        # Twintig kaarten opbouwen kost een fractie van een seconde. Bij elke
+        # toetsaanslag in het zoekvak is dat merkbaar, dus wachten we tot de
+        # vingers even stilstaan.
+        self._board_pending = []
+        self._board_timer = QTimer(self)
+        self._board_timer.setSingleShot(True)
+        self._board_timer.setInterval(120)
+        self._board_timer.timeout.connect(
+            lambda: self._refresh_event_board(self._board_pending)
         )
-        event_hint.setObjectName("hintLabel")
-        event_hint.setWordWrap(True)
-        upcoming_layout.addWidget(event_hint)
+        self.event_board = QScrollArea()
+        self.event_board.setObjectName("eventBoard")
+        self.event_board.setWidgetResizable(True)
+        self.event_board.setFrameShape(QFrame.Shape.NoFrame)
+        self.event_board.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        board_body = QWidget()
+        board_body.setObjectName("eventBoardBody")
+        self.event_board_layout = QVBoxLayout(board_body)
+        self.event_board_layout.setContentsMargins(0, 4, 6, 4)
+        self.event_board_layout.setSpacing(4)
+        self.event_board.setWidget(board_body)
+
         self.home_event_table = self._new_table(["Datum", "Evenement", "Soort", "Plaats / locatie", "Status", "Bezoekers"])
         self.home_event_table.setObjectName("dashboardTable")
         # Het evenementenoverzicht is het primaire werkvlak: toon op normale laptops
@@ -4351,7 +1795,15 @@ class BezoekerslijstWindow(QMainWindow):
         # twee klikken te wijzigen.
         self.home_event_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.home_event_table.customContextMenuRequested.connect(self._show_event_context_menu)
-        upcoming_layout.addWidget(self.home_event_table)
+
+        # Kaarten om te bladeren, de tabel om te vergelijken. De tabel blijft
+        # ook onder de kaarten de bron voor de selectie, zodat Openen,
+        # Aanpassen en Verwijderen ongewijzigd blijven werken.
+        self.event_view_stack = QStackedWidget()
+        self.event_view_stack.addWidget(self.event_board)
+        self.event_view_stack.addWidget(self.home_event_table)
+        upcoming_layout.addWidget(self.event_view_stack)
+        self._set_event_view(str(self.settings.value("event_view_mode", "kaarten") or "kaarten"))
         home_content_layout.addWidget(upcoming_box, 1)
         home_layout.addWidget(home_content, 1)
         self.event_table = self.home_event_table
@@ -4370,9 +1822,10 @@ class BezoekerslijstWindow(QMainWindow):
         heading_row.addWidget(heading)
         heading_row.addStretch()
         heading_row.addWidget(QLabel("Evenement:"))
-        self.event_control_event_combo = QComboBox()
-        self.event_control_event_combo.setMinimumWidth(260)
-        self.event_control_event_combo.currentIndexChanged.connect(self._event_control_event_changed)
+        self.event_control_event_combo = EventPickerButton(allow_none=True)
+        self.event_control_event_combo.set_registration_counter(self._registration_lines)
+        self.event_control_event_combo.setMinimumWidth(300)
+        self.event_control_event_combo.changed.connect(self._event_control_event_changed)
         heading_row.addWidget(self.event_control_event_combo)
         back_button = QPushButton("← Evenementen")
         back_button.setObjectName("secondaryButton")
@@ -4387,6 +1840,14 @@ class BezoekerslijstWindow(QMainWindow):
         intro.setObjectName("hintLabel")
         intro.setWordWrap(True)
         layout.addWidget(intro)
+
+        self.event_control_context_hint = QLabel(
+            "Selecteer eerst een evenement om EventControl te gebruiken."
+        )
+        self.event_control_context_hint.setObjectName("statusLabel")
+        self.event_control_context_hint.setWordWrap(True)
+        self.event_control_context_hint.setVisible(False)
+        layout.addWidget(self.event_control_context_hint)
 
         self.event_control_tabs = QTabWidget()
         self.event_control_tabs.setDocumentMode(True)
@@ -4420,7 +1881,7 @@ class BezoekerslijstWindow(QMainWindow):
         self.live_manual_button.clicked.connect(self.open_live_session_manual)
         live_session_heading.addWidget(self.live_manual_button)
         live_session_text = QLabel(
-            "Het gekozen evenement is leidend. Start een nieuwe live-run voor dit evenement of verbind dit apparaat "
+            "Het gekozen evenement is leidend. Start een nieuwe livesessie voor dit evenement of verbind dit apparaat "
             "met een actieve livesessie op het lokale netwerk."
         )
         live_session_text.setObjectName("hintLabel")
@@ -4428,7 +1889,9 @@ class BezoekerslijstWindow(QMainWindow):
         self.live_session_status_label = QLabel("Er is vanuit dit venster nog geen live sessie geopend.")
         self.live_session_status_label.setObjectName("statusLabel")
 
-        choices = QHBoxLayout()
+        self.live_choices_widget = QWidget()
+        choices = QHBoxLayout(self.live_choices_widget)
+        choices.setContentsMargins(0, 0, 0, 0)
         choices.setSpacing(16)
 
         self.live_start_card = start_card = QFrame()
@@ -4439,9 +1902,9 @@ class BezoekerslijstWindow(QMainWindow):
         start_layout.setSpacing(8)
         start_eyebrow = QLabel("HOST")
         start_eyebrow.setObjectName("choiceEyebrow")
-        start_title = QLabel("＋  Evenement live zetten")
+        start_title = QLabel("＋  Livesessie hosten")
         start_title.setObjectName("choiceTitle")
-        start_text = QLabel("Start een nieuwe live-run. Naam, datum, locatie en deelnemers worden uit het gekozen evenement overgenomen.")
+        start_text = QLabel("Start een nieuwe livesessie. Naam, datum, locatie en deelnemers worden uit het gekozen evenement overgenomen.")
         start_text.setObjectName("choiceText")
         start_text.setWordWrap(True)
         self.start_live_button = start_live_button = QPushButton("Live sessie starten  →")
@@ -4473,7 +1936,7 @@ class BezoekerslijstWindow(QMainWindow):
         )
         join_text.setObjectName("choiceText")
         join_text.setWordWrap(True)
-        self.connect_page_button = connect_page_button = QPushButton("Verbindpagina openen  →")
+        self.connect_page_button = connect_page_button = QPushButton("Verbinden als incheckpunt  →")
         connect_page_button.setObjectName("secondaryButton")
         connect_page_button.clicked.connect(self.open_live_webclient)
         join_layout.addWidget(join_eyebrow)
@@ -4486,31 +1949,37 @@ class BezoekerslijstWindow(QMainWindow):
         live_session_layout.addLayout(live_session_heading)
         live_session_layout.addWidget(live_session_text)
         live_session_layout.addSpacing(8)
-        live_session_layout.addLayout(choices)
+        live_session_layout.addWidget(self.live_choices_widget)
+
+        self.live_active_card = QFrame()
+        self.live_active_card.setObjectName("liveChoiceCardPrimary")
+        active_layout = QHBoxLayout(self.live_active_card)
+        active_layout.setContentsMargins(22, 18, 22, 18)
+        active_text = QVBoxLayout()
+        active_text.setSpacing(4)
+        self.live_active_title_label = QLabel("Livesessie actief")
+        self.live_active_title_label.setObjectName("choiceTitle")
+        self.live_active_event_label = QLabel("")
+        self.live_active_event_label.setObjectName("choiceText")
+        self.live_active_meta_label = QLabel("")
+        self.live_active_meta_label.setObjectName("statusLabel")
+        active_text.addWidget(self.live_active_title_label)
+        active_text.addWidget(self.live_active_event_label)
+        active_text.addWidget(self.live_active_meta_label)
+        active_layout.addLayout(active_text, 1)
+        self.live_manage_button = QPushButton("Beheer openen")
+        self.live_manage_button.setObjectName("primaryButton")
+        self.live_manage_button.clicked.connect(self._open_selected_live_manager)
+        self.live_dashboard_button = QPushButton("Dashboard openen")
+        self.live_dashboard_button.setObjectName("secondaryButton")
+        self.live_dashboard_button.clicked.connect(self.open_live_dashboard)
+        active_layout.addWidget(self.live_manage_button)
+        active_layout.addWidget(self.live_dashboard_button)
+        self.live_active_card.setVisible(False)
+        live_session_layout.addWidget(self.live_active_card)
         live_session_layout.addWidget(self.live_session_status_label)
         live_session_layout.addStretch()
         self.event_control_tabs.addTab(live_session_tab, "Live sessie")
-
-        live_dashboard_tab = QWidget()
-        live_dashboard_layout = QVBoxLayout(live_dashboard_tab)
-        live_dashboard_layout.setContentsMargins(18, 18, 18, 18)
-        dashboard_title = QLabel("Live dashboard")
-        dashboard_title.setObjectName("sectionTitle")
-        dashboard_text = QLabel(
-            "Open het actuele overzicht van inschrijvingen, aanwezigen, opkomstpercentages en verbonden apparaten. "
-            "Het dashboard opent lokaal in de standaardbrowser."
-        )
-        dashboard_text.setObjectName("hintLabel")
-        dashboard_text.setWordWrap(True)
-        dashboard_button = _make_button_compact(QPushButton("Live dashboard openen"))
-        dashboard_button.setObjectName("primaryButton")
-        dashboard_button.clicked.connect(self.open_live_dashboard)
-        live_dashboard_layout.addWidget(dashboard_title)
-        live_dashboard_layout.addWidget(dashboard_text)
-        live_dashboard_layout.addSpacing(8)
-        live_dashboard_layout.addWidget(dashboard_button)
-        live_dashboard_layout.addStretch()
-        self.event_control_tabs.addTab(live_dashboard_tab, "Live dashboard")
 
         rudder_tab = QWidget()
         rudder_layout = QVBoxLayout(rudder_tab)
@@ -4529,28 +1998,25 @@ class BezoekerslijstWindow(QMainWindow):
         direct_rudder_button = _make_button_compact(QPushButton("Exporteren naar Rudder"))
         direct_rudder_button.setObjectName("primaryButton")
         direct_rudder_button.clicked.connect(self.export_directly_to_rudder)
-        export_rudder_button = _make_button_compact(QPushButton("JSON-reservebestand maken"))
-        export_rudder_button.setObjectName("secondaryButton")
-        export_rudder_button.clicked.connect(self.export_rudder_attendance)
         open_rudder_button = _make_button_compact(QPushButton("Rudder-link instellen / openen"))
         open_rudder_button.setObjectName("secondaryButton")
         open_rudder_button.clicked.connect(self.open_rudder_attendance_page)
-        extension_button = _make_button_compact(QPushButton("Browserassistent installeren / openen"))
-        extension_button.setObjectName("secondaryButton")
-        extension_button.clicked.connect(self.open_rudder_extension_folder)
         rudder_layout.addWidget(rudder_title)
         rudder_layout.addWidget(rudder_text)
         rudder_layout.addSpacing(8)
         rudder_layout.addWidget(self.rudder_status_label)
         rudder_layout.addWidget(direct_rudder_button)
-        rudder_layout.addWidget(export_rudder_button)
         rudder_layout.addWidget(open_rudder_button)
-        rudder_layout.addWidget(extension_button)
         rudder_layout.addStretch()
         self.event_control_tabs.addTab(rudder_tab, "Rudder")
 
         layout.addWidget(self.event_control_tabs, 1)
         self.page_stack.addWidget(page)
+
+        self.event_control_live_timer = QTimer(self)
+        self.event_control_live_timer.setInterval(1000)
+        self.event_control_live_timer.timeout.connect(self._refresh_event_control_live_state)
+        self.event_control_live_timer.start()
 
     def _build_trends_page(self):
         page = QWidget()
@@ -4559,33 +2025,51 @@ class BezoekerslijstWindow(QMainWindow):
         layout.setContentsMargins(18, 4, 18, 18)
         layout.setSpacing(10)
 
-        self.trend_intro = QLabel(
-            "Berekend op geanonimiseerde cijfers per evenement, die ook na de bewaartermijn beschikbaar blijven."
-        )
-        self.trend_intro.setObjectName("hintLabel")
-        self.trend_intro.setWordWrap(True)
-        layout.addWidget(self.trend_intro)
-
         self.trend_sources: list[dict] = []
+        self.current_analysis = str(self.settings.value("current_analysis", "") or "") or "Losse analyse"
         self.trend_tabs = QTabWidget()
         self.trend_tabs.setDocumentMode(True)
         self.trend_tabs.currentChanged.connect(lambda _index: self._render_trends())
+        # Exporteren geldt voor het werkgebied dat openstaat, dus hoort de knop
+        # bij de tabbladen en niet tussen de filters van één van beide.
+        self.trend_export_button = QPushButton("Exporteren")
+        self.trend_export_button.setObjectName("primaryButton")
+        self.trend_export_button.setToolTip(
+            "Stel een rapport samen: kies de inhoud, bekijk het voorbeeld en "
+            "exporteer naar PDF of Excel"
+        )
+        self.trend_export_button.clicked.connect(lambda: self.export_trend_data())
+        trend_actions = QWidget()
+        trend_actions_layout = QHBoxLayout(trend_actions)
+        trend_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.trend_help_button = QPushButton("?")
+        self.trend_help_button.setObjectName("secondaryButton")
+        self.trend_help_button.setFixedWidth(32)
+        self.trend_help_button.setToolTip("Uitleg over Trends en exporteren")
+        self.trend_help_button.setAccessibleName("Rondleiding door Trends")
+        self.trend_help_button.clicked.connect(self.start_trends_tour)
+        trend_actions_layout.addWidget(self.trend_help_button)
+        trend_actions_layout.addWidget(self.trend_export_button)
+        self.trend_tabs.setCornerWidget(trend_actions, Qt.Corner.TopRightCorner)
 
         # Werkgebied 1: de evenementen uit het geopende dossier.
         own_tab = QWidget()
         own_layout = QVBoxLayout(own_tab)
         own_layout.setContentsMargins(0, 0, 0, 0)
+        self.trend_incomplete_notice = QLabel()
+        self.trend_incomplete_notice.setObjectName("hintLabel")
+        self.trend_incomplete_notice.setWordWrap(True)
+        self.trend_incomplete_notice.hide()
+        own_layout.addWidget(self.trend_incomplete_notice)
         self.own_trend_panel = TrendPanel(
-            lambda: collect_trend_summaries(self.events, source="Eigen dossier")
+            self._own_trend_summaries,
+            self._open_trend_event,
         )
         self.own_trend_panel.empty_message = (
             "Nog geen cijfers. Een evenement krijgt cijfers zodra de datum is geweest."
         )
-        self.own_trend_panel.export_button.clicked.connect(
-            lambda: self.export_trend_data(self.own_trend_panel)
-        )
         own_layout.addWidget(self.own_trend_panel)
-        self.own_trend_panel.chrome = [self.trend_intro, self.own_trend_panel.summary]
+        self.own_trend_panel.chrome = [self.own_trend_panel.summary]
         self.trend_tabs.addTab(own_tab, "Eigen evenementen")
 
         # Werkgebied 2: uitsluitend wat hier is ingeladen. Bewust gescheiden van
@@ -4595,35 +2079,20 @@ class BezoekerslijstWindow(QMainWindow):
         loose_layout.setContentsMargins(0, 8, 0, 0)
         loose_layout.setSpacing(8)
 
-        manage = QFrame()
-        manage.setObjectName("toolbar")
-        manage_layout = QHBoxLayout(manage)
-        manage_layout.setContentsMargins(14, 10, 14, 10)
-        manage_layout.setSpacing(10)
-        load_button = _make_button_compact(QPushButton("Bezoekerslijsten inladen"))
-        load_button.setObjectName("primaryButton")
-        load_button.setToolTip(
-            "Laad één of meer bezoekerslijsten in (Excel of CSV), of een EventHub-dossier van een collega."
+        # De bediening van een losse analyse staat bewust in een apart venster:
+        # zo neemt bronbeheer geen permanente horizontale ruimte in beslag.
+        self.analysis_picker = ScrollSafeComboBox()
+        self.analysis_picker.setToolTip(
+            "Een analyse blijft bewaard. Voeg na elk evenement de nieuwe lijst toe zonder alles opnieuw in te laden."
         )
-        load_button.clicked.connect(self.import_trend_data)
-        manage_layout.addWidget(load_button)
-        remove_button = _make_button_compact(QPushButton("Selectie verwijderen"))
-        remove_button.setObjectName("secondaryButton")
-        remove_button.clicked.connect(self.remove_trend_source)
-        manage_layout.addWidget(remove_button)
-        clear_button = _make_button_compact(QPushButton("Alles wissen"))
-        clear_button.setObjectName("dangerButton")
-        clear_button.clicked.connect(self.clear_trend_sources)
-        manage_layout.addWidget(clear_button)
-        manage_layout.addStretch()
-        caption = QLabel("Meetellen:")
-        caption.setObjectName("hintLabel")
-        manage_layout.addWidget(caption)
-        self.trend_source = QComboBox()
-        self.trend_source.setMinimumWidth(200)
+        self.analysis_picker.currentIndexChanged.connect(self._analysis_picked)
+        self.trend_manage_button = _make_button_compact(QPushButton("✎  Analyse beheren"))
+        self.trend_manage_button.setObjectName("primaryButton")
+        self.trend_manage_button.setMaximumWidth(190)
+        self.trend_manage_button.setToolTip("Analyse kiezen, lijsten inladen en sets beheren")
+        self.trend_manage_button.clicked.connect(self._open_trend_source_management)
+        self.trend_source = ScrollSafeComboBox()
         self.trend_source.currentIndexChanged.connect(lambda _index: self._render_trends())
-        manage_layout.addWidget(self.trend_source)
-        loose_layout.addWidget(manage)
 
         self.trend_source_list = QTableWidget(0, 3)
         self.trend_source_list.setHorizontalHeaderLabels(["Ingeladen set", "Evenementen", "Deelnemers"])
@@ -4638,19 +2107,18 @@ class BezoekerslijstWindow(QMainWindow):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.trend_source_list.setMaximumHeight(92)
-        loose_layout.addWidget(self.trend_source_list)
+        self.trend_source_list.setVisible(False)
 
         self.loose_trend_panel = TrendPanel(self._loose_trend_summaries)
+        self.loose_trend_panel.open_event_callback = self._open_trend_event
         self.loose_trend_panel.empty_message = (
             "Nog niets ingeladen. Kies Bezoekerslijsten inladen om een losse analyse te maken, "
             "bijvoorbeeld over evenementen van een collega. De eigen evenementen tellen hier niet mee."
         )
-        self.loose_trend_panel.export_button.clicked.connect(
-            lambda: self.export_trend_data(self.loose_trend_panel)
-        )
+        self.loose_trend_panel.filter_bar_layout.insertWidget(0, self.trend_manage_button)
         loose_layout.addWidget(self.loose_trend_panel, 1)
         self.loose_trend_panel.chrome = [
-            self.trend_intro, manage, self.trend_source_list, self.loose_trend_panel.summary,
+            self.trend_manage_button, self.loose_trend_panel.summary,
         ]
         self.trend_tabs.addTab(loose_tab, "Losse analyse")
 
@@ -4729,14 +2197,15 @@ class BezoekerslijstWindow(QMainWindow):
         layout.addLayout(heading_row)
 
         intro = QLabel(
-            "Deze taken worden automatisch toegevoegd aan nieuwe evenementen. "
-            "Deadlines en meldtermijnen blijven daarna per evenement aanpasbaar."
+            "Deze taken worden automatisch toegevoegd aan nieuwe evenementen. Per taak "
+            "kiest u voor welke soorten evenementen hij meekomt; deadlines en "
+            "meldtermijnen blijven daarna per evenement aanpasbaar."
         )
         intro.setObjectName("hintLabel")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        self.standard_tasks_table = self._new_table(["Taak", "Planning", "Melding"])
+        self.standard_tasks_table = self._new_table(["Taak", "Geldt voor", "Planning", "Melding"])
         self.standard_tasks_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.standard_tasks_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.standard_tasks_table.cellDoubleClicked.connect(lambda *_: self.edit_standard_task())
@@ -4797,7 +2266,7 @@ class BezoekerslijstWindow(QMainWindow):
             summary_layout.addWidget(label)
         summary_layout.addStretch()
         summary_layout.addWidget(QLabel("Weergave:"))
-        self.open_tasks_filter = QComboBox()
+        self.open_tasks_filter = ScrollSafeComboBox()
         self.open_tasks_filter.addItems(["Alle open taken", "Te laat", "Vandaag", "Binnenkort", "Later"])
         self.open_tasks_filter.setMinimumWidth(165)
         self.open_tasks_filter.currentIndexChanged.connect(self._render_open_tasks_page)
@@ -4938,31 +2407,85 @@ class BezoekerslijstWindow(QMainWindow):
 
     def show_event_control_page(self):
         self._sync_event_combo(self.event_control_event_combo)
+        # De gedeelde evenementcontext en de keuzelijst worden tegelijk
+        # bijgehouden. Zo kan een oude schermkeuze nooit stilletjes leidend zijn.
+        event = self._combo_event(self.event_control_event_combo)
+        if event is not None:
+            self.active_event_id = event.get("id", "")
+            self.selected_events = {event.get("name", "")}
+        else:
+            self.active_event_id = ""
+            self.selected_events = set()
         self.page_stack.setCurrentWidget(self.event_control_page)
         self._set_project_context_ui(False)
         self._set_navigation_active("event_control")
-        self._render_all()
+        # Dit scherm wordt vaak tijdens de ontvangst geopend. Bouw daarom
+        # alleen de presentielijst opnieuw op, niet alle tabellen en grafieken
+        # van de volledige applicatie.
+        self._render_presence_table()
+        self._update_previous_live_session_action()
+        self._update_presence_registration_availability()
+        self._refresh_event_control_live_state()
+        self._set_live_session_context_status()
 
     def _after_sales_event_changed(self, _index=None):
         event = self._combo_event(self.after_sales_event_combo)
         if event is None:
-            return
-        self.active_event_id = event.get("id", "")
-        self.selected_events = {event.get("name", "")}
-        self._sync_latest_live_attendance_for_event(event)
+            self.active_event_id = ""
+            self.selected_events = set()
+        else:
+            self._touch_event(event, opened=True)
+            self.active_event_id = event.get("id", "")
+            self.selected_events = {event.get("name", "")}
+            self._sync_latest_live_attendance_for_event(event)
+        self._sync_event_context_pickers()
         self._render_all()
 
     def _event_control_event_changed(self, _index=None):
         event = self._combo_event(self.event_control_event_combo)
         if event is None:
+            self.active_event_id = ""
+            self.selected_events = set()
+        else:
+            self._touch_event(event, opened=True)
+            self.active_event_id = event.get("id", "")
+            self.selected_events = {event.get("name", "")}
+        self._sync_event_context_pickers()
+        self._render_event_control_scope()
+        self._refresh_event_control_live_state()
+        self._set_live_session_context_status()
+
+    def _event_control_selected_event(self):
+        """Het evenement bovenaan EventControl is voor alle acties leidend."""
+        if not hasattr(self, "event_control_event_combo"):
+            return None
+        return self._combo_event(self.event_control_event_combo)
+
+    def _set_live_session_context_status(self):
+        if not hasattr(self, "live_session_status_label"):
             return
-        self.active_event_id = event.get("id", "")
-        self.selected_events = {event.get("name", "")}
-        self._render_all()
-        self._update_previous_live_session_action()
+        event = self._event_control_selected_event()
+        if not event:
+            self.live_session_status_label.setText("Kies eerst een evenement.")
+            return
+        event_name = str(event.get("name", "") or "het gekozen evenement")
+        window = self._active_live_server_window(event)
+        if window is not None:
+            state = "actief" if getattr(window, "server_thread", None) is not None else "voorbereid"
+            self.live_session_status_label.setText(
+                f"De livesessie van {event_name} is {state} en kan hierboven worden geopend."
+            )
+        elif self._previous_live_session_for_event(event):
+            self.live_session_status_label.setText(
+                f"Voor {event_name} is een opgeslagen livesessie beschikbaar."
+            )
+        else:
+            self.live_session_status_label.setText(
+                f"Voor {event_name} is nog geen livesessie geopend."
+            )
 
     def _previous_live_session_for_event(self, event=None):
-        event = event or self._active_event()
+        event = event or self._event_control_selected_event()
         if not event:
             return None
         try:
@@ -4995,7 +2518,7 @@ class BezoekerslijstWindow(QMainWindow):
         )
 
     def reopen_previous_live_session(self):
-        event = self._active_event()
+        event = self._event_control_selected_event()
         if not event:
             QMessageBox.information(self, "Geen evenement", "Kies eerst een evenement.")
             return
@@ -5028,9 +2551,13 @@ class BezoekerslijstWindow(QMainWindow):
         window.attendance_changed.connect(
             lambda window=window, event_id=source_event_id: self._sync_live_attendance(window, event_id)
         )
+        window.server_state_changed.connect(self._live_server_state_changed)
         window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._live_server_windows.append(window)
-        window.destroyed.connect(lambda *_args, window=window: self._forget_live_server_window(window))
+        window.destroyed.connect(
+            lambda *_args, window=window, event_id=source_event_id:
+            self._forget_live_server_window(window, event_id, offer_completion=True)
+        )
         window.show()
         window.raise_()
         window.activateWindow()
@@ -5038,13 +2565,72 @@ class BezoekerslijstWindow(QMainWindow):
             f"Vorige livesessie van {event.get('name', 'het gekozen evenement')} opnieuw geopend. "
             "Er is geen nieuwe run aangemaakt."
         )
+        self._refresh_event_control_live_state()
 
-    def _active_live_server_window(self):
+    def _active_live_server_window(self, event=None):
         self._live_server_windows = [window for window in self._live_server_windows if window is not None]
-        for window in reversed(self._live_server_windows):
+        candidates = self._live_server_windows
+        if event is not None:
+            event_id = str(event.get("id", "") or "").strip()
+            candidates = [
+                window for window in candidates
+                if str(getattr(window, "linked_event_id", "") or "").strip() == event_id
+            ]
+        for window in reversed(candidates):
             if getattr(window, "server_thread", None) is not None:
                 return window
-        return self._live_server_windows[-1] if self._live_server_windows else None
+        return candidates[-1] if candidates else None
+
+    def _open_selected_live_manager(self):
+        event = self._event_control_selected_event()
+        window = self._active_live_server_window(event)
+        if window is None:
+            QMessageBox.information(
+                self, "Geen livesessie",
+                "Voor het gekozen evenement is vanuit dit venster geen livesessie geopend."
+            )
+            self._refresh_event_control_live_state()
+            return
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _live_server_state_changed(self, _active=False):
+        self._update_presence_registration_availability()
+        self._refresh_event_control_live_state()
+        self._set_live_session_context_status()
+
+    def _refresh_event_control_live_state(self):
+        if not hasattr(self, "live_active_card"):
+            return
+        event = self._event_control_selected_event()
+        window = self._active_live_server_window(event) if event else None
+        has_window = window is not None
+        self.live_choices_widget.setVisible(not has_window)
+        self.live_active_card.setVisible(has_window)
+        if not has_window:
+            return
+
+        event_name = str(event.get("name", "") or "Onbenoemd evenement")
+        event_date = str(event.get("date", "") or "Datum niet opgegeven")
+        running = getattr(window, "server_thread", None) is not None
+        self.live_active_title_label.setText(
+            "Livesessie actief" if running else "Livesessie voorbereid"
+        )
+        self.live_active_event_label.setText(f"{event_name}  •  {event_date}")
+        meta = "Nog niet beschikbaar voor andere apparaten"
+        try:
+            manager_meta = str(window.session_meta_label.text() or "").strip()
+            if manager_meta:
+                meta = manager_meta if running else f"Server gestopt  •  {manager_meta.split('•')[-1].strip()}"
+        except RuntimeError:
+            pass
+        self.live_active_meta_label.setText(meta)
+        self.live_dashboard_button.setEnabled(running)
+        self.live_dashboard_button.setToolTip(
+            "Open het actuele dashboard van dit evenement."
+            if running else "Start eerst de server in het sessiebeheervenster."
+        )
 
     def open_live_session_manager(self):
         """Start één nieuwe live-run voor het gekozen EventHub-evenement.
@@ -5062,16 +2648,10 @@ class BezoekerslijstWindow(QMainWindow):
             from server.services import participant_service as live_participant_service
             from server.services import session_service as live_session_service
         except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Event Control niet beschikbaar",
-                "De componenten voor gedeelde live sessies konden niet worden geladen. "
-                "Installeer de meegeleverde requirements of bouw EventHub opnieuw.\n\n"
-                f"Details: {exc}",
-            )
+            self._show_runtime_error("Event Control openen", exc)
             return
 
-        active_event = self._active_event()
+        active_event = self._event_control_selected_event()
         if not active_event:
             QMessageBox.information(self, "Geen evenement", "Kies eerst het evenement dat u live wilt zetten.")
             return
@@ -5088,6 +2668,23 @@ class BezoekerslijstWindow(QMainWindow):
                     f"Livesessie voor {active_event.get('name', 'dit evenement')} is al geopend."
                 )
                 return
+
+        # Per evenement hoort er precies een livesessie te bestaan. Zeven
+        # sessies voor dezelfde dag leverden zeven verschillende waarheden op -
+        # van nul tot vierenvijftig inchecks - en welke daarvan werd
+        # gesynchroniseerd hing af van de volgorde in de sessielijst.
+        bestaande = self._previous_live_session_for_event(active_event)
+        if bestaande:
+            QMessageBox.information(
+                self,
+                "Er is al een livesessie",
+                f"Voor '{active_event.get('name', 'dit evenement')}' bestaat al een livesessie.\n\n"
+                "Per evenement kan er maar een zijn: met meerdere sessies raakt de "
+                "aanwezigheidsregistratie verdeeld over sessies die elkaar tegenspreken.\n\n"
+                "De bestaande sessie wordt geopend.",
+            )
+            self.reopen_previous_live_session()
+            return
 
         configure_logging()
         default_location = " — ".join(filter(None, [
@@ -5126,6 +2723,7 @@ class BezoekerslijstWindow(QMainWindow):
         window.attendance_changed.connect(
             lambda window=window, event_id=source_event_id: self._sync_live_attendance(window, event_id)
         )
+        window.server_state_changed.connect(self._live_server_state_changed)
 
         visitors = self._event_visitors(active_event)
         if visitors:
@@ -5144,14 +2742,18 @@ class BezoekerslijstWindow(QMainWindow):
 
         window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._live_server_windows.append(window)
-        window.destroyed.connect(lambda *_args, window=window: self._forget_live_server_window(window))
+        window.destroyed.connect(
+            lambda *_args, window=window, event_id=source_event_id:
+            self._forget_live_server_window(window, event_id, offer_completion=True)
+        )
         window.show()
         window.raise_()
         window.activateWindow()
         self.live_session_status_label.setText(
-            f"Nieuwe live-run gestart voor {active_event.get('name', 'het gekozen evenement')}. "
+            f"Nieuwe livesessie gestart voor {active_event.get('name', 'het gekozen evenement')}. "
             "Start de server om apparaten te verbinden."
         )
+        self._refresh_event_control_live_state()
 
     def _sync_latest_live_attendance_for_event(self, event) -> int:
         """Refresh the EventHub participant records from the latest live run for this event."""
@@ -5185,18 +2787,85 @@ class BezoekerslijstWindow(QMainWindow):
                 "SELECT id, voornaam, achternaam, geboortedatum, attendance_status, checkin_time "
                 "FROM participant WHERE event_id=?", (session_id,)
             ).fetchall()]
+            teruggedraaid = self._reverted_checkins(connection, session_id)
         except Exception:
             return 0
         finally:
             if connection is not None:
                 connection.close()
-        changed = apply_live_attendance(self._event_visitors(event), participants, event.get("name", ""))
+        ongekoppeld: list = []
+        changed = apply_live_attendance(
+            self._event_visitors(event), participants, event.get("name", ""),
+            reverted_ids=teruggedraaid, unmatched=ongekoppeld,
+        )
+        self._report_unmatched_checkins(ongekoppeld, event)
         if changed:
             self._mark_dirty()
             self.status_label.setText(
                 f"Live presentie gesynchroniseerd: {changed} wijziging(en) automatisch verwerkt."
             )
         return changed
+
+    def _ask_about_attendance_conflicts(self, conflicts) -> int:
+        """Vraag wie voorgaat als het bestand iets anders zegt dan EventHub.
+
+        Zonder die vraag koos EventHub stilzwijgend, en dat is precies waar
+        aanwezigheid ongemerkt verdween of juist bleef staan.
+        """
+        if not conflicts:
+            return 0
+        voorbeeld = ", ".join(sorted({
+            f"{ATTENDANCE_LABELS[status].lower()} in het bestand" for _, _, status in conflicts
+        })[:3])
+        answer = QMessageBox.question(
+            self,
+            "Aanwezigheid wijkt af",
+            f"Voor {len(conflicts)} deelnemer(s) zegt het bestand iets anders over de aanwezigheid "
+            f"dan wat er in EventHub staat ({voorbeeld}).\n\n"
+            "Wilt u de gegevens uit het bestand overnemen? Kiest u Nee, dan blijft de registratie "
+            "staan zoals hij nu is; de rest van de import gaat gewoon door.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return 0
+        return apply_attendance_conflicts(conflicts)
+
+    def _report_unmatched_checkins(self, namen, event):
+        """Vertel het wanneer een incheck nergens op paste.
+
+        Dat gebeurt als iemand twee keer in de deelnemerslijst staat: de
+        koppeling op naam weigert dan te raden. Zonder deze melding raak je die
+        aanwezigheid kwijt zonder dat iets het zegt.
+        """
+        if not namen:
+            return
+        lijst = ", ".join(sorted(set(namen))[:6])
+        if len(set(namen)) > 6:
+            lijst += f" en {len(set(namen)) - 6} andere"
+        QMessageBox.warning(
+            self,
+            "Inchecks niet gekoppeld",
+            f"Van {len(set(namen))} ingecheckte bezoeker(s) kon de aanwezigheid niet aan een deelnemer "
+            f"in '{event.get('name', '')}' worden gekoppeld: {lijst}."
+            "\n\nDat gebeurt wanneer iemand twee keer in de deelnemerslijst staat. Zet hun "
+            "aanwezigheid met de hand goed, of haal de dubbele regel weg.",
+        )
+
+    def _reverted_checkins(self, connection, session_id: str) -> set:
+        """Deelnemers bij wie een incheck bewust is teruggedraaid.
+
+        Alleen die stap is een uitspraak dat iemand er niet was; de gewone
+        beginstand not_checked_in betekent enkel dat er niet gescand is.
+        """
+        try:
+            rows = connection.execute(
+                "SELECT DISTINCT participant_id FROM audit_log WHERE event_id=? AND action='checkin_undone'",
+                (session_id,),
+            ).fetchall()
+        except Exception:
+            return set()
+        return {str(row[0]) for row in rows if row[0]}
 
     def _sync_live_attendance(self, window, linked_event_id: str) -> int:
         """Copy live check-in state back into the linked EventHub event records."""
@@ -5212,19 +2881,95 @@ class BezoekerslijstWindow(QMainWindow):
             return 0
 
         event_records = self._event_visitors(event)
-        changed = apply_live_attendance(event_records, participants, event.get("name", ""))
+        ongekoppeld: list = []
+        changed = apply_live_attendance(
+            event_records, participants, event.get("name", ""),
+            reverted_ids=self._reverted_checkins(window.connection, window.event_id),
+            unmatched=ongekoppeld,
+        )
+        self._report_unmatched_checkins(ongekoppeld, event)
         if changed:
             self._mark_dirty()
-            self._render_all()
+            self._render_live_attendance_scope()
             self.status_label.setText(
                 f"Live presentie gesynchroniseerd: {changed} wijziging(en) automatisch verwerkt."
             )
         return changed
 
-    def _forget_live_server_window(self, window):
+    def _forget_live_server_window(self, window, event_id="", offer_completion=False):
         self._live_server_windows = [candidate for candidate in self._live_server_windows if candidate is not window]
-        if hasattr(self, "live_session_status_label") and not self._live_server_windows:
-            self.live_session_status_label.setText("Er is vanuit dit venster geen live sessie geopend.")
+        self._update_presence_registration_availability()
+        self._refresh_event_control_live_state()
+        self._set_live_session_context_status()
+        if offer_completion and event_id and not self._allow_application_exit:
+            QTimer.singleShot(0, lambda event_id=event_id: self._offer_live_session_completion(event_id))
+
+    def _show_event_control_presence(self, event):
+        if not event:
+            return
+        self._sync_event_combo(self.event_control_event_combo)
+        self.event_control_event_combo.set_current_id(event.get("id", ""))
+        self.active_event_id = event.get("id", "")
+        self.selected_events = {event.get("name", "")}
+        self.show_event_control_page()
+        self.event_control_tabs.setCurrentWidget(self.presence_tab)
+
+    def _offer_live_session_completion(self, event_id):
+        event = self._event_by_id(event_id)
+        if not event or self._active_live_server_window(event) is not None:
+            return
+        records = self._event_visitors(event)
+        if not records:
+            return
+        counts = attendance_counts(records, str(event.get("name", "") or ""))
+        unknown_count = counts[ONBEKEND]
+
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Livesessie afgesloten")
+        dialog.setIcon(
+            QMessageBox.Icon.Warning if unknown_count else QMessageBox.Icon.Information
+        )
+        summary = (
+            f"{counts[AANWEZIG]} aanwezig, {counts[AFGEMELD]} afgemeld, "
+            f"{counts[AFWEZIG]} afwezig en {unknown_count} nog onbeoordeeld."
+        )
+        if unknown_count:
+            dialog.setText(
+                f"De livesessie van '{event.get('name', 'dit evenement')}' is afgesloten.\n\n"
+                f"{summary}\n\n"
+                f"Bij Registratie afronden worden de {unknown_count} onbeoordeelde deelnemer(s) "
+                "als afwezig vastgelegd. Controleer ze eerst als u daar niet zeker van bent."
+            )
+        else:
+            dialog.setText(
+                f"De livesessie van '{event.get('name', 'dit evenement')}' is afgesloten.\n\n"
+                f"{summary}\n\nDe aanwezigheidsregistratie is volledig."
+            )
+        review_button = dialog.addButton(
+            "Aanwezigheid controleren", QMessageBox.ButtonRole.AcceptRole
+        )
+        finish_button = None
+        if unknown_count:
+            finish_button = dialog.addButton(
+                "Registratie afronden", QMessageBox.ButtonRole.DestructiveRole
+            )
+        rudder_button = dialog.addButton(
+            "Afronden en naar Rudder" if unknown_count else "Aanwezigheid naar Rudder",
+            QMessageBox.ButtonRole.ActionRole,
+        )
+        later_button = dialog.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+        dialog.setDefaultButton(review_button)
+        dialog.setEscapeButton(later_button)
+        dialog.exec()
+        clicked = dialog.clickedButton()
+        if clicked is review_button:
+            self._show_event_control_presence(event)
+        elif finish_button is not None and clicked is finish_button:
+            self._finish_presence_registration(event=event, confirm=False)
+        elif clicked is rudder_button:
+            if unknown_count and not self._finish_presence_registration(event=event, confirm=False):
+                return
+            self.export_directly_to_rudder(event=event)
 
     def _open_internal_webclient(self, url: str):
         """Open de gedeelde webclient binnen EventHub; val terug op de standaardbrowser."""
@@ -5279,6 +3024,12 @@ class BezoekerslijstWindow(QMainWindow):
 
     def open_live_webclient(self):
         """Vind een actieve hub en open diens webclient, zonder de oude desktop-check-inflow."""
+        event = self._event_control_selected_event()
+        if not event:
+            QMessageBox.information(
+                self, "Geen evenement", "Kies eerst het evenement waarvoor u wilt inchecken."
+            )
+            return
         self.live_session_status_label.setText("Actieve livesessies zoeken op het lokale netwerk…")
         QApplication.processEvents()
         try:
@@ -5291,17 +3042,38 @@ class BezoekerslijstWindow(QMainWindow):
 
         # Een lokaal door EventHub gestart venster blijft bruikbaar als discovery door
         # een firewall of netwerkconfiguratie geen UDP-resultaat teruggeeft.
-        active_window = self._active_live_server_window()
+        active_window = self._active_live_server_window(event)
         local_url = str(getattr(active_window, "local_url", "") or "").strip() if active_window else ""
         if local_url and not any(str(hub.get("url", "")).rstrip("/") == local_url.rstrip("/") for hub in hubs):
-            hubs.append({"name": "Lokale EventHub-sessie", "url": local_url})
+            hubs.append({
+                "name": str(event.get("name", "") or "Lokale EventHub-sessie"),
+                "date": str(event.get("date", "") or ""),
+                "source_event_id": str(event.get("id", "") or ""),
+                "url": local_url,
+            })
+
+        event_id = str(event.get("id", "") or "").strip()
+        event_name = str(event.get("name", "") or "").strip().casefold()
+        event_date = str(event.get("date", "") or "").strip()
+
+        def belongs_to_selected_event(hub):
+            hub_event_id = str(hub.get("source_event_id", "") or "").strip()
+            if hub_event_id:
+                return bool(event_id) and hub_event_id == event_id
+            if str(hub.get("name", "") or "").strip().casefold() != event_name:
+                return False
+            hub_date = str(hub.get("date", "") or "").strip()
+            return not hub_date or not event_date or hub_date == event_date
+
+        hubs = [hub for hub in hubs if belongs_to_selected_event(hub)]
 
         if not hubs:
             self.live_session_status_label.setText("Geen actieve livesessie gevonden.")
             QMessageBox.information(
                 self,
                 "Geen livesessie gevonden",
-                "Er is geen actieve EventHub-livesessie gevonden op dit lokale netwerk. "
+                f"Er is geen actieve livesessie voor '{event.get('name', 'het gekozen evenement')}' "
+                "gevonden op dit lokale netwerk. "
                 "Controleer of de hostserver actief is en of dit apparaat met hetzelfde netwerk is verbonden.",
             )
             return
@@ -5327,15 +3099,20 @@ class BezoekerslijstWindow(QMainWindow):
         self.open_live_webclient()
 
     def open_live_checkin_client(self):
-        window = self._active_live_server_window()
+        window = self._active_live_server_window(self._event_control_selected_event())
         default_url = str(getattr(window, "local_url", "") or "") if window is not None else ""
         dialog = LiveCheckinDialog(self, default_url)
         dialog.exec()
 
     def open_live_dashboard(self):
-        window = self._active_live_server_window()
+        event = self._event_control_selected_event()
+        window = self._active_live_server_window(event)
         if window is None:
-            QMessageBox.information(self, "Geen live sessie", "Open eerst een live sessie en start de server.")
+            event_name = str(event.get("name", "") or "het gekozen evenement") if event else "het gekozen evenement"
+            QMessageBox.information(
+                self, "Geen live sessie",
+                f"Open eerst de livesessie van '{event_name}' en start de server."
+            )
             return
         window.open_dashboard()
 
@@ -5347,24 +3124,82 @@ class BezoekerslijstWindow(QMainWindow):
         ]
         return next((path for path in candidates if (path / "manifest.json").is_file()), candidates[0])
 
-    def open_rudder_extension_folder(self):
+    def open_rudder_extension_folder(self, *, dialog_parent=None):
+        owner = dialog_parent if dialog_parent is not None else self
         directory = self._rudder_extension_directory()
         if not (directory / "manifest.json").is_file():
             QMessageBox.warning(
-                self, "Browserassistent ontbreekt",
+                owner, "Browserassistent ontbreekt",
                 "De map met de Rudder Browserassistent is niet gevonden. Bouw of installeer EventHub opnieuw met de volledige broncode."
             )
             return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory.resolve())))
-        QMessageBox.information(
-            self, "Browserassistent installeren",
-            "Microsoft Edge:\n\n1. Open edge://extensions\n2. Zet Ontwikkelaarsmodus aan.\n"
-            "3. Kies Uitgepakte extensie laden.\n4. Selecteer de zojuist geopende map Browserassistent.\n\n"
-            "Dit is een eenmalige installatie op deze laptop."
-        )
+        dialog = QDialog(owner)
+        dialog.setWindowTitle("Browserassistent instellen")
+        _fit_dialog_to_screen(dialog, 660, 510, 480, 380)
+        layout = QVBoxLayout(dialog)
+        title = QLabel("Verbind EventHub met Rudder")
+        title.setObjectName("sectionTitle")
+        layout.addWidget(title)
+        intro = QLabel("De browserassistent helpt bij het overnemen van evenementgegevens en aanwezigheid. "
+                       "Installeer hem eenmalig in de browser waarin je Rudder gebruikt.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        browser = ScrollSafeComboBox()
+        browser.addItem("Microsoft Edge", "edge://extensions")
+        browser.addItem("Google Chrome", "chrome://extensions")
+        layout.addWidget(browser)
+        steps = QLabel()
+        steps.setWordWrap(True)
+        def update_steps():
+            steps.setText(
+                f"1. Plak {browser.currentData()} in de adresbalk van {browser.currentText()}.\n"
+                "2. Zet Ontwikkelaarsmodus aan.\n"
+                "3. Klik op Uitgepakte extensie laden.\n"
+                "4. Selecteer de onderstaande map en bevestig.\n"
+                "5. Vernieuw eventueel de geopende Rudder-pagina."
+            )
+        browser.currentIndexChanged.connect(update_steps)
+        update_steps()
+        layout.addWidget(steps)
+        path_field = QLineEdit(str(directory.resolve()))
+        path_field.setReadOnly(True)
+        layout.addWidget(path_field)
+        actions = QHBoxLayout()
+        for label, action in (
+            ("Adres kopiëren", lambda: QApplication.clipboard().setText(browser.currentData())),
+            ("Mappad kopiëren", lambda: QApplication.clipboard().setText(str(directory.resolve()))),
+            ("Extensiemap openen", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory.resolve())))),
+        ):
+            button = QPushButton(label)
+            button.setObjectName("secondaryButton")
+            button.clicked.connect(action)
+            actions.addWidget(button)
+        layout.addLayout(actions)
+        note = QLabel("Je kunt deze hulp later terugvinden via Algemene instellingen → Browserextensie → "
+                      "Browserextensie installeren. Als je organisatie ontwikkelaarsmodus blokkeert, "
+                      "vraag je ICT-beheerder om de extensie beschikbaar te maken.")
+        note.setObjectName("hintLabel")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        layout.addStretch()
+        buttons = QDialogButtonBox()
+        later = buttons.addButton("Later", QDialogButtonBox.ButtonRole.RejectRole)
+        done = buttons.addButton("Gereed", QDialogButtonBox.ButtonRole.AcceptRole)
+        done.setObjectName("primaryButton")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
+
+    def maybe_show_browser_extension_setup(self):
+        if self.settings.value("browser_extension_setup_seen", False, type=bool):
+            return
+        self.open_rudder_extension_folder()
+        if (self._rudder_extension_directory() / "manifest.json").is_file():
+            self.settings.setValue("browser_extension_setup_seen", True)
 
     def _selected_rudder_event(self):
-        return self._combo_event(self.event_control_event_combo) or self._active_event()
+        return self._event_control_selected_event()
 
     def _ensure_rudder_attendance_url(self, event, force_prompt=False):
         if not event:
@@ -5409,6 +3244,59 @@ class BezoekerslijstWindow(QMainWindow):
             return
         QDesktopServices.openUrl(QUrl(canonical_url))
 
+    def _serve_rudder_attendance(self, request):
+        """Beantwoord de Browserassistent, maar alleen na een klik van de gebruiker.
+
+        Er staan namen en registratie-ID's in wat hier de deur uitgaat, dus dit
+        gebeurt nooit stilzwijgend.
+        """
+        try:
+            wanted = str(request.rudder_event_id).strip()
+            event = next(
+                (item for item in self.events
+                 if str(item.get("rudder_event_id", "") or "").strip() == wanted),
+                None,
+            )
+            if event is None:
+                request.status = 404
+                request.error = (
+                    f"In het geopende EventHub-dossier staat geen evenement met Rudder-nummer {wanted}."
+                )
+                return
+            visitors = self._event_visitors(event)
+            if not visitors:
+                request.status = 404
+                request.error = f"'{event.get('name', '')}' heeft nog geen deelnemers in EventHub."
+                return
+            counts = attendance_counts(visitors, event.get("name", ""))
+            self.raise_()
+            self.activateWindow()
+            antwoord = QMessageBox.question(
+                self,
+                "Presentie doorgeven aan Rudder",
+                f"De Browserassistent vraagt de presentie van '{event.get('name', '')}'.\n\n"
+                f"{len(visitors)} deelnemer(s): {counts[AANWEZIG]} aanwezig, {counts[AFWEZIG]} niet gekomen, "
+                f"{counts[AFGEMELD]} afgemeld, {counts[ONBEKEND]} onbekend.\n\n"
+                "Hiermee gaan namen en registratie-ID's naar de browser. Doorgeven?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if antwoord != QMessageBox.StandardButton.Yes:
+                request.status = 403
+                request.error = "De aanvraag is in EventHub geweigerd."
+                return
+            payload = self._rudder_payload(event)
+            if not payload:
+                request.status = 404
+                request.error = "EventHub kon voor dit evenement geen presentie samenstellen."
+                return
+            request.payload = payload
+            self.status_label.setText(
+                f"Presentie van {event.get('name', '')} doorgegeven aan de Browserassistent."
+            )
+        finally:
+            request.done.set()
+
     def _rudder_payload(self, event):
         if not event:
             QMessageBox.information(self, "Geen evenement", "Kies eerst een evenement in Event Control.")
@@ -5449,8 +3337,8 @@ class BezoekerslijstWindow(QMainWindow):
             "participants": participants,
         }
 
-    def export_directly_to_rudder(self):
-        event = self._selected_rudder_event()
+    def export_directly_to_rudder(self, _checked=False, *, event=None):
+        event = event or self._selected_rudder_event()
         attendance_url = self._ensure_rudder_attendance_url(event)
         if not attendance_url:
             return
@@ -5475,41 +3363,6 @@ class BezoekerslijstWindow(QMainWindow):
             )
         except Exception as exc:
             self._show_runtime_error("Exporteren naar Rudder", exc)
-
-    def export_rudder_attendance(self):
-        event = self._selected_rudder_event()
-        payload = self._rudder_payload(event)
-        if not payload:
-            return
-        safe_event = re.sub(r"[^A-Za-z0-9._-]+", "-", event.get("name", "evenement")).strip("-") or "evenement"
-        if not self._confirm_personal_data_export("Het Rudder-aanwezigheidsbestand"):
-            return
-        default_path = exports_directory() / f"Rudder-aanwezigheid-{safe_event}.json"
-        file_name, _ = QFileDialog.getSaveFileName(
-            self, "Rudder-aanwezigheidsbestand maken", str(default_path), "EventHub Rudder-bestand (*.json)"
-        )
-        if not file_name:
-            return
-        if not file_name.lower().endswith(".json"):
-            file_name += ".json"
-        try:
-            target = Path(file_name)
-            self._write_bytes_atomic(target, json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
-            participants = payload["participants"]
-            present_count = sum(person["present"] for person in participants)
-            self.rudder_status_label.setText(
-                f"Bestand gemaakt: {present_count} aanwezig, {len(participants) - present_count} afwezig."
-            )
-            self.status_label.setText(f"Rudder-aanwezigheidsbestand gemaakt: {target}")
-            self._offer_open_export_folder(target)
-            QMessageBox.information(
-                self, "Rudder-bestand gereed",
-                f"{len(participants)} deelnemer(s) geëxporteerd.\n\n"
-                "Open nu Registratie opkomst in Rudder, klik rechtsonder op EventHub aanwezigheid en kies dit bestand.\n\n"
-                "De browserassistent toont eerst een controleoverzicht en slaat nooit zelfstandig op."
-            )
-        except Exception as exc:
-            self._show_runtime_error("Rudder-aanwezigheidsbestand maken", exc)
 
     def import_rudder_event(self, _checked=False, event=None):
         """Open Rudder and receive an allowlisted event snapshot from the browser assistant."""
@@ -5699,7 +3552,7 @@ class BezoekerslijstWindow(QMainWindow):
         if target:
             source = deepcopy(target)
         elif matched_template and isinstance(matched_template.get("event"), dict):
-            source = deepcopy(matched_template["event"])
+            source = event_from_template(matched_template)
             source["id"] = ""
             source["attachments"] = []
             source["evaluation"] = {}
@@ -5710,8 +3563,11 @@ class BezoekerslijstWindow(QMainWindow):
         source.update(updates)
 
         event_type = updates.get("event_type", "Meeloopdag")
-        if matched_template and isinstance(matched_template.get("event"), dict):
-            template_tasks = matched_template["event"].get("tasks", [])
+        if target and target.get("template_id"):
+            # A template is a starting point, not a live subscription to tasks.
+            template_tasks = []
+        elif matched_template and isinstance(matched_template.get("event"), dict):
+            template_tasks = template_event_data(matched_template["event"])["tasks"]
         else:
             template_tasks = tasks_from_templates(self.task_templates, event_type)
         existing_titles = {normalize(task.get("title", "")) for task in source.get("tasks", [])}
@@ -5828,21 +3684,10 @@ class BezoekerslijstWindow(QMainWindow):
 
     def show_nazorg_page(self):
         event = self._active_event()
-        if not event and len(self.events) == 1:
-            event = self.events[0]
-        if not event:
-            selected = self._selected_management_event(self.home_event_table)
-            if selected:
-                event = selected
-        if not event:
-            QMessageBox.information(
-                self, "Geen evenement geopend",
-                "Open of selecteer eerst een evenement om After sales te bekijken.",
-            )
-            return
-        self.active_event_id = event.get("id", "")
-        self.selected_events = {event.get("name", "")}
-        self._sync_latest_live_attendance_for_event(event)
+        if event:
+            self.active_event_id = event.get("id", "")
+            self.selected_events = {event.get("name", "")}
+            self._sync_latest_live_attendance_for_event(event)
         self._sync_event_combo(self.after_sales_event_combo)
         self.page_stack.setCurrentWidget(self.callback_tab)
         self._set_project_context_ui(False)
@@ -5852,10 +3697,11 @@ class BezoekerslijstWindow(QMainWindow):
     def _render_standard_tasks_page(self):
         if not hasattr(self, "standard_tasks_table"):
             return
-        templates = [prepare_task(template) for template in self.task_templates]
+        templates = [prepare_template(template) for template in self.task_templates]
         self.standard_tasks_table.setRowCount(len(templates))
         for row_index, task in enumerate(templates):
-            values = [task["title"], task_timing_text(task), f"{task['reminder_days']} dag(en) voor deadline"]
+            values = [task["title"], template_scope_text(task), task_timing_text(task),
+                      f"{task['reminder_days']} dag(en) voor deadline"]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setData(Qt.ItemDataRole.UserRole, task["id"])
@@ -5863,7 +3709,7 @@ class BezoekerslijstWindow(QMainWindow):
                 self.standard_tasks_table.setItem(row_index, column, item)
 
     def _save_standard_tasks(self, templates, apply_existing=False):
-        self.task_templates = [prepare_task(template) for template in templates]
+        self.task_templates = [prepare_template(template) for template in templates]
         self.settings.setValue("task_templates", json.dumps(self.task_templates, ensure_ascii=False))
         if apply_existing:
             for event in self.events:
@@ -5880,10 +3726,10 @@ class BezoekerslijstWindow(QMainWindow):
         self._render_standard_tasks_page()
 
     def add_standard_task(self):
-        editor = TaskDialog(None, self)
+        editor = TaskDialog(None, self, standaard=True)
         if editor.exec() != QDialog.DialogCode.Accepted or not editor.value()["title"]:
             return
-        templates = [prepare_task(template) for template in self.task_templates]
+        templates = [prepare_template(template) for template in self.task_templates]
         templates.append(editor.value())
         self._save_standard_tasks(templates)
 
@@ -5892,8 +3738,8 @@ class BezoekerslijstWindow(QMainWindow):
         if row < 0:
             QMessageBox.information(self, "Geen taak gekozen", "Selecteer eerst een standaardtaak.")
             return
-        templates = [prepare_task(template) for template in self.task_templates]
-        editor = TaskDialog(templates[row], self)
+        templates = [prepare_template(template) for template in self.task_templates]
+        editor = TaskDialog(templates[row], self, standaard=True)
         if editor.exec() != QDialog.DialogCode.Accepted or not editor.value()["title"]:
             return
         templates[row] = editor.value()
@@ -5904,7 +3750,7 @@ class BezoekerslijstWindow(QMainWindow):
         if row < 0:
             QMessageBox.information(self, "Geen taak gekozen", "Selecteer eerst een standaardtaak.")
             return
-        templates = [prepare_task(template) for template in self.task_templates]
+        templates = [prepare_template(template) for template in self.task_templates]
         answer = QMessageBox.question(self, "Taak verwijderen", f"Wilt u '{templates[row]['title']}' verwijderen?")
         if answer != QMessageBox.StandardButton.Yes:
             return
@@ -6144,14 +3990,11 @@ class BezoekerslijstWindow(QMainWindow):
         full_export_action.triggered.connect(self.export_excel)
         restore_action = QAction("Vorige versie herstellen", self)
         restore_action.triggered.connect(self.restore_previous_version)
-        recovery_action = QAction("Herstelbestanden beheren", self)
-        recovery_action.triggered.connect(self.manage_recovery_files)
         file_menu.addAction(save_action)
         file_menu.addAction(participant_export_action)
         file_menu.addAction(full_export_action)
         file_menu.addSeparator()
         file_menu.addAction(restore_action)
-        file_menu.addAction(recovery_action)
         view_menu = self.menuBar().addMenu("Weergave")
         self.focus_action = QAction("Werkgebied maximaliseren", self)
         self.focus_action.setShortcut("F11")
@@ -6168,6 +4011,9 @@ class BezoekerslijstWindow(QMainWindow):
         settings_menu.addAction(general_settings_action)
         settings_menu.addAction(task_defaults_action)
         settings_menu.addAction(project_templates_action)
+        whatsapp_templates_action = QAction("WhatsApp-sjablonen", self)
+        whatsapp_templates_action.triggered.connect(self.manage_whatsapp_templates)
+        settings_menu.addAction(whatsapp_templates_action)
         settings_menu.addSeparator()
         settings_menu.addAction("Opslaglocaties", self.show_storage_locations)
         settings_menu.addAction("Herstelbestanden beheren", self.manage_recovery_files)
@@ -6512,7 +4358,18 @@ class BezoekerslijstWindow(QMainWindow):
                 stored = DEFAULT_TASK_TEMPLATES
         except (TypeError, ValueError, json.JSONDecodeError):
             stored = DEFAULT_TASK_TEMPLATES
-        return [prepare_task(template) for template in stored if isinstance(template, dict)]
+        # Eenmalige migratie: bestaande gebruikers krijgen de nieuwe
+        # standaardtaak, maar kunnen hem daarna gewoon verwijderen of aanpassen.
+        if not self.settings.value("participant_list_task_added", False, type=bool):
+            default_task = next(
+                template for template in DEFAULT_TASK_TEMPLATES
+                if template.get("title") == "Deelnemerslijst toevoegen"
+            )
+            if not any(normalize(template.get("title", "")) == normalize(default_task["title"])
+                       for template in stored if isinstance(template, dict)):
+                stored.append(deepcopy(default_task))
+            self.settings.setValue("participant_list_task_added", True)
+        return [prepare_template(template) for template in stored if isinstance(template, dict)]
 
     def _load_project_templates(self):
         try:
@@ -6612,7 +4469,7 @@ class BezoekerslijstWindow(QMainWindow):
 
     def _presence_headers(self):
         fields = self.visible_fields_by_view["presence"]
-        return [FIELD_LABELS[field] for field in fields] + ["Aanwezig"]
+        return [FIELD_LABELS[field] for field in fields] + ["Aanwezigheid"]
 
     def choose_columns(self, initial_view: str = "participants"):
         dialog = QDialog(self)
@@ -6701,6 +4558,8 @@ class BezoekerslijstWindow(QMainWindow):
         self.status_label.setText("De zichtbare kolommen zijn per menu bijgewerkt.")
 
     def _apply_style(self):
+        # LET OP: alles onder de return hieronder is dode code. De stijl komt
+        # uit theme/styles.py; opmaak die je hier toevoegt doet niets.
         self.setStyleSheet(build_stylesheet(self.dark_mode_enabled))
         if hasattr(self, "neon_edge_overlay"):
             self.neon_edge_overlay.set_dark_mode(self.dark_mode_enabled)
@@ -6708,7 +4567,10 @@ class BezoekerslijstWindow(QMainWindow):
         for panel_name in ("own_trend_panel", "loose_trend_panel"):
             panel = getattr(self, panel_name, None)
             if panel is not None:
-                panel.chart.set_dark_mode(self.dark_mode_enabled)
+                for chart_name in ("chart", "overview_chart", "demographic_chart"):
+                    chart = getattr(panel, chart_name, None)
+                    if chart is not None:
+                        chart.set_dark_mode(self.dark_mode_enabled)
         return
 
         light_style = """
@@ -6786,425 +4648,48 @@ class BezoekerslijstWindow(QMainWindow):
         """
         self.setStyleSheet(dark_style if self.dark_mode_enabled else light_style)
 
-    def _record_map(self):
-        return {record["_id"]: record for record in self.records}
 
-    def _available_events(self):
-        events = {str(event.get("name", "") or "").strip() for event in self.events if event.get("name")}
-        events.update(event for record in self.records for event in record_events(record))
-        return sorted(events, key=normalize)
 
-    def _ensure_events_from_records(self):
-        known = {normalize(event.get("name", "")) for event in self.events if event.get("name")}
-        for name in sorted({value for record in self.records for value in record_events(record)}, key=normalize):
-            if normalize(name) not in known:
-                self.events.append(empty_event(name, self.task_templates))
-                known.add(normalize(name))
 
-    def _ensure_event_date_names(self):
-        """Migrate dated events and every participant link to the standard title."""
-        renamed = {}
-        used = set()
-        for event in self.events:
-            old_name = str(event.get("name", "") or "").strip()
-            new_name = event_name_with_date(old_name, event.get("date", ""))
-            candidate = new_name
-            sequence = 2
-            while normalize(candidate) in used:
-                candidate = f"{new_name} ({sequence})"
-                sequence += 1
-            used.add(normalize(candidate))
-            event["name"] = candidate
-            if old_name and old_name != candidate:
-                renamed[old_name] = candidate
-        if renamed:
-            for record in self.records:
-                names = [renamed.get(name, name) for name in record_events(record)]
-                record["Evenement"] = "; ".join(dict.fromkeys(filter(None, names)))
-        return renamed
 
-    def _event_by_id(self, event_id: str):
-        return next((event for event in self.events if event.get("id") == event_id), None)
 
-    def _event_by_name(self, name: str):
-        wanted = normalize(name)
-        return next((event for event in self.events if normalize(event.get("name", "")) == wanted), None)
 
-    def _event_sort_key(self, event: dict):
-        """Wat eraan komt eerst, daarna het verleden van recent naar oud.
 
-        Puur chronologisch oplopend sorteren zette het oudste — en dus altijd
-        het afgeronde — bovenaan, terwijl je vrijwel altijd met de eerstvolgende
-        evenementen werkt. Afgerond en Geannuleerd horen bij het verleden, ook
-        als de datum toevallig nog in de toekomst ligt.
-        """
-        event_date = parse_date(event.get("date", ""))
-        name = normalize(event.get("name", ""))
-        if event_date is None:
-            # Zonder datum onderaan: er valt niets over de actualiteit te zeggen.
-            return (2, 0, name)
-        closed = event.get("status") in {"Afgerond", "Geannuleerd"}
-        if event_date >= date.today() and not closed:
-            return (0, event_date.toordinal(), name)
-        # Negatief sorteert het verleden aflopend: het meest recente eerst.
-        return (1, -event_date.toordinal(), name)
 
-    def _attach_row_menu(self, table, actions):
-        """Geef een tabel een rechtermuismenu met acties op de gekozen rij.
 
-        Rij-acties stonden als knoppenrij boven elke tabel. Die rijen groeiden
-        mee met de applicatie en namen ruimte in terwijl ze alleen bruikbaar
-        zijn zodra er iets geselecteerd is. Aanmaken blijft wel een knop: bij
-        een lege tabel valt er niets aan te wijzen.
-        """
-        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        table.customContextMenuRequested.connect(
-            lambda position, target=table, items=actions: self._show_row_menu(target, items, position)
-        )
 
-    def _show_row_menu(self, table, actions, position):
-        row = table.rowAt(position.y())
-        if row < 0 or table.isRowHidden(row):
-            return
-        table.selectRow(row)
-        menu = QMenu(table)
-        for label, handler in actions:
-            if label is None:
-                menu.addSeparator()
-                continue
-            menu.addAction(label, handler)
-        menu.exec(table.viewport().mapToGlobal(position))
 
-    def _show_event_context_menu(self, position):
-        table = self.home_event_table
-        row = table.rowAt(position.y())
-        if row < 0 or table.isRowHidden(row):
-            return
-        table.selectRow(row)
-        event = self._event_by_id(self._event_id_for_row(row))
-        if not event:
-            return
 
-        menu = QMenu(table)
-        menu.addAction("Openen", self.activate_selected_event)
-        menu.addAction("Aanpassen", self.edit_selected_event)
-        status_menu = menu.addMenu("Status")
-        current = str(event.get("status", "") or "")
-        automatic = not event.get("status_manual")
-        for label in [AUTOMATIC_STATUS, *EVENT_STATUSES]:
-            action = status_menu.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(automatic if label == AUTOMATIC_STATUS else (not automatic and label == current))
-            action.triggered.connect(
-                lambda _checked=False, value=label, target=event: self._set_event_status(target, value)
-            )
-        menu.addSeparator()
-        menu.addAction("Verwijderen", self.remove_selected_event)
-        menu.exec(table.viewport().mapToGlobal(position))
 
-    def _set_event_status(self, event: dict, status: str):
-        """Zet de status vanuit het overzicht, of geef hem terug aan de automatiek."""
-        if status == AUTOMATIC_STATUS:
-            event.pop("status_manual", None)
-            self._sync_event_status_from_tasks(event)
-            message = f"Status van {event.get('name', 'evenement')} wordt weer automatisch bepaald."
-        else:
-            event["status"] = status
-            event["status_manual"] = True
-            message = f"Status van {event.get('name', 'evenement')} staat op {status}."
-        self._mark_dirty()
-        self._render_all()
-        self.status_label.setText(message)
 
-    def _events_in_display_order(self):
-        """De evenementen zoals ze in het overzicht moeten staan.
 
-        Klikken op de kolomkop kan hier niet: de kolom Evenement gebruikt een
-        cel-widget, en die verhuist niet mee wanneer Qt de rijen omwisselt.
-        Daarom sorteren we de gegevens en bouwen we de tabel opnieuw op.
-        """
-        mode = "smart"
-        if hasattr(self, "event_sort_mode"):
-            mode = str(self.event_sort_mode.currentData() or "smart")
-        if mode == "name":
-            return sorted(self.events, key=lambda event: normalize(event.get("name", "")))
-        if mode in {"date_asc", "date_desc"}:
-            def key(event):
-                event_date = parse_date(event.get("date", ""))
-                # Evenementen zonder datum blijven onderaan, in beide richtingen.
-                return (event_date is None, event_date or date.min, normalize(event.get("name", "")))
-            dated = [event for event in self.events if parse_date(event.get("date", ""))]
-            undated = [event for event in self.events if not parse_date(event.get("date", ""))]
-            dated.sort(key=key, reverse=(mode == "date_desc"))
-            undated.sort(key=lambda event: normalize(event.get("name", "")))
-            return dated + undated
-        return sorted(self.events, key=self._event_sort_key)
 
-    def _event_sort_changed(self, *_):
-        self.settings.setValue("event_sort_mode", str(self.event_sort_mode.currentData() or "smart"))
-        self._render_management()
 
-    def _filter_events(self, *_):
-        """Filter het evenementenoverzicht op zoektekst en status."""
-        table = getattr(self, "home_event_table", None)
-        if table is None or not hasattr(self, "event_search_box"):
-            return
-        needle = normalize(self.event_search_box.text())
-        wanted_status = str(self.event_status_filter.currentData() or "")
-        visible = 0
-        for row in range(table.rowCount()):
-            event = self._event_by_id(self._event_id_for_row(row))
-            if event is None:
-                table.setRowHidden(row, bool(needle) or bool(wanted_status))
-                continue
-            status = str(event.get("status", "") or "")
-            if wanted_status == "_open":
-                matches_status = status not in {"Afgerond", "Geannuleerd"}
-            else:
-                matches_status = not wanted_status or status == wanted_status
-            haystack = normalize(" ".join(str(event.get(field, "") or "") for field in (
-                "name", "date", "event_type", "place", "location", "status", "target_audience",
-            )))
-            matches_search = not needle or needle in haystack
-            hidden = not (matches_status and matches_search)
-            table.setRowHidden(row, hidden)
-            visible += not hidden
-        total = table.rowCount()
-        self.event_filter_summary.setText(
-            "" if visible == total else f"{visible} van {total} getoond"
-        )
 
-    def _event_id_for_row(self, row: int) -> str:
-        item = self.home_event_table.item(row, 0)
-        return str(item.data(Qt.ItemDataRole.UserRole) or "") if item else ""
 
-    def _event_visitors(self, event: dict):
-        wanted = normalize(event.get("name", ""))
-        return [record for record in self.records if any(normalize(name) == wanted for name in record_events(record))]
 
-    def _selected_management_event(self, table=None):
-        table = table or self.event_table
-        row = table.currentRow()
-        if row < 0:
-            return None
-        # Een weggefilterde rij blijft in Qt de huidige rij. Zonder deze controle
-        # werken Openen, Aanpassen en vooral Verwijderen op een evenement dat
-        # niet in beeld staat.
-        if table.isRowHidden(row):
-            return None
-        item = table.item(row, 0)
-        return self._event_by_id(item.data(Qt.ItemDataRole.UserRole)) if item else None
 
-    def _combo_event(self, combo: QComboBox):
-        return self._event_by_id(str(combo.currentData() or ""))
 
-    def _sync_event_combo(self, combo: QComboBox):
-        current_id = str(combo.currentData() or "")
-        combo.blockSignals(True)
-        combo.clear()
-        for event in sorted(self.events, key=self._event_sort_key):
-            combo.addItem(event.get("name", "Onbenoemd evenement"), event.get("id", ""))
-        index = combo.findData(current_id)
-        if index < 0 and self.selected_events:
-            selected_name = next(iter(self.selected_events)) if len(self.selected_events) == 1 else ""
-            selected_event = self._event_by_name(selected_name)
-            index = combo.findData(selected_event.get("id")) if selected_event else -1
-        combo.setCurrentIndex(index if index >= 0 else (0 if combo.count() else -1))
-        combo.blockSignals(False)
 
-    def _recent_activity(self):
-        try:
-            value = json.loads(self.settings.value("home_recent_activity", "[]"))
-        except Exception:
-            value = []
-        return value if isinstance(value, list) else []
 
-    def _add_recent_activity(self, text: str):
-        text = str(text or "").strip()
-        if not text:
-            return
-        items = self._recent_activity()
-        items.insert(0, {"at": datetime.now().isoformat(timespec="minutes"), "text": text})
-        self.settings.setValue("home_recent_activity", json.dumps(items[:8], ensure_ascii=False))
-        self._render_recent_activity()
 
-    def _render_recent_activity(self):
-        if not hasattr(self, "home_activity_label"):
-            return
-        items = self._recent_activity()[:5]
-        if not items:
-            self.home_activity_label.setText("Nog geen recente activiteit.")
-            return
-        today = date.today()
-        lines = []
-        for item in items:
-            try:
-                stamp = datetime.fromisoformat(str(item.get("at", "")))
-                prefix = stamp.strftime("%H:%M") if stamp.date() == today else stamp.strftime("%d-%m · %H:%M")
-            except Exception:
-                prefix = "•"
-            lines.append(f"{prefix}   {item.get('text', '')}")
-        self.home_activity_label.setText("\n".join(lines))
 
-    def _render_management(self):
-        if not hasattr(self, "event_table"):
-            return
-        if hasattr(self, "event_control_event_combo"):
-            self._sync_event_combo(self.event_control_event_combo)
-        if hasattr(self, "after_sales_event_combo"):
-            self._sync_event_combo(self.after_sales_event_combo)
-        events = self._events_in_display_order()
-        profile_name = self.profile.get("name") or "collega"
-        self.home_welcome.setText(f"Evenementen · {profile_name}")
-        if hasattr(self, "start_welcome"):
-            hour = datetime.now().hour
-            greeting = "Goedemorgen" if hour < 12 else ("Goedemiddag" if hour < 18 else "Goedenavond")
-            self.start_welcome.setText(f"{greeting}, {profile_name}")
-            weekdays = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
-            months = ["januari", "februari", "maart", "april", "mei", "juni", "juli", "augustus", "september", "oktober", "november", "december"]
-            now = date.today()
-            self.start_date_label.setText(f"{weekdays[now.weekday()].capitalize()} {now.day} {months[now.month - 1]} · dit vraagt nu je aandacht")
-            self._render_recent_activity()
 
-            active = self._active_event()
-            if active:
-                self.home_continue_title.setText(str(active.get("name", "Evenement")))
-                self.home_continue_meta.setText("Laatst gebruikte evenementcontext · open het dossier om verder te werken.")
-                self.home_continue_button.setEnabled(True)
-                self.home_continue_button.setVisible(True)
-            else:
-                self.home_continue_title.setText("Nog geen recente werkcontext")
-                self.home_continue_meta.setText("Open een evenement om hier later direct verder te gaan.")
-                self.home_continue_button.setEnabled(False)
-                # Zonder werkcontext heeft de knop geen doel: verbergen i.p.v. grijs tonen.
-                self.home_continue_button.setVisible(False)
 
-            open_rows = self._open_task_rows()
-            overdue = sum(1 for due, *_ in open_rows if self._task_bucket(due) == "Te laat")
-            due_today = sum(1 for due, *_ in open_rows if self._task_bucket(due) == "Vandaag")
-            attention = []
-            if overdue:
-                attention.append(f"⚠ {overdue} taak/taken te laat")
-            if due_today:
-                attention.append(f"• {due_today} taak/taken vandaag")
-            self.home_attention_label.setText("\n".join(attention) if attention else "✓ Alles op orde\nEventHub ziet op dit moment geen bijzonderheden.")
 
-            todays = [event for event in events if parse_date(event.get("date", "")) == now and event.get("status") != "Geannuleerd"]
-            if todays:
-                today_event = todays[0]
-                self._home_today_event_id = str(today_event.get("id", ""))
-                visitors = len(self._event_visitors(today_event))
-                self.home_today_title.setText(str(today_event.get("name", "Evenement")))
-                meta = " · ".join(filter(None, [str(today_event.get("start_time", "") or ""), str(today_event.get("place", "") or today_event.get("location", "") or "")]))
-                self.home_today_meta.setText(f"{visitors} deelnemers" + (f" · {meta}" if meta else ""))
-                self.home_today_button.setText("Evenement openen →")
-                self.home_today_button.setEnabled(True)
-                self.home_today_live_button.setEnabled(True)
-                self.home_today_button.setVisible(True)
-                self.home_today_live_button.setVisible(True)
-            else:
-                # Een live sessie hoort bij een evenement van vandaag; buiten die dag
-                # heeft de knop geen doel.
-                self.home_today_live_button.setEnabled(False)
-                self.home_today_live_button.setVisible(False)
-                self.home_today_title.setText("Geen evenementen vandaag")
-                next_events = self._upcoming_events()
-                if next_events:
-                    # Maak het lege blok bruikbaar: wijs naar het eerstvolgende evenement.
-                    next_event = next_events[0]
-                    self._home_today_event_id = str(next_event.get("id", ""))
-                    next_date = parse_date(next_event.get("date", ""))
-                    days_until = (next_date - now).days if next_date else None
-                    if days_until == 1:
-                        when = "morgen"
-                    elif days_until and days_until > 1:
-                        when = f"over {days_until} dagen"
-                    else:
-                        when = "binnenkort"
-                    meta = " · ".join(filter(None, [
-                        str(next_event.get("start_time", "") or ""),
-                        str(next_event.get("place", "") or next_event.get("location", "") or ""),
-                    ]))
-                    self.home_today_meta.setText(
-                        f"Volgende: {next_event.get('name', 'Evenement')} · {when}"
-                        + (f" · {meta}" if meta else "")
-                    )
-                    self.home_today_button.setText("Volgende evenement openen →")
-                    self.home_today_button.setEnabled(True)
-                    self.home_today_button.setVisible(True)
-                else:
-                    self._home_today_event_id = ""
-                    self.home_today_meta.setText("Je planning is vandaag leeg.")
-                    self.home_today_button.setEnabled(False)
-                    self.home_today_button.setVisible(False)
-        self.home_event_table.setRowCount(len(events))
-        open_tasks_total = len(self._open_task_rows())
-        for row_index, event in enumerate(events):
-            visitors = self._event_visitors(event)
-            home_values = [
-                event.get("date", ""), event.get("name", ""),
-                event.get("event_type", "Meeloopdag"),
-                " — ".join(filter(None, [event.get("place", ""), event.get("location", "")])),
-                event.get("status", ""), str(len(visitors)),
-            ]
-            for column, value in enumerate(home_values):
-                item = QTableWidgetItem(str(value or ""))
-                item.setData(Qt.ItemDataRole.UserRole, event.get("id", ""))
-                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                self.home_event_table.setItem(row_index, column, item)
-            rudder_connected = is_rudder_event_linked(event)
-            if rudder_connected:
-                sync_text = human_sync_time(event.get("rudder_last_synced_at", ""))
-                rudder_text = f"🔗 Rudder gekoppeld · Laatst gesynchroniseerd: {sync_text}"
-            else:
-                rudder_text = "Niet gekoppeld aan Rudder"
-            event_item = self.home_event_table.item(row_index, 1)
-            event_item.setText(f"{event.get('name', '')}\n{rudder_text}")
-            cell = QWidget()
-            cell.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-            cell_layout = QVBoxLayout(cell)
-            cell_layout.setContentsMargins(8, 4, 6, 4)
-            cell_layout.setSpacing(1)
-            name_label = QLabel(str(event.get("name", "") or "Onbenoemd evenement"))
-            name_label.setToolTip(str(event.get("name", "") or "Onbenoemd evenement"))
-            status_label = QLabel(rudder_text)
-            status_label.setStyleSheet("color: #7f8ba0; font-size: 11px;")
-            cell_layout.addWidget(name_label)
-            cell_layout.addWidget(status_label)
-            self.home_event_table.setCellWidget(row_index, 1, cell)
-            self.home_event_table.setRowHeight(row_index, 44)
-        # De tabel is opnieuw opgebouwd, dus de zoek- en statusfilters moeten
-        # opnieuw worden toegepast; anders komt alles weer zichtbaar terug.
-        self._filter_events()
 
-        notifications = self._all_notifications()
-        active_events = sum(event.get("status") in {"Concept", "In voorbereiding"} for event in events)
-        self.home_event_count[1].setText(str(len(events)))
-        self.home_event_count[2].setText(f"{active_events} in voorbereiding")
-        self.home_task_count[1].setText(str(open_tasks_total))
-        self.home_task_count[2].setText(f"{len(notifications)} meldingen actief")
-        self.home_visitor_count[1].setText(str(len(self.records)))
-        self.home_visitor_count[2].setText("Over alle evenementen")
-        self.notification_button.setText(f"🔔  {len(notifications)}")
-        self.notification_button.setProperty("hasNotifications", bool(notifications))
-        self.notification_button.style().unpolish(self.notification_button)
-        self.notification_button.style().polish(self.notification_button)
-        self.notification_button.setToolTip(
-            f"{len(notifications)} actieve melding(en)" if notifications else "Geen actieve meldingen"
-        )
-        task_tab_index = self.tabs.indexOf(self.tasks_tab)
-        if task_tab_index >= 0:
-            active_notifications = sum(
-                notification["event_id"] == self.active_event_id for notification in notifications
-            )
-            self.tabs.setTabText(
-                task_tab_index,
-                f"Taken ({active_notifications})" if active_notifications else "Taken",
-            )
-        self._update_event_workspace_header()
-        self._render_rudder_tab()
-        self._render_task_table()
-        self._render_open_tasks_page()
+
+
+
+
+
+
+
+
+
+
+
+
 
     def _active_event(self):
         event = self._event_by_id(self.active_event_id) if self.active_event_id else None
@@ -7213,6 +4698,29 @@ class BezoekerslijstWindow(QMainWindow):
         if len(self.selected_events) == 1:
             return self._event_by_name(next(iter(self.selected_events)))
         return None
+
+    def switch_event(self):
+        """Wissel van evenementdossier zonder eerst terug naar het overzicht.
+
+        Hetzelfde keuzevenster als in de werkruimtes; het huidige evenement
+        staat er gemarkeerd in, zodat je ziet waar je vandaan komt.
+        """
+        if not self.events:
+            QMessageBox.information(self, "Geen evenementen", "Maak eerst een evenement aan.")
+            return
+        huidig = self._active_event() or {}
+        gesorteerd = sorted(self.events, key=self._event_sort_key)
+        dialog = EventPickerDialog(
+            gesorteerd, str(huidig.get("id", "")), self,
+            aanmeldingen=self._registration_lines(gesorteerd),
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.chosen_id:
+            return
+        if dialog.chosen_id == str(huidig.get("id", "")):
+            return
+        gekozen = self._event_by_id(dialog.chosen_id)
+        if gekozen:
+            self.open_event(gekozen)
 
     def _update_event_workspace_header(self):
         if not hasattr(self, "event_title_label"):
@@ -7254,6 +4762,7 @@ class BezoekerslijstWindow(QMainWindow):
         ])) or "Niet ingevuld"
         self.event_details_label.setText(
             f"<p><b>Soort evenement:</b> {escape(event.get('event_type', '') or 'Niet ingevuld')}<br>"
+            f"<b>Template:</b> {escape(next((t['name'] for t in self.project_templates if t['id'] == event.get('template_id')), event.get('template_name') or 'Zonder template'))}<br>"
             f"<b>Datum:</b> {escape(event.get('date', '') or 'Niet ingevuld')}<br>"
             f"<b>Tijd:</b> {escape(time_text or 'Niet ingevuld')}<br>"
             f"<b>Regio:</b> {escape(event.get('region', '') or 'Niet ingevuld')}<br>"
@@ -7262,7 +4771,20 @@ class BezoekerslijstWindow(QMainWindow):
             f"<b>Max. registraties:</b> {escape(event.get('maximum_registrants', '') or 'Niet ingevuld')}<br>"
             f"<b>Contact:</b> {escape(contact)}<br>"
             f"<b>Doelgroep:</b> {escape(event.get('target_audience', '') or 'Niet ingevuld')}</p>"
-            f"<p><b>Beschrijving</b><br>{escape(event.get('description', '') or 'Niet ingevuld')}</p>"
+            + self._listings_html(event)
+            + f"<p><b>Beschrijving</b><br>{escape(event.get('description', '') or 'Niet ingevuld')}</p>"
+        )
+
+    def _listings_html(self, event: dict) -> str:
+        """Waaruit dit evenement is samengevoegd; leeg als dat niet zo is."""
+        samengevoegd = self._event_listings(event)
+        if not samengevoegd:
+            return ""
+        regels = "<br>".join(
+            f"{escape(label)} — {aantal} deelnemer(s)" for label, aantal in samengevoegd
+        )
+        return (
+            f"<p><b>Samengevoegd uit {len(samengevoegd)} inschrijvingen</b><br>{regels}</p>"
         )
 
     def _render_rudder_tab(self):
@@ -7320,7 +4842,14 @@ class BezoekerslijstWindow(QMainWindow):
         instructions = str(data.get("location_instructions", "") or "").strip()
         self.rudder_location_instructions.setHtml(instructions or "<p><i>Niet ingevuld</i></p>")
 
-    def open_event(self, event: dict, tab: QWidget | None = None):
+    def open_event(self, event: dict, tab: QWidget | None = None, stil: bool = False):
+        """Open een evenementdossier.
+
+        Met ``stil`` blijft het bij tonen: geen presentiesynchronisatie en geen
+        aantekening dat het dossier is geopend. Dat is wat de rondleiding
+        nodig heeft; die mag niets wijzigen en al helemaal geen venster openen
+        dat achter de rondleidingslaag verdwijnt.
+        """
         if not event:
             return
         self.event_focus_mode = True
@@ -7330,7 +4859,9 @@ class BezoekerslijstWindow(QMainWindow):
             self.settings.setValue("participants_include_introducees", True)
         self.active_event_id = event.get("id", "")
         self.selected_events = {event.get("name", "")}
-        self._sync_latest_live_attendance_for_event(event)
+        if not stil:
+            self._touch_event(event, opened=True)
+            self._sync_latest_live_attendance_for_event(event)
         self._render_all()
         self.page_stack.setCurrentWidget(self.event_page)
         self._set_project_context_ui(True)
@@ -7378,9 +4909,7 @@ class BezoekerslijstWindow(QMainWindow):
         self.active_event_id = event.get("id", "")
         self.selected_events = {event.get("name", "")}
         self._sync_event_combo(self.event_control_event_combo)
-        event_index = self.event_control_event_combo.findData(event.get("id", ""))
-        if event_index >= 0:
-            self.event_control_event_combo.setCurrentIndex(event_index)
+        self.event_control_event_combo.set_current_id(event.get("id", ""))
         self.show_event_control_page()
         self.event_control_tabs.setCurrentWidget(self.live_session_tab)
         self.status_label.setText(f"Event Control — Live sessie · {event.get('name', 'Evenement')}")
@@ -7418,11 +4947,8 @@ class BezoekerslijstWindow(QMainWindow):
         # werkgebied waar je ruimte voor wilt.
         if self.page_stack.currentWidget() is self.trends_page:
             panel = self._active_trend_panel()
-            panel.set_maximised(not panel.maximised)
-            self.status_label.setText(
-                "Grafiek gemaximaliseerd — F11 of de knop rechtsboven zet het overzicht terug."
-                if panel.maximised else "Trends — ontwikkeling over evenementen heen."
-            )
+            panel.open_chart_window()
+            self.status_label.setText("Trends — ontwikkeling over evenementen heen.")
             return
         if self.page_stack.currentWidget() is not self.event_page:
             self.status_label.setText("Open eerst een evenement om het werkgebied te maximaliseren.")
@@ -7835,11 +5361,7 @@ class BezoekerslijstWindow(QMainWindow):
 
         def show_live_tab():
             self.show_event_control_page()
-            self.event_control_tabs.setCurrentIndex(0)
-
-        def show_dashboard_tab():
-            self.show_event_control_page()
-            self.event_control_tabs.setCurrentIndex(1)
+            self.event_control_tabs.setCurrentWidget(self.live_session_tab)
 
         steps = [
             {
@@ -7878,9 +5400,9 @@ class BezoekerslijstWindow(QMainWindow):
                 "title": "Meekijken tijdens het evenement",
                 "body": "Het live dashboard toont in de browser hoeveel mensen binnen zijn, wat het "
                         "opkomstpercentage is en welke apparaten meedoen. Handig om open te zetten op een "
-                        "tweede scherm.",
-                "prepare": show_dashboard_tab,
-                "target": lambda: self.event_control_tabs,
+                        "tweede scherm. Zodra de livesessie actief is, staat de dashboardknop bij de sessiestatus.",
+                "prepare": show_live_tab,
+                "target": lambda: self.live_session_tab,
             },
             {
                 "title": "Terug in het dossier",
@@ -7905,11 +5427,89 @@ class BezoekerslijstWindow(QMainWindow):
         # hoofdrondleiding.
         self._tutorial_overlay = TutorialOverlay(self, steps, finish_live_tour)
 
+    def _show_trends_for_tutorial(self):
+        # Alleen tonen: de normale navigatie kan historische cijfers bijwerken.
+        self.page_stack.setCurrentWidget(self.trends_page)
+        self._set_project_context_ui(False)
+        self._set_navigation_active("trends")
+        self._render_trends()
+
+    def start_trends_tour(self, *_):
+        if self._tutorial_is_running():
+            return
+        original_page = self.page_stack.currentWidget()
+        original_workspace = self.trend_tabs.currentIndex()
+        original_navigation = next((name for name, button in self.sidebar_buttons.items()
+                                    if button.objectName() == "sidebarButtonActive"), None)
+        original_heading = (self.app_title.text(), self.app_subtitle.text())
+        original_focus_mode = self.event_focus_mode
+        original_focus_action = (self.focus_action.isEnabled(), self.focus_action.text())
+        panel = self.own_trend_panel if original_workspace == 0 else self.loose_trend_panel
+        original_analysis = panel.analysis_tabs.currentIndex()
+
+        def show_analysis():
+            self._show_trends_for_tutorial()
+            self.trend_tabs.setCurrentIndex(original_workspace)
+            panel.analysis_tabs.setCurrentIndex(1)
+
+        def show_loose():
+            self._show_trends_for_tutorial()
+            self.trend_tabs.setCurrentIndex(1)
+
+        steps = [
+            dict(title="Kies uw gegevens", body="Eigen evenementen en Losse analyse zijn gescheiden werkgebieden. "
+                 "Bij eigen evenementen moeten de aanwezigheidscijfers zijn afgerond. Onbekende aanwezigheidsstatussen "
+                 "kunnen ervoor zorgen dat een evenement nog niet meetelt.",
+                 prepare=self._show_trends_for_tutorial, target=lambda: self.trend_tabs),
+            dict(title="Periode en selectie", body="Alle perioden gebruikt alle beschikbare gegevens. Kies een kortere "
+                 "periode of filter op template, locatie of evenement voor een gerichte vergelijking. Deze selectie "
+                 "gaat ook mee naar de rapportomgeving.", prepare=show_analysis, target=lambda: panel.range_choice),
+            dict(title="Wat wilt u onderzoeken?", body="Kies een meetwaarde, zoals aanmeldingen, no-shows of afmeldingen, "
+                 "en een uitsplitsing, bijvoorbeeld leeftijd of opleidingsniveau. Zo bepaalt u eerst uw vraag, "
+                 "voordat u groepen met elkaar vergelijkt.", prepare=show_analysis, target=lambda: panel.metric_choice),
+            dict(title="Statistieken of verloop", body="Statistieken vat de gekozen gegevens samen per groep. Verloop "
+                 "toont de ontwikkeling door de tijd. Kies daarvoor een tijdseenheid, bijvoorbeeld per evenement, "
+                 "maand of kwartaal. Eén tijdspunt kan alleen een bolletje opleveren, geen ontwikkeling.",
+                 prepare=show_analysis, target=lambda: panel.display_choice),
+            dict(title="Gericht groepen vergelijken", body="Na een uitsplitsing kunt u via Groepen kiezen bepalen "
+                 "welke categorieën u vergelijkt. Beperk de selectie voor een leesbare grafiek. Als percentage van "
+                 "totaal toont het aandeel binnen de gekozen meetwaarde; dat is niet automatisch de no-showkans "
+                 "binnen een leeftijdsgroep.", prepare=show_analysis, target=lambda: panel.analysis_tabs),
+            dict(title="Uw huidige analyse exporteren", body="Exporteren neemt uw selectie mee. Het rapportprofiel "
+                 "Huidige analyse sluit aan op de gekozen analyse. Controleer de inhoud en het exportvoorbeeld "
+                 "voordat u PDF of Excel opslaat. Een grafiek kunt u ook via het rechtermuisknopmenu als PNG bewaren.",
+                 prepare=show_analysis, target=lambda: self.trend_export_button),
+            dict(title="Later verder met een losse analyse", body="Via Analyse beheren kiest of bewaart u een analyse "
+                 "en voegt u nieuwe bezoekerslijsten toe. Geef de werkelijke evenementdatum op: de datum in een "
+                 "Rudder-exportbestandsnaam is niet automatisch de evenementdatum. Zo hoeft u bestaande lijsten "
+                 "niet telkens opnieuw in te laden.", prepare=show_loose, target=lambda: self.trend_manage_button),
+        ]
+
+        def finish(completed):
+            panel.analysis_tabs.setCurrentIndex(original_analysis)
+            self.trend_tabs.setCurrentIndex(original_workspace)
+            self.page_stack.setCurrentWidget(original_page)
+            self.event_focus_mode = original_focus_mode
+            self._set_project_context_ui(original_page is self.event_page)
+            self._set_navigation_active(original_navigation)
+            self.app_title.setText(original_heading[0])
+            self.app_subtitle.setText(original_heading[1])
+            self.focus_action.setEnabled(original_focus_action[0])
+            self.focus_action.setText(original_focus_action[1])
+            self._tutorial_overlay = None
+            self.status_label.setText("Uitleg Trends afgerond." if completed else "Uitleg Trends gesloten.")
+
+        self._tutorial_overlay = TutorialOverlay(self, steps, finish)
+
     def start_tutorial(self, *_):
         if self._tutorial_is_running():
             return
 
         original_page = self.page_stack.currentWidget()
+        original_navigation = next((name for name, button in self.sidebar_buttons.items()
+                                    if button.objectName() == "sidebarButtonActive"), None)
+        original_heading = (self.app_title.text(), self.app_subtitle.text())
+        original_focus_action = (self.focus_action.isEnabled(), self.focus_action.text())
         original_event_id = self.active_event_id
         original_selected_events = set(self.selected_events)
         original_tab = self.tabs.currentWidget()
@@ -7938,7 +5538,7 @@ class BezoekerslijstWindow(QMainWindow):
             self.show_home()
 
         def show_event_tab(tab):
-            self.open_event(tutorial_event, tab)
+            self.open_event(tutorial_event, tab, stil=True)
 
         def show_event_control_presence():
             self.active_event_id = tutorial_event.get("id", "")
@@ -7967,25 +5567,60 @@ class BezoekerslijstWindow(QMainWindow):
                 "target": lambda: self.sidebar_buttons["events"],
             },
             {
-                "title": "Evenementen en meldingen",
-                "body": "Evenementen geeft het centrale overzicht. Zoek er op naam, plaats of datum en kies zelf de "
-                        "sortering; met de rechtermuisknop past u de status van een evenement aan. Het "
-                        "<b>alarmbelletje</b> verzamelt taken die aandacht vragen en kondigt aan wanneer "
-                        "persoonsgegevens verlopen.",
+                "title": "Het evenementenoverzicht",
+                "body": "Elk evenement staat op een kaart, gegroepeerd in <b>Vandaag</b>, <b>Komend</b> en "
+                        "<b>Geweest</b>. De balk laat zien hoever de voorbereiding is; bij een evenement dat "
+                        "is geweest staan de opkomstcijfers. Dubbelklik opent het dossier, en de knop met de "
+                        "drie puntjes geeft aanpassen, status wijzigen, samenvoegen en verwijderen. Rechtsboven "
+                        "wisselt u tussen kaarten en een compacte lijst.",
+                "prepare": show_home,
+                "target": lambda: self.event_board,
+            },
+            {
+                "title": "Zoeken en meldingen",
+                "body": "Zoek op naam, plaats of datum, of filter op soort evenement en een datum uit de "
+                        "kalender. Het <b>alarmbelletje</b> verzamelt taken die aandacht vragen en kondigt aan "
+                        "wanneer persoonsgegevens verlopen.",
                 "prepare": show_home,
                 "target": lambda: self.notification_button,
             },
             {
                 "title": "Een evenement aanmaken",
-                "body": "Maak hier een meeloopdag, voorlichting of online voorlichting. U kunt leeg beginnen of een evenementtemplate hergebruiken en alleen datum en deelnemers vervangen.",
+                "body": "Begin met een leeg evenement, hergebruik een evenementtemplate of neem één of meerdere evenementen over uit Rudder. Bij een template vult u de datum in en laadt u de deelnemers voor dit evenement apart in.",
                 "prepare": show_home,
                 "target": lambda: self.new_event_button,
+            },
+            {
+                "title": "Templatebeheer",
+                "body": "Via het tandwiel opent u <b>Templatebeheer</b>: bewaar vaste evenementgegevens en taken voor "
+                        "hergebruik. Een bestaand evenement bewaart u via de drie puntjes met <b>Opslaan als template</b>. "
+                        "Met <b>Evenementen aan template koppelen</b> groepeert u bestaande evenementen voor Trends, "
+                        "zonder hun taken te vervangen. Deelnemers worden niet in het template opgeslagen.",
+                "prepare": show_home,
+                "target": lambda: self.settings_button,
+            },
+            {
+                "title": "De browserextensie installeren",
+                "body": "Ga via het tandwiel naar <b>Algemene instellingen → Browserextensie → Browserextensie installeren</b>. "
+                        "De installatiehulp geeft de stappen voor Edge of Chrome en de juiste extensiemap. Dit doet u "
+                        "eenmalig in de browser waarmee u Rudder gebruikt. Staat uw organisatie installatie niet toe, "
+                        "vraag dan uw ICT-beheerder om hulp.",
+                "prepare": show_home,
+                "target": lambda: self.settings_button,
             },
             {
                 "title": "Evenementoverzicht",
                 "body": "In het evenementdossier vindt u de kerngegevens van het evenement. Via <b>Gegevens aanpassen</b> wijzigt u de basisgegevens; deelnemers beheert u in het tabblad Deelnemers.",
                 "prepare": lambda: show_event_tab(self.event_overview_tab),
                 "target": lambda: self.edit_event_button,
+            },
+            {
+                "title": "Snel naar een ander evenement",
+                "body": "Vanuit een geopend dossier brengt <b>Ander evenement</b> u meteen naar een ander "
+                        "evenement. U kiest daar uit dezelfde kaarten, met zoekveld, filters en een "
+                        "datumkiezer; het evenement waar u nu in zit staat gemarkeerd.",
+                "prepare": lambda: show_event_tab(self.event_overview_tab),
+                "target": lambda: self.switch_event_button,
             },
             {
                 "title": "Deelnemers beheren",
@@ -8007,13 +5642,20 @@ class BezoekerslijstWindow(QMainWindow):
             },
             {
                 "title": "Statistieken en gegevenscontrole",
-                "body": "Bekijk grafieken voor opleiding, profiel, geslacht en leeftijd. In het naastgelegen tabblad Gegevenscontrole vindt u ontbrekende waarden, mogelijke dubbelen en introducees zonder hoofdbezoeker.",
+                "body": "Bekijk grafieken voor opleiding, profiel, geslacht en leeftijd, en de kruistabel "
+                        "opleidingsniveau tegen profiel als kleurvlak of als tabel. In het naastgelegen tabblad "
+                        "<b>Gegevenscontrole</b> vindt u ontbrekende waarden, introducees zonder hoofdbezoeker en "
+                        "mogelijke dubbelen: meldt iemand zich twee keer aan, dan houdt u er één over en telt de "
+                        "andere nergens meer mee.",
                 "prepare": lambda: show_event_tab(self.statistics_tab),
                 "target": lambda: self.statistics_include_introducees,
             },
             {
                 "title": "Taken en deadlines",
-                "body": "Taken worden vanuit de evenementdatum gepland. Stel per taak de deadline en meldingstermijn in en vink hem af zodra hij gereed is; EventHub verwerkt de rest in het welkomsscherm en de meldingenbel.",
+                "body": "Taken worden vanuit de evenementdatum gepland. Stel per taak de deadline en "
+                        "meldingstermijn in en vink hem af zodra hij gereed is; EventHub verwerkt de rest in het "
+                        "welkomsscherm en de meldingenbel. Onder <b>Standaardtaken</b> bepaalt u welke taken "
+                        "meekomen, per soort evenement: een online voorlichting hoeft geen vervoer of catering.",
                 "prepare": lambda: show_event_tab(self.tasks_tab),
                 "target": lambda: self.task_table,
             },
@@ -8025,18 +5667,34 @@ class BezoekerslijstWindow(QMainWindow):
             },
             {
                 "title": "Rudder",
-                "body": "Gebruik de Rudder-koppeling om evenementgegevens te importeren of ondersteunde velden voor Rudder voor te bereiden. Controleer de configuratie, registratie, doelgroep en locatie voordat u de gegevens in Rudder opslaat.",
+                "body": "Gebruik de Rudder-koppeling om evenementgegevens te importeren of ondersteunde velden "
+                        "voor Rudder voor te bereiden. Op de aanwezigheidspagina van Rudder staat bovendien de "
+                        "knop <b>EventHub aanwezigheid</b>: die haalt de presentie rechtstreeks uit EventHub op, "
+                        "zonder dat u een bestand hoeft te zoeken.",
                 "prepare": lambda: show_event_tab(self.rudder_tab),
                 "target": lambda: self.rudder_import_button,
             },
             {
                 "title": "Trends",
-                "body": "Zie hoe opkomst, no-shows en doelgroep zich over evenementen heen ontwikkelen. "
+                "body": "Zie hoe opkomst, no-shows en afmeldingen zich over evenementen heen ontwikkelen. "
                         "Combineer zelf een meetwaarde met een uitsplitsing, bijvoorbeeld no-shows per "
-                        "opleidingsniveau. Onder <b>Losse analyse</b> laadt u bezoekerslijsten van elders in "
-                        "zonder uw eigen cijfers te vermengen.",
-                "prepare": self.show_trends_page,
+                        "opleidingsniveau, en kies de tijdseenheid. Onder <b>Losse analyse</b> laadt u "
+                        "bezoekerslijsten van elders in zonder uw eigen cijfers te vermengen. Een evenement telt "
+                        "pas mee zodra de presentieregistratie definitief is. Het vraagteken naast Exporteren geeft "
+                        "een aparte uitleg over selecties, groepen, statistieken en verloop.",
+                "prepare": self._show_trends_for_tutorial,
                 "target": lambda: self.trend_tabs,
+            },
+            {
+                "title": "Een rapport samenstellen",
+                "body": "<b>Exporteren</b> opent de rapportomgeving voor het werkgebied dat openstaat. In vijf "
+                        "stappen kiest u de gegevens, vinkt u aan welke onderdelen en grafieken meegaan, stelt u "
+                        "titel en pagina-indeling in, bekijkt u het voorbeeld en exporteert u naar PDF of Excel. "
+                        "U kiest daarbij tussen <b>statistieken</b> en <b>verloop</b>, en een eigen samenstelling "
+                        "bewaart u als sjabloon voor een volgende keer. <b>Huidige analyse</b> neemt de gekozen "
+                        "analyse als uitgangspunt; u hoeft niet altijd een volledig rapport te maken.",
+                "prepare": self._show_trends_for_tutorial,
+                "target": lambda: self.trend_export_button,
             },
             {
                 "title": "Persoonsgegevens verdwijnen vanzelf",
@@ -8062,15 +5720,20 @@ class BezoekerslijstWindow(QMainWindow):
             self._render_all()
             original_event = self._event_by_id(original_event_id) if original_event_id else None
             if original_page is self.event_page and original_event:
-                self.open_event(original_event, original_tab)
+                self.open_event(original_event, original_tab, stil=True)
                 self.event_focus_mode = original_focus_mode
                 self._apply_event_focus_mode()
             elif original_page is self.event_control_page:
                 self.show_event_control_page()
                 self.event_control_tabs.setCurrentWidget(original_event_control_tab)
             else:
-                self.page_stack.setCurrentWidget(self.home_page)
+                self.page_stack.setCurrentWidget(original_page)
                 self._set_project_context_ui(False)
+            self._set_navigation_active(original_navigation)
+            self.app_title.setText(original_heading[0])
+            self.app_subtitle.setText(original_heading[1])
+            self.focus_action.setEnabled(original_focus_action[0])
+            self.focus_action.setText(original_focus_action[1])
             self.status_label.setText(
                 "Rondleiding afgerond. U kunt deze altijd opnieuw starten via Help."
                 if completed else "Rondleiding gesloten. Via Help kunt u later verder kijken."
@@ -8125,6 +5788,13 @@ class BezoekerslijstWindow(QMainWindow):
         self.profile_phone_label.setText(str(self.profile.get("phone", "") or "Niet ingevuld"))
         signature = _profile_signature(self.profile)
         self.profile_signature_label.setText(signature or "Niet ingevuld")
+
+    def manage_whatsapp_templates(self, _checked=False):
+        dialog = WhatsAppTemplatesDialog(load_whatsapp_templates(self.settings), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        saved = save_whatsapp_templates(self.settings, dialog.value())
+        self.status_label.setText(f"WhatsApp-sjablonen opgeslagen ({len(saved)}).")
 
     def show_application_settings(self):
         preferences = {
@@ -8194,6 +5864,13 @@ class BezoekerslijstWindow(QMainWindow):
         )
 
     def show_trends_page(self):
+        upgraded = False
+        for event in self.events:
+            snapshot = event.get("statistiek", {})
+            if isinstance(snapshot, dict) and int(snapshot.get("schema", 0) or 0) < 5:
+                upgraded = self._capture_event_statistics(event) or upgraded
+        if upgraded:
+            self._mark_dirty()
         self.page_stack.setCurrentWidget(self.trends_page)
         self._set_project_context_ui(False)
         self._set_navigation_active("trends")
@@ -8214,11 +5891,112 @@ class BezoekerslijstWindow(QMainWindow):
             combined.extend(source["summaries"])
         return combined
 
+    def _own_trend_summaries(self):
+        names = {item["id"]: item["name"] for item in self.project_templates}
+        return [dict(item, template_name=names.get(item.get("template_id"), item.get("template_name", "")))
+                for item in collect_trend_summaries(self.events, source="Eigen dossier")]
+
     def _active_trend_panel(self):
         return (
             self.loose_trend_panel if self.trend_tabs.currentIndex() == 1
             else self.own_trend_panel
         )
+
+    def _open_trend_event(self, event_id: str):
+        """Drill-down vanuit Trends naar de bestaande Statistieken van een eigen evenement."""
+        event = self._event_by_id(event_id)
+        if event is None:
+            QMessageBox.information(
+                self, "Extern evenement",
+                "Dit evenement komt uit een losse, geanonimiseerde analyse en heeft in dit dossier geen Statistieken-pagina.",
+            )
+            return
+        self.open_event(event, self.statistics_tab)
+
+    def _analyses_dir(self) -> Path:
+        map_ = self._app_data_root() / "Analyses"
+        map_.mkdir(parents=True, exist_ok=True)
+        return map_
+
+    def _known_analyses(self) -> list:
+        """De bewaarde analyses, op naam."""
+        namen = []
+        for pad in sorted(self._analyses_dir().glob("*.json")):
+            try:
+                naam, _ = read_analysis(json.loads(pad.read_text(encoding="utf-8")))
+            except Exception:
+                continue
+            if naam:
+                namen.append(naam)
+        return sorted(namen, key=normalize)
+
+    def _save_current_analysis(self):
+        """Elke wijziging gaat meteen naar schijf; er valt niets te vergeten."""
+        naam = str(getattr(self, "current_analysis", "") or "").strip()
+        if not naam:
+            return
+        payload = analysis_payload(naam, getattr(self, "trend_sources", []))
+        try:
+            self._write_payload_atomic(self._analyses_dir() / analysis_file_name(naam), payload)
+        except Exception as exc:
+            self._write_error_log(f"Analyse bewaren: {naam}", str(exc))
+
+    def _load_analysis(self, naam: str):
+        pad = self._analyses_dir() / analysis_file_name(naam)
+        try:
+            bewaard, sources = read_analysis(json.loads(pad.read_text(encoding="utf-8")))
+        except Exception:
+            bewaard, sources = "", []
+        self.current_analysis = bewaard or naam
+        self.trend_sources = sources
+        self.settings.setValue("current_analysis", self.current_analysis)
+        self._sync_analysis_picker()
+        self._sync_trend_sources()
+        self._render_trends()
+
+    def _sync_analysis_picker(self):
+        if not hasattr(self, "analysis_picker"):
+            return
+        namen = self._known_analyses()
+        huidig = str(getattr(self, "current_analysis", "") or "")
+        if huidig and huidig not in namen:
+            namen.append(huidig)
+        self.analysis_picker.blockSignals(True)
+        self.analysis_picker.clear()
+        for naam in namen:
+            self.analysis_picker.addItem(naam, naam)
+        self.analysis_picker.addItem("Nieuwe analyse...", "")
+        index = self.analysis_picker.findData(huidig)
+        self.analysis_picker.setCurrentIndex(index if index >= 0 else 0)
+        self.analysis_picker.blockSignals(False)
+
+    def _analysis_picked(self, _index=None):
+        keuze = str(self.analysis_picker.currentData() or "")
+        if keuze:
+            if keuze != str(getattr(self, "current_analysis", "") or ""):
+                self._load_analysis(keuze)
+            return
+        naam, ok = QInputDialog.getText(
+            self, "Nieuwe analyse", "Hoe heet deze analyse?\n\nBijvoorbeeld: Inloopdagen, Meeloopdagen."
+        )
+        naam = str(naam or "").strip()
+        if not ok or not naam:
+            self._sync_analysis_picker()
+            return
+        if any(normalize(naam) == normalize(bestaand) for bestaand in self._known_analyses()):
+            QMessageBox.information(
+                self, "Naam al in gebruik", f"Er is al een analyse die '{naam}' heet."
+            )
+            self._sync_analysis_picker()
+            return
+        self.current_analysis = naam
+        self.trend_sources = []
+        self.settings.setValue("current_analysis", naam)
+        self._save_current_analysis()
+        self._sync_analysis_picker()
+        self._sync_trend_sources()
+        self._render_trends()
+        self.status_label.setText(f"Nieuwe analyse: {naam}. Laad hier bezoekerslijsten in.")
 
     def _sync_trend_sources(self):
         """Werk de keuzelijst en het overzicht van ingeladen sets bij."""
@@ -8235,6 +6013,10 @@ class BezoekerslijstWindow(QMainWindow):
         self.trend_source.blockSignals(False)
 
         sources = getattr(self, "trend_sources", [])
+        if hasattr(self, "trend_manage_button"):
+            self.trend_manage_button.setToolTip(
+                f"Analyse kiezen, lijsten inladen en sets beheren ({len(sources)} set(s) ingeladen)"
+            )
         self.trend_source_list.setRowCount(len(sources))
         for row, source in enumerate(sources):
             participants = sum(
@@ -8247,9 +6029,161 @@ class BezoekerslijstWindow(QMainWindow):
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 self.trend_source_list.setItem(row, column, item)
 
+    def _open_trend_source_management(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Losse analyse instellen")
+        _fit_dialog_to_screen(dialog, 760, 560, 600, 420)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(
+            "Kies een bewaarde analyse, laad bezoekerslijsten in en bepaal welke set in de grafieken meetelt. "
+            "De sets bevatten uitsluitend geaggregeerde trendgegevens."
+        )
+        intro.setObjectName("hintLabel")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        options = QFormLayout()
+        analysis_choice = ScrollSafeComboBox()
+        for index in range(self.analysis_picker.count()):
+            analysis_choice.addItem(
+                self.analysis_picker.itemText(index), self.analysis_picker.itemData(index)
+            )
+        analysis_choice.setCurrentIndex(self.analysis_picker.currentIndex())
+        source_choice = ScrollSafeComboBox()
+        for index in range(self.trend_source.count()):
+            source_choice.addItem(self.trend_source.itemText(index), self.trend_source.itemData(index))
+        source_choice.setCurrentIndex(self.trend_source.currentIndex())
+        options.addRow("Analyse:", analysis_choice)
+        options.addRow("Meetellen:", source_choice)
+        layout.addLayout(options)
+
+        import_button = _make_button_compact(QPushButton("Bezoekerslijsten inladen"))
+        import_button.setObjectName("primaryButton")
+        import_button.setToolTip(
+            "Laad één of meer bezoekerslijsten in (Excel of CSV), of een EventHub-dossier van een collega."
+        )
+        layout.addWidget(import_button, 0, Qt.AlignmentFlag.AlignLeft)
+
+        table = QTableWidget(0, 3)
+        table.setHorizontalHeaderLabels(["Ingeladen set", "Evenementen", "Deelnemers"])
+        table.setObjectName("dashboardTable")
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in (1, 2):
+            table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        layout.addWidget(table, 1)
+
+        def fill_table():
+            sources = getattr(self, "trend_sources", [])
+            table.setRowCount(len(sources))
+            for row, source in enumerate(sources):
+                participants = sum(
+                    int(item.get("statistiek", {}).get("aangemeld", 0) or 0)
+                    for item in source.get("summaries", [])
+                )
+                for column, text in enumerate((source["label"], len(source.get("summaries", [])), participants)):
+                    item = QTableWidgetItem(str(text))
+                    item.setData(Qt.ItemDataRole.UserRole, source["label"])
+                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                    table.setItem(row, column, item)
+            if sources:
+                table.selectRow(0)
+
+        def remove_selected():
+            row = table.currentRow()
+            item = table.item(row, 0) if row >= 0 else None
+            label = str(item.data(Qt.ItemDataRole.UserRole) or "") if item else ""
+            if not label:
+                QMessageBox.information(dialog, "Niets geselecteerd", "Selecteer eerst een set.")
+                return
+            if QMessageBox.question(
+                dialog, "Set verwijderen", f"Wilt u '{label}' uit deze losse analyse verwijderen?"
+            ) != QMessageBox.StandardButton.Yes:
+                return
+            self.trend_sources = [source for source in self.trend_sources if source["label"] != label]
+            self._save_current_analysis()
+            self._sync_trend_sources()
+            self._render_trends()
+            fill_table()
+            if not self.trend_sources:
+                dialog.accept()
+
+        def remove_all():
+            count = len(getattr(self, "trend_sources", []))
+            if QMessageBox.question(
+                dialog, "Alle sets verwijderen", f"Alle {count} ingeladen set(s) uit deze analyse verwijderen?"
+            ) != QMessageBox.StandardButton.Yes:
+                return
+            self.trend_sources = []
+            self._save_current_analysis()
+            self._sync_trend_sources()
+            self._render_trends()
+            dialog.accept()
+
+        def choose_analysis(index):
+            data = analysis_choice.itemData(index)
+            target = self.analysis_picker.findData(data)
+            if target >= 0:
+                self.analysis_picker.setCurrentIndex(target)
+                source_choice.clear()
+                for source_index in range(self.trend_source.count()):
+                    source_choice.addItem(
+                        self.trend_source.itemText(source_index),
+                        self.trend_source.itemData(source_index),
+                    )
+                source_choice.setCurrentIndex(self.trend_source.currentIndex())
+                fill_table()
+
+        def choose_source(index):
+            target = self.trend_source.findData(source_choice.itemData(index))
+            if target >= 0:
+                self.trend_source.setCurrentIndex(target)
+
+        def import_lists():
+            dialog.accept()
+            self.import_trend_data()
+
+        fill_table()
+        analysis_choice.currentIndexChanged.connect(choose_analysis)
+        source_choice.currentIndexChanged.connect(choose_source)
+        import_button.clicked.connect(import_lists)
+        actions = QHBoxLayout()
+        remove_button = _make_button_compact(QPushButton("Selectie verwijderen"))
+        remove_button.setObjectName("secondaryButton")
+        remove_button.clicked.connect(remove_selected)
+        clear_button = _make_button_compact(QPushButton("Alles wissen"))
+        clear_button.setObjectName("dangerButton")
+        clear_button.clicked.connect(remove_all)
+        close_button = _make_button_compact(QPushButton("Sluiten"))
+        close_button.setObjectName("primaryButton")
+        close_button.clicked.connect(dialog.accept)
+        actions.addWidget(remove_button)
+        actions.addWidget(clear_button)
+        actions.addStretch()
+        actions.addWidget(close_button)
+        layout.addLayout(actions)
+        dialog.exec()
+
     def _render_trends(self, *_):
         if not hasattr(self, "own_trend_panel"):
             return
+        incomplete = sum(bool(event.get("statistiek", {}).get("onbekend", 0))
+                         for event in self.events if isinstance(event.get("statistiek"), dict)
+                         and not event.get("exclude_from_analysis") and not event.get("persoonsgegevens_gewist"))
+        historical_unknown = sum(bool(event.get("persoonsgegevens_gewist"))
+                                 and bool(event.get("statistiek", {}).get("onbekend", 0))
+                                 for event in self.events if isinstance(event.get("statistiek"), dict)
+                                 and not event.get("exclude_from_analysis"))
+        self.trend_incomplete_notice.setText(
+            f"In dit dossier ontbreken {incomplete} evenementen in Trends omdat hun opgeslagen aanwezigheid nog onbekende statussen bevat. Controleer de aanwezigheid bij die evenementen.")
+        if historical_unknown:
+            self.trend_incomplete_notice.setText(
+                (self.trend_incomplete_notice.text() + "\n" if incomplete else "") +
+                f"{historical_unknown} geanonimiseerde evenementen bevatten onbekende aanwezigheid. Die telt niet als no-show; de opgeslagen cijfers blijven beschikbaar.")
+        self.trend_incomplete_notice.setVisible(bool(incomplete or historical_unknown))
         self._active_trend_panel().refresh()
 
     def remove_trend_source(self):
@@ -8264,6 +6198,7 @@ class BezoekerslijstWindow(QMainWindow):
         self.trend_sources = [
             source for source in self.trend_sources if source["label"] != label
         ]
+        self._save_current_analysis()
         self._sync_trend_sources()
         self._render_trends()
         self.status_label.setText(f"Set verwijderd uit de losse analyse: {label}.")
@@ -8282,6 +6217,7 @@ class BezoekerslijstWindow(QMainWindow):
         if confirmed != QMessageBox.StandardButton.Yes:
             return
         self.trend_sources = []
+        self._save_current_analysis()
         self._sync_trend_sources()
         self._render_trends()
         self.status_label.setText("Losse analyse gewist.")
@@ -8327,9 +6263,19 @@ class BezoekerslijstWindow(QMainWindow):
                     Path(spreadsheets[0]).stem if len(spreadsheets) == 1
                     else f"{len(spreadsheets)} bezoekerslijsten"
                 )
-                dates = self._ask_trend_event_dates(records)
+                # Welk Rudder-evenement hoort bij welke evenementnaam? Daarmee
+                # weet EventHub welke datum je hier eerder voor invulde.
+                rudder_per_event = {}
+                for report in result.get("reports", []):
+                    nummer = rudder_id_from_filename(report.get("file_name", ""))
+                    for naam in report.get("events", []) if nummer else []:
+                        rudder_per_event.setdefault(naam, nummer)
+                dates = self._ask_trend_event_dates(records, rudder_per_event)
                 if dates is None:
                     return
+                self._remember_trend_dates({
+                    nummer: dates.get(naam, "") for naam, nummer in rudder_per_event.items()
+                })
                 summaries = trend_summaries_from_records(records, dates, source=label)
                 if summaries:
                     added.append((label, summaries))
@@ -8348,6 +6294,7 @@ class BezoekerslijstWindow(QMainWindow):
             ]
             self.trend_sources.append({"label": label, "summaries": summaries})
             events_added += len(summaries)
+        self._save_current_analysis()
         self._sync_trend_sources()
         # Ingeladen lijsten horen in het losse werkgebied; spring daarheen zodat
         # het resultaat meteen zichtbaar is.
@@ -8363,12 +6310,37 @@ class BezoekerslijstWindow(QMainWindow):
             message += "\n\nOvergeslagen:\n" + "\n".join(problems[:6])
         QMessageBox.information(self, "Bezoekerslijsten ingeladen", message)
 
-    def _ask_trend_event_dates(self, records):
+    def _remembered_trend_dates(self) -> dict:
+        """Datums die eerder bij een Rudder-nummer zijn ingevuld.
+
+        Een aanmeldlijst bevat de evenementdatum nergens, en het evenement
+        staat bij een losse analyse meestal niet in het dossier. Wat wel vast
+        ligt is het Rudder-nummer in de bestandsnaam: dat is per evenement
+        uniek en keert terug bij elke volgende export. Zo hoef je de datum per
+        evenement maar een keer in te vullen.
+        """
+        try:
+            bewaard = json.loads(str(self.settings.value("trend_event_dates", "") or "{}"))
+        except (TypeError, ValueError):
+            return {}
+        return {str(key): str(value) for key, value in bewaard.items()} if isinstance(bewaard, dict) else {}
+
+    def _remember_trend_dates(self, per_nummer: dict):
+        if not per_nummer:
+            return
+        bewaard = self._remembered_trend_dates()
+        bewaard.update({str(k): str(v) for k, v in per_nummer.items() if str(v).strip()})
+        self.settings.setValue("trend_event_dates", json.dumps(bewaard, ensure_ascii=False))
+
+    def _ask_trend_event_dates(self, records, rudder_per_event: dict | None = None):
         """Vraag per gevonden evenement een datum; een bezoekerslijst bevat die niet.
 
         Zonder datum belandt een evenement op de tijdlijn onder 'Zonder datum'
-        en is er geen ontwikkeling uit af te lezen.
+        en is er geen ontwikkeling uit af te lezen. Wat eerder is ingevuld komt
+        terug via het Rudder-nummer van het bestand.
         """
+        rudder_per_event = rudder_per_event or {}
+        onthouden = self._remembered_trend_dates()
         names = []
         for record in records:
             for name in record_events(record) or ["Onbekend evenement"]:
@@ -8396,8 +6368,11 @@ class BezoekerslijstWindow(QMainWindow):
             field.setPlaceholderText("dd-mm-jjjj")
             # Staat het evenement al in het dossier, dan is de datum bekend.
             known = self._event_by_name(name)
+            nummer = rudder_per_event.get(name, "")
             if known and known.get("date"):
                 field.setText(str(known["date"]))
+            elif nummer and onthouden.get(nummer):
+                field.setText(onthouden[nummer])
             fields[name] = field
             form.addRow(f"{name}:", with_date_picker(field))
         container = QWidget()
@@ -8470,99 +6445,61 @@ class BezoekerslijstWindow(QMainWindow):
             )
 
     def export_trend_data(self, panel=None):
-        """Exporteer het trendbeeld van één werkgebied als PDF."""
+        """Open de Report Builder voor dit werkgebied.
+
+        De directe PDF-uitvoer is vervallen: de gebruiker stelt nu zelf samen
+        wat er in het rapport komt, ziet een voorbeeld en kiest daarna pas het
+        formaat.
+        """
         panel = panel or self._active_trend_panel()
-        if not panel.provider():
-            QMessageBox.information(
-                self, "Niets te exporteren",
-                "Er zijn nog geen cijfers om te tonen.",
+        summaries = panel.provider() or []
+        selectie = panel.current_filters()
+        summaries = trend_participant_scope(
+            summaries, bool(selectie.get("include_introducees"))
+        )
+        los = panel is self.loose_trend_panel
+        werkgebied = "Losse analyse" if los else "Eigen evenementen"
+        ander_panel = self.own_trend_panel if los else self.loose_trend_panel
+        ander_werkgebied = "Eigen evenementen" if los else "Losse analyse"
+        elders = len(ander_panel.provider() or [])
+        if not summaries:
+            uitleg = "Er zijn nog geen cijfers om te rapporteren."
+            if elders:
+                uitleg += (f"\n\nHet werkgebied {ander_werkgebied} bevat wel "
+                           f"{elders} evenement(en) met cijfers.")
+            QMessageBox.information(self, "Niets te exporteren", uitleg)
+            return
+        # Eén exportknop voor twee werkgebieden: wie op het verkeerde tabblad
+        # staat, kreeg zonder deze vraag een rapport over één evenement.
+        if len(summaries) < 2 <= elders:
+            antwoord = QMessageBox.question(
+                self, "Welk werkgebied?",
+                f"{werkgebied} bevat {len(summaries)} evenement(en) met cijfers, "
+                f"{ander_werkgebied} bevat er {elders}.\n\n"
+                f"Wilt u het rapport over {werkgebied} maken?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
-            return
-        loose = panel is self.loose_trend_panel
-        name = "losse analyse" if loose else "eigen evenementen"
-        default = exports_directory() / f"EventHub trends {name} {date.today():%Y-%m-%d}.pdf"
-        file_name, _ = QFileDialog.getSaveFileName(
-            self, "Trends exporteren", str(default), "PDF-bestand (*.pdf)"
-        )
-        if not file_name:
-            return
-        if not file_name.lower().endswith(".pdf"):
-            file_name += ".pdf"
-        try:
-            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-            printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
-            printer.setOutputFileName(file_name)
-            printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
-            printer.setPageOrientation(QPageLayout.Orientation.Landscape)
-            printer.setPageMargins(QMarginsF(16, 16, 16, 16), QPageLayout.Unit.Millimeter)
-            self._trend_pdf_document(panel).print_(printer)
-            self.status_label.setText(f"Trends geëxporteerd als PDF: {file_name}")
-            QMessageBox.information(self, "Export gereed", f"De trendanalyse is geëxporteerd naar:\n{file_name}")
-            self._offer_open_export_folder(file_name)
-        except Exception as exc:
-            self._show_runtime_error("Trends exporteren", exc)
-
-    def _trend_pdf_document(self, panel) -> QTextDocument:
-        series = panel.current_series()
-        metric = panel.metric_choice.currentText()
-        dimension = panel.dimension.currentText()
-        period = panel.period.currentText()
-        if panel is self.loose_trend_panel:
-            scope = "Losse analyse"
-            source = self.trend_source.currentText() or "Alle ingeladen sets"
+            if antwoord != QMessageBox.StandardButton.Yes:
+                self.trend_tabs.setCurrentIndex(0 if los else 1)
+                return
+        if los:
+            bron = self.trend_source.currentText() or "Alle ingeladen sets"
         else:
-            scope = "Eigen evenementen"
-            source = str(self.project_path.name if self.project_path else "Eigen dossier")
-
-        document = QTextDocument(self)
-        document.setDefaultFont(QFont("Segoe UI", 9))
-
-        # De grafiek als afbeelding meenemen; een tabel alleen leest slecht.
-        chart_image = QImage(1000, 380, QImage.Format.Format_RGB32)
-        chart_image.fill(QColor("#ffffff"))
-        painter_target = TrendChart()
-        painter_target.set_series(series)
-        painter_target.resize(1000, 380)
-        painter_target.render(chart_image)
-        document.addResource(
-            QTextDocument.ResourceType.ImageResource, QUrl("trend://chart"), chart_image
+            bron = str(self.project_path.name if self.project_path else "Eigen dossier")
+        dialog = ReportBuilderDialog(
+            summaries,
+            selectie,
+            self.settings,
+            self,
+            bron=bron,
+            status_callback=self.status_label.setText,
+            folder=exports_directory(),
+            werkgebied=werkgebied,
         )
-
-        rows = []
-        for point in series.get("points", []):
-            for group, value in point["values"].items():
-                rows.append(
-                    f"<tr><td>{escape(str(point['label']))}</td><td>{escape(str(group))}</td>"
-                    f"<td class='num'>{escape(panel.value_text(value))}</td></tr>"
-                )
-
-        document.setHtml(f"""
-            <html><head><style>
-            body {{ color: #17233a; font-family: 'Segoe UI'; }}
-            h1 {{ font-size: 17pt; margin-bottom: 2px; }}
-            p.meta {{ color: #55637a; font-size: 9pt; margin-top: 0; }}
-            p.summary {{ background: #f2f4f9; padding: 7px; font-size: 9.5pt; }}
-            table {{ border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 9pt; }}
-            th {{ background: #071a33; color: #ffffff; text-align: left; padding: 5px 7px; }}
-            td {{ border-bottom: 1px solid #dde3ec; padding: 4px 7px; }}
-            td.num {{ text-align: right; }}
-            p.footer {{ color: #7b8798; font-size: 8pt; margin-top: 12px; }}
-            </style></head><body>
-            <h1>Trends — {escape(metric)}</h1>
-            <p class="meta">{escape(scope)} · uitgesplitst naar {escape(dimension)} · {escape(period)} · bron: {escape(source)}
-            · {series.get('events', 0)} evenement(en) · opgesteld op {date.today():%d-%m-%Y}
-            door {escape(str(self.profile.get('name') or 'EventHub'))}</p>
-            <p class="summary">{escape(panel.summary.text())}</p>
-            <img src="trend://chart" width="960" />
-            <table>
-              <tr><th>Periode</th><th>Groep</th><th>{escape(metric)}</th></tr>
-              {''.join(rows)}
-            </table>
-            <p class="footer">Berekend op geanonimiseerde cijfers per evenement. Dit overzicht bevat
-            geen namen, geboortedatums of contactgegevens.</p>
-            </body></html>
-        """)
-        return document
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            doel = getattr(dialog, "exported_path", None)
+            if doel:
+                self._offer_open_export_folder(str(doel))
 
     def _retention_plan(self):
         return plan_retention_cleanup(self.events, self.records, self._retention_days())
@@ -8835,15 +6772,85 @@ class BezoekerslijstWindow(QMainWindow):
         except Exception:
             return None
 
+    @staticmethod
+    def _sanitized_error_report(context: str, details: str) -> str:
+        """Maak een deelbaar foutrapport zonder herkenbare contactgegevens."""
+        cleaned = str(details or "")
+        home_path = str(Path.home())
+        if home_path:
+            cleaned = re.sub(re.escape(home_path), "<gebruikersmap>", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(
+            r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}",
+            "<e-mailadres>",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"(?<!\d)(?:\+31|0)6[\s.-]*\d(?:[\s.-]*\d){7}(?!\d)", "<telefoonnummer>", cleaned)
+        return (
+            "EventHub beta-foutrapport\n"
+            f"Tijdstip: {datetime.now().isoformat(timespec='seconds')}\n"
+            f"Onderdeel: {context}\n"
+            f"Python: {sys.version.split()[0]}\n"
+            f"Platform: {sys.platform}\n\n"
+            f"{cleaned.strip()}\n"
+        )
+
+    def _prepare_error_email(self, context: str, details: str):
+        try:
+            report_dir = application_data_root() / "Foutrapporten"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            report_path = report_dir / f"EventHub-foutrapport-{stamp}.txt"
+            report_path.write_text(
+                self._sanitized_error_report(context, details), encoding="utf-8"
+            )
+            subject = f"EventHub closed beta – fout in {context}"
+            body = (
+                "Hallo,\n\nTijdens het testen van EventHub trad een fout op. "
+                "Het bijbehorende foutrapport staat klaar om aan deze e-mail toe te voegen:\n\n"
+                f"{report_path}\n\nWat deed u vlak voor de fout?\n"
+            )
+            mail_url = QUrl("mailto:")
+            query = QUrlQuery()
+            query.addQueryItem("subject", subject)
+            query.addQueryItem("body", body)
+            mail_url.setQuery(query)
+            QDesktopServices.openUrl(mail_url)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(report_dir)))
+            QApplication.clipboard().setText(str(report_path))
+            self.status_label.setText(
+                "E-mailconcept geopend. Het pad naar het foutrapport staat op het klembord."
+            )
+        except Exception as report_exc:
+            QMessageBox.warning(
+                self,
+                "Foutrapport kon niet worden voorbereid",
+                f"Het e-mailconcept of foutrapport kon niet worden gemaakt.\n\n{report_exc}",
+            )
+
+    def _show_error_with_report(self, title: str, message: str, context: str, details: str):
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Critical)
+        dialog.setWindowTitle(title)
+        dialog.setText(message)
+        send_button = dialog.addButton(
+            "Log per e-mail versturen", QMessageBox.ButtonRole.ActionRole
+        )
+        dialog.addButton("Sluiten", QMessageBox.ButtonRole.RejectRole)
+        dialog.exec()
+        if dialog.clickedButton() is send_button:
+            self._prepare_error_email(context, details)
+
     def _show_runtime_error(self, context: str, exc: BaseException):
         details = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         log_path = self._write_error_log(context, details)
         location = f"\n\nTechnische details zijn opgeslagen in:\n{log_path}" if log_path else ""
-        QMessageBox.critical(
-            self,
+        self._show_error_with_report(
             f"{context} mislukt",
             "Er ging iets mis. De fout is niet genegeerd; dat leek ons na de vorige versie een aardige vooruitgang."
             + location,
+            context,
+            details,
         )
 
     def _handle_unexpected_exception(self, exc_type, exc_value, exc_traceback):
@@ -8851,10 +6858,11 @@ class BezoekerslijstWindow(QMainWindow):
             details = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
             log_path = self._write_error_log("Onverwachte programmafout", details)
             location = f"\n\nFoutlog:\n{log_path}" if log_path else ""
-            QMessageBox.critical(
-                self,
+            self._show_error_with_report(
                 "Onverwachte programmafout",
                 "EventHub heeft een onverwachte fout onderschept." + location,
+                "Onverwachte programmafout",
+                details,
             )
         except Exception:
             if self._previous_excepthook:
@@ -8886,6 +6894,7 @@ class BezoekerslijstWindow(QMainWindow):
             self.maybe_restore_autosave()
             if self.maybe_require_initial_profile():
                 self.maybe_show_changelog()
+                self.maybe_show_browser_extension_setup()
                 self.maybe_show_startup_welcome()
         finally:
             self._starting_up = False
@@ -9026,38 +7035,6 @@ class BezoekerslijstWindow(QMainWindow):
         self._merge_recent_project_paths(candidates)
         return False
 
-    def search_project_files(self):
-        start = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation) or str(Path.home())
-        directory = QFileDialog.getExistingDirectory(
-            self,
-            "Map met EventHub-bestanden kiezen",
-            start,
-        )
-        if not directory:
-            return
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            found = self._discover_existing_projects([Path(directory)], max_depth=8)
-        finally:
-            QApplication.restoreOverrideCursor()
-        if not found:
-            QMessageBox.information(
-                self,
-                "Geen EventHub-bestanden gevonden",
-                "In de gekozen map en onderliggende mappen zijn geen .bvp-bestanden gevonden.",
-            )
-            return
-        self._merge_recent_project_paths(found)
-        index = self.recent_project_combo.findData(found[0])
-        if index >= 0:
-            self.recent_project_combo.setCurrentIndex(index)
-        self.status_label.setText(f"{len(found)} EventHub-bestand(en) gevonden en aan Recent toegevoegd.")
-        QMessageBox.information(
-            self,
-            "EventHub-bestanden gevonden",
-            f"{len(found)} EventHub-bestand(en) zijn toegevoegd aan de lijst Recente bestanden.",
-        )
-
     def open_recent_project(self):
         path = Path(str(self.recent_project_combo.currentData() or ""))
         if not str(path) or not path.is_file():
@@ -9093,7 +7070,7 @@ class BezoekerslijstWindow(QMainWindow):
     def _edit_event_impl(self, event: dict):
         original_name = event.get("name", "")
         original_type = event.get("event_type", "Meeloopdag")
-        dialog = NewProjectDialog(self, event)
+        dialog = NewProjectDialog(self, event, project_templates=self.project_templates)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         source = deepcopy(event)
@@ -9101,7 +7078,7 @@ class BezoekerslijstWindow(QMainWindow):
         updated = prepare_event(source, self.task_templates)
         updated["name"] = event_name_with_date(updated.get("name", ""), updated.get("date", ""))
         new_type = updated.get("event_type", "Meeloopdag")
-        if new_type != original_type:
+        if new_type != original_type and not updated.get("template_id"):
             updated["tasks"] = [
                 task for task in updated.get("tasks", [])
                 if task_allowed_for_event_type(task, new_type)
@@ -9140,6 +7117,7 @@ class BezoekerslijstWindow(QMainWindow):
                 self.selected_events.add(event["name"])
         self._mark_dirty()
         self._render_all()
+        self._touch_event(event)
         self.status_label.setText(f"Evenement bijgewerkt: {event['name']}.")
 
     def activate_selected_event(self):
@@ -9148,6 +7126,245 @@ class BezoekerslijstWindow(QMainWindow):
             QMessageBox.information(self, "Geen evenement gekozen", "Selecteer eerst een evenement.")
             return
         self.open_event(event)
+
+    def clear_event_visitor_lists(self):
+        """Alle bezoekers van dit evenement loskoppelen, het evenement zelf blijft staan.
+
+        Bedoeld om de aanmeldlijsten opnieuw te kunnen inlezen zonder het
+        evenement met zijn taken en documenten te verliezen.
+        """
+        event = self._active_event()
+        if not event:
+            QMessageBox.information(
+                self,
+                "Geen evenement geopend",
+                "Open eerst het evenement waarvan u de bezoekerslijst(en) wilt wissen.",
+            )
+            return
+        event_name = event.get("name", "")
+        visitors = self._event_visitors(event)
+        if not visitors:
+            QMessageBox.information(
+                self,
+                "Geen bezoekers gekoppeld",
+                f"Aan '{event_name}' zijn geen bezoekers gekoppeld; er valt niets te wissen.",
+            )
+            return
+        attended = sum(1 for record in visitors if is_present(record, event_name))
+        elsewhere = sum(1 for record in visitors if len(record_events(record)) > 1)
+        question = (
+            f"Wilt u de bezoekerslijst(en) van '{event_name}' wissen?\n\n"
+            f"{len(visitors)} bezoeker(s) worden losgekoppeld, inclusief de vastgelegde aanwezigheid "
+            f"van {attended} bezoeker(s). Het evenement zelf blijft staan met zijn taken en documenten, "
+            "zodat u de lijsten opnieuw kunt inlezen."
+        )
+        if elsewhere:
+            question += (
+                f"\n\n{elsewhere} bezoeker(s) zijn ook aan een ander evenement gekoppeld; "
+                "daar blijven zij behouden."
+            )
+        question += "\n\nDit kan niet ongedaan worden gemaakt."
+        answer = QMessageBox.warning(
+            self,
+            "Bezoekerslijst(en) wissen",
+            question,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.records = detach_event_from_records(self.records, event_name)
+        self._touch_event(event)
+        self._mark_dirty()
+        self._render_all()
+        self.status_label.setText(
+            f"Bezoekerslijst(en) gewist: {event_name} ({len(visitors)} bezoeker(s) losgekoppeld)."
+        )
+
+    def _merge_candidates(self, event):
+        """Evenementen die logischerwijs bij dit evenement horen.
+
+        Zelfde datum en plaats is in de praktijk hetzelfde evenement dat onder
+        meerdere namen online staat om verschillende doelgroepen te trekken.
+        """
+        datum = normalize(event.get("date", ""))
+        plaats = normalize(event.get("place", "") or event.get("location", ""))
+        vanzelfsprekend = []
+        overig = []
+        for other in self.events:
+            if other.get("id") == event.get("id"):
+                continue
+            zelfde_dag = datum and normalize(other.get("date", "")) == datum
+            zelfde_plek = normalize(other.get("place", "") or other.get("location", "")) == plaats
+            (vanzelfsprekend if zelfde_dag and zelfde_plek else overig).append(other)
+        return vanzelfsprekend, overig
+
+    def merge_selected_events(self):
+        """Voeg meerdere evenementen samen tot één.
+
+        De namen van de samengevoegde evenementen blijven per deelnemer bewaard
+        als inschrijving: dat is precies waarvoor die aparte aanmeldpagina's
+        bestaan, en zonder die vastlegging is die informatie na het bundelen weg.
+        """
+        event = self._selected_management_event(self.event_table)
+        if not event:
+            QMessageBox.information(self, "Geen evenement gekozen", "Selecteer eerst een evenement.")
+            return
+        vanzelfsprekend, overig = self._merge_candidates(event)
+        if not vanzelfsprekend and not overig:
+            QMessageBox.information(
+                self, "Niets om samen te voegen", "Er is maar een evenement in dit dossier."
+            )
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Evenementen samenvoegen")
+        _fit_dialog_to_screen(dialog, 640, 520, 520, 380)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(
+            "Kies de evenementen die in werkelijkheid hetzelfde evenement zijn. Ze worden een "
+            "deelnemerslijst, een aanwezigheidsregistratie en een statistiek. De namen blijven "
+            "per deelnemer bewaard als inschrijving."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        vast = QLabel(f"<b>{event.get('name', '')}</b> ({len(self._event_visitors(event))} deelnemers)")
+        vast.setWordWrap(True)
+        layout.addWidget(vast)
+
+        keuzes = {}
+        keuze_widget = QWidget()
+        keuze_layout = QVBoxLayout(keuze_widget)
+        keuze_layout.setContentsMargins(0, 0, 0, 0)
+        for groep, voorgeselecteerd in ((vanzelfsprekend, True), (overig, False)):
+            for other in groep:
+                vinkje = QCheckBox(
+                    f"{other.get('name', '')}  —  {len(self._event_visitors(other))} deelnemers"
+                )
+                vinkje.setChecked(voorgeselecteerd)
+                keuzes[other.get("id", "")] = vinkje
+                keuze_layout.addWidget(vinkje)
+        keuze_layout.addStretch()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(keuze_widget)
+        layout.addWidget(scroll, 1)
+
+        naam_veld = QLineEdit()
+        layout.addWidget(QLabel("Naam van het samengevoegde evenement:"))
+        layout.addWidget(naam_veld)
+        samenvatting = QLabel("")
+        samenvatting.setObjectName("hintLabel")
+        samenvatting.setWordWrap(True)
+        layout.addWidget(samenvatting)
+
+        def gekozen():
+            return [
+                other for other in self.events
+                if other.get("id") in keuzes and keuzes[other.get("id", "")].isChecked()
+            ]
+
+        naam_handmatig = {"aangepast": False}
+        naam_veld.textEdited.connect(lambda *_: naam_handmatig.update(aangepast=True))
+
+        def ververs(*_):
+            bronnen = gekozen()
+            namen = [event.get("name", "")] + [other.get("name", "") for other in bronnen]
+            if not naam_handmatig["aangepast"]:
+                naam_veld.setText(event_name_with_date(common_event_name(namen), event.get("date", "")))
+            labels = distinctive_labels(namen)
+            deelnemers = sum(
+                len(self._event_visitors(item)) for item in [event, *bronnen]
+            )
+            if bronnen:
+                samenvatting.setText(
+                    f"{len(bronnen) + 1} evenementen worden er een, met {deelnemers} deelnemer(s). "
+                    f"Bewaard als inschrijving: {' | '.join(labels[naam] for naam in namen)}."
+                )
+            else:
+                samenvatting.setText("Kies minimaal een evenement om mee samen te voegen.")
+
+        for vinkje in keuzes.values():
+            vinkje.toggled.connect(ververs)
+        ververs()
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Samenvoegen")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        bronnen = gekozen()
+        if not bronnen:
+            QMessageBox.information(self, "Niets gekozen", "Kies minimaal een evenement om mee samen te voegen.")
+            return
+        nieuwe_naam = naam_veld.text().strip()
+        if not nieuwe_naam:
+            QMessageBox.information(self, "Geen naam", "Geef het samengevoegde evenement een naam.")
+            return
+        botsing = next(
+            (other for other in self.events
+             if normalize(other.get("name", "")) == normalize(nieuwe_naam)
+             and other.get("id") not in {event.get("id"), *[b.get("id") for b in bronnen]}),
+            None,
+        )
+        if botsing is not None:
+            QMessageBox.information(
+                self, "Naam al in gebruik",
+                f"Er bestaat al een ander evenement met de naam '{nieuwe_naam}'. Kies een andere naam.",
+            )
+            return
+
+        namen = [event.get("name", "")] + [other.get("name", "") for other in bronnen]
+        deelnemers = sum(len(self._event_visitors(item)) for item in [event, *bronnen])
+        antwoord = QMessageBox.warning(
+            self,
+            "Evenementen samenvoegen",
+            f"Wilt u {len(namen)} evenementen samenvoegen tot '{nieuwe_naam}'?\n\n"
+            f"{deelnemers} deelnemer(s), hun aanwezigheid, de taken en de documenten komen samen onder "
+            "een evenement. De oude evenementen verdwijnen uit het overzicht; hun namen blijven per "
+            "deelnemer bewaard als inschrijving.\n\nDit kan niet ongedaan worden gemaakt.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if antwoord != QMessageBox.StandardButton.Yes:
+            return
+
+        labels = distinctive_labels(namen)
+        listings = list(event.get("listings", []) or [])
+        titels = {normalize(task.get("title", "")) for task in event.get("tasks", []) or []}
+        for item in [event, *bronnen]:
+            merge_event_into(self.records, item.get("name", ""), nieuwe_naam, labels[item.get("name", "")])
+            listings.append({
+                "label": labels[item.get("name", "")],
+                "rudder_event_id": str(item.get("rudder_event_id", "") or "").strip(),
+            })
+        for other in bronnen:
+            for task in other.get("tasks", []) or []:
+                if normalize(task.get("title", "")) not in titels:
+                    event.setdefault("tasks", []).append(task)
+                    titels.add(normalize(task.get("title", "")))
+            event.setdefault("attachments", []).extend(other.get("attachments", []) or [])
+
+        event["name"] = nieuwe_naam
+        event["listings"] = listings
+        self._touch_event(event)
+        verdwenen = {other.get("id") for other in bronnen}
+        self.events = [item for item in self.events if item.get("id") not in verdwenen]
+        self.records, dubbel = merge_duplicate_registrations(self.records, nieuwe_naam)
+        self.selected_events = {nieuwe_naam}
+        self.active_event_id = event.get("id", "")
+        self._mark_dirty()
+        self._render_all()
+        bericht = f"{len(namen)} evenementen samengevoegd tot {nieuwe_naam}."
+        if dubbel:
+            bericht += f" {dubbel} deelnemer(s) stonden op meerdere lijsten en zijn samengevoegd."
+        self.status_label.setText(bericht)
 
     def remove_selected_event(self):
         event = self._selected_management_event(self.event_table)
@@ -9346,17 +7563,18 @@ class BezoekerslijstWindow(QMainWindow):
         self._render_management()
 
     def edit_task_templates(self):
-        templates = [prepare_task(template) for template in self.task_templates]
+        templates = [prepare_template(template) for template in self.task_templates]
         dialog = QDialog(self)
         dialog.setWindowTitle("Standaardtaken voor nieuwe evenementen")
         _fit_dialog_to_screen(dialog, 820, 560, 600, 380)
         layout = QVBoxLayout(dialog)
         intro = QLabel(
-            "Deze taken worden automatisch toegevoegd aan nieuwe evenementen. De termijnen zijn daarna per evenement aanpasbaar."
+            "Deze taken worden automatisch toegevoegd aan nieuwe evenementen, per soort "
+            "evenement. De termijnen zijn daarna per evenement aanpasbaar."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
-        table = self._new_table(["Taak", "Planning", "Melding"])
+        table = self._new_table(["Taak", "Geldt voor", "Planning", "Melding"])
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         layout.addWidget(table, 1)
@@ -9364,7 +7582,8 @@ class BezoekerslijstWindow(QMainWindow):
         def render():
             table.setRowCount(len(templates))
             for row_index, task in enumerate(templates):
-                values = [task["title"], task_timing_text(task), f"{task['reminder_days']} dag(en) voor deadline"]
+                values = [task["title"], template_scope_text(task), task_timing_text(task),
+                          f"{task['reminder_days']} dag(en) voor deadline"]
                 for column, value in enumerate(values):
                     item = QTableWidgetItem(value)
                     item.setData(Qt.ItemDataRole.UserRole, task["id"])
@@ -9372,7 +7591,7 @@ class BezoekerslijstWindow(QMainWindow):
                     table.setItem(row_index, column, item)
 
         def add_template():
-            editor = TaskDialog(None, dialog)
+            editor = TaskDialog(None, dialog, standaard=True)
             if editor.exec() == QDialog.DialogCode.Accepted and editor.value()["title"]:
                 templates.append(editor.value())
                 render()
@@ -9381,7 +7600,7 @@ class BezoekerslijstWindow(QMainWindow):
             row = table.currentRow()
             if row < 0:
                 return
-            editor = TaskDialog(templates[row], dialog)
+            editor = TaskDialog(templates[row], dialog, standaard=True)
             if editor.exec() == QDialog.DialogCode.Accepted and editor.value()["title"]:
                 templates[row] = editor.value()
                 render()
@@ -9405,6 +7624,7 @@ class BezoekerslijstWindow(QMainWindow):
         actions.addStretch()
         layout.addLayout(actions)
         apply_existing = QCheckBox("Ontbrekende standaarden ook toevoegen aan bestaande evenementen")
+        apply_existing.setToolTip("Evenementen met een gekoppeld template behouden hun eigen taken.")
         layout.addWidget(apply_existing)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -9420,6 +7640,8 @@ class BezoekerslijstWindow(QMainWindow):
         self.settings.setValue("task_templates", json.dumps(self.task_templates, ensure_ascii=False))
         if apply_existing.isChecked():
             for event in self.events:
+                if event.get("template_id"):
+                    continue
                 existing = {normalize(task.get("title", "")) for task in event.get("tasks", [])}
                 for template in self.task_templates:
                     if not task_allowed_for_event_type(template, event.get("event_type", "Meeloopdag")):
@@ -9432,149 +7654,65 @@ class BezoekerslijstWindow(QMainWindow):
         self._render_management()
 
     def _template_event_data(self, event: dict):
-        source = prepare_event(deepcopy(event), self.task_templates)
-        source["id"] = ""
-        source["date"] = ""
-        source["status"] = "Concept"
-        source["evaluation"] = {}
-        source["attachments"] = []
-        template_tasks = []
-        for task in source.get("tasks", []):
-            if not task_allowed_for_event_type(task, source.get("event_type", "Meeloopdag")):
-                continue
-            item = prepare_task(task)
-            item.update({"id": "", "done": False, "completed_on": ""})
-            template_tasks.append(item)
-        source["tasks"] = template_tasks
-        return source
+        return template_event_data(event)
 
-    def save_active_event_as_template(self):
-        event = self._active_event()
-        if not event:
-            QMessageBox.information(self, "Geen evenement geopend", "Open eerst het evenement dat u als template wilt bewaren.")
-            return
-        name, accepted = QInputDialog.getText(
-            self,
-            "Evenement opslaan als template",
-            "Naam van het template:",
-            text=event.get("name", "Nieuw template"),
-        )
-        name = str(name or "").strip()
-        if not accepted or not name:
-            return
-        existing = next(
-            (template for template in self.project_templates if normalize(template.get("name", "")) == normalize(name)),
-            None,
-        )
-        if existing:
-            answer = QMessageBox.question(
-                self,
-                "Template vervangen",
-                f"Het template '{name}' bestaat al. Wilt u het vervangen?",
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-            template_id = existing.get("id") or uuid.uuid4().hex
-            self.project_templates.remove(existing)
-        else:
-            template_id = uuid.uuid4().hex
-        self.project_templates.append({
-            "id": template_id,
-            "name": name,
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-            "event": self._template_event_data(event),
-        })
+    def _save_project_templates(self):
         self.project_templates.sort(key=lambda item: normalize(item.get("name", "")))
         self.settings.setValue("project_templates", json.dumps(self.project_templates, ensure_ascii=False))
-        self.status_label.setText(f"Evenementtemplate opgeslagen: {name}.")
-        QMessageBox.information(
-            self,
-            "Template opgeslagen",
-            "Het template bevat de evenementgegevens, taakplanning en 5WH-inhoud. Datum, deelnemers, evaluatie en bijlagen worden niet gekopieerd.",
-        )
+
+    def save_active_event_as_template(self, _checked=False, *, event=None):
+        event = event if event is not None else self._active_event()
+        if not event:
+            QMessageBox.information(self, "Geen evenement geopend", "Open eerst een evenement.")
+            return
+        editor = TemplateEditor(self, TaskDialog, self.task_templates, event=event)
+        if editor.exec() != QDialog.DialogCode.Accepted:
+            return
+        template = editor.value()
+        existing = next((item for item in self.project_templates
+                         if normalize(item["name"]) == normalize(template["name"])), None)
+        if existing:
+            if QMessageBox.question(self, "Template vervangen",
+                    f"'{template['name']}' bestaat al. Wilt u dit template vervangen? Bestaande evenementen blijven behouden."
+                    ) != QMessageBox.StandardButton.Yes:
+                return
+            template["id"] = existing["id"]
+            self.project_templates.remove(existing)
+        self.project_templates.append(template)
+        self._save_project_templates()
+        if editor.link.isChecked():
+            event.update(template_id=template["id"], template_name=template["name"])
+            self._touch_event(event)
+            self._mark_dirty()
+            self._render_all()
+        self.status_label.setText(f"Template opgeslagen: {template['name']}.")
 
     def manage_project_templates(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Evenementtemplates beheren")
-        _fit_dialog_to_screen(dialog, 760, 440, 560, 340)
-        layout = QVBoxLayout(dialog)
-        intro = QLabel("Templates zijn beschikbaar bij Nieuw evenement en blijven bewaard na programma-updates.")
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-        table = self._new_table(["Naam", "Soort evenement", "Locatie", "Taken"])
-        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        layout.addWidget(table, 1)
+        TemplateManager(self, self.project_templates, TaskDialog,
+                        self.task_templates, self._save_project_templates).exec()
+        self._update_event_workspace_header()
 
-        def render():
-            table.setRowCount(len(self.project_templates))
-            for row_index, template in enumerate(self.project_templates):
-                event = template.get("event", {}) if isinstance(template.get("event"), dict) else {}
-                values = [
-                    template.get("name", ""),
-                    event.get("event_type", "Meeloopdag"),
-                    event.get("location", ""),
-                    str(len(event.get("tasks", []))),
-                ]
-                for column, value in enumerate(values):
-                    item = QTableWidgetItem(str(value or ""))
-                    item.setData(Qt.ItemDataRole.UserRole, template.get("id", ""))
-                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                    table.setItem(row_index, column, item)
-
-        actions = QHBoxLayout()
-        add_button = QPushButton("Template aanmaken")
-        add_button.setObjectName("primaryButton")
-        remove_button = QPushButton("Template verwijderen")
-        remove_button.setObjectName("dangerButton")
-
-        def add_template():
-            editor = NewProjectDialog(self, project_templates=[], template_mode=True)
-            if editor.exec() != QDialog.DialogCode.Accepted:
-                return
-            values = editor.value()
-            source = empty_event(values["name"], self.task_templates, values["event_type"])
-            source.update(values)
-            self.project_templates.append({
-                "id": uuid.uuid4().hex,
-                "name": values["name"],
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-                "event": self._template_event_data(source),
-            })
-            self.project_templates.sort(key=lambda item: normalize(item.get("name", "")))
-            self.settings.setValue("project_templates", json.dumps(self.project_templates, ensure_ascii=False))
-            render()
-            self.status_label.setText(f"Evenementtemplate toegevoegd: {values['name']}.")
-
-        def remove_template():
-            row = table.currentRow()
-            if row < 0:
-                QMessageBox.information(dialog, "Geen template gekozen", "Selecteer eerst een template.")
-                return
-            template = self.project_templates[row]
-            answer = QMessageBox.question(
-                dialog,
-                "Template verwijderen",
-                f"Wilt u '{template.get('name', 'dit template')}' verwijderen?",
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-            self.project_templates.pop(row)
-            self.settings.setValue("project_templates", json.dumps(self.project_templates, ensure_ascii=False))
-            render()
-
-        add_button.clicked.connect(add_template)
-        remove_button.clicked.connect(remove_template)
-        actions.addWidget(add_button)
-        actions.addWidget(remove_button)
-        actions.addStretch()
-        layout.addLayout(actions)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(dialog.reject)
-        buttons.accepted.connect(dialog.accept)
-        layout.addWidget(buttons)
-        render()
-        dialog.exec()
+    def link_events_to_template(self, event=None):
+        if not self.project_templates:
+            QMessageBox.information(self, "Geen templates", "Maak eerst een template aan via Templatebeheer, of sla een evenement op als template.")
+            return
+        dialog = LinkEventsDialog(self, sorted(self.events, key=self._event_sort_key),
+                                  self.project_templates, (event or {}).get("id", ""))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        template_id = str(dialog.template.currentData())
+        template_name = dialog.template.currentText()
+        targets = [item for item in self.events if item["id"] in set(dialog.selected_ids())]
+        changed = sum(bool(item.get("template_id")) and item["template_id"] != template_id for item in targets)
+        if changed and QMessageBox.question(self, "Templatekoppeling vervangen",
+                f"Bij {changed} evenementen vervangt u de huidige templatekoppeling. Doorgaan?") != QMessageBox.StandardButton.Yes:
+            return
+        for item in targets:
+            item.update(template_id=template_id, template_name=template_name)
+            self._touch_event(item)
+        self._mark_dirty()
+        self._render_all()
+        self.status_label.setText(f"{len(targets)} evenementen gekoppeld aan {template_name}.")
 
     def _document_event(self):
         return self._active_event()
@@ -9620,7 +7758,10 @@ class BezoekerslijstWindow(QMainWindow):
             QMessageBox.information(self, "Geen evenement", "Maak of selecteer eerst een evenement.")
             return
         if not FIVEWH_TEMPLATE.exists():
-            QMessageBox.critical(self, "Sjabloon ontbreekt", "Het 5WH-sjabloon ontbreekt in de installatie.")
+            self._show_error_with_report(
+                "Sjabloon ontbreekt", "Het 5WH-sjabloon ontbreekt in de installatie.",
+                "5WH-sjabloon controleren", f"Ontbrekend bestand: {FIVEWH_TEMPLATE}",
+            )
             return
         suggested = exports_directory() / f"5WH - {self._safe_document_name(event['name'])}{self._event_date_suffix(event)}.docx"
         if not self._confirm_personal_data_export("Het 5WH-document"):
@@ -9636,7 +7777,7 @@ class BezoekerslijstWindow(QMainWindow):
             QMessageBox.information(self, "5WH gereed", "Het 5WH-document is volgens het vaste format opgeslagen.")
             self._offer_open_export_folder(file_name)
         except Exception as exc:
-            QMessageBox.critical(self, "5WH exporteren mislukt", str(exc))
+            self._show_runtime_error("5WH exporteren", exc)
 
     def export_evaluation_document(self):
         event = self._document_event()
@@ -9644,7 +7785,10 @@ class BezoekerslijstWindow(QMainWindow):
             QMessageBox.information(self, "Geen evenement", "Maak of selecteer eerst een evenement.")
             return
         if not EVALUATION_TEMPLATE.exists():
-            QMessageBox.critical(self, "Sjabloon ontbreekt", "Het evaluatiesjabloon ontbreekt in de installatie.")
+            self._show_error_with_report(
+                "Sjabloon ontbreekt", "Het evaluatiesjabloon ontbreekt in de installatie.",
+                "Evaluatiesjabloon controleren", f"Ontbrekend bestand: {EVALUATION_TEMPLATE}",
+            )
             return
         suggested = exports_directory() / f"Evaluatie - {self._safe_document_name(event['name'])}{self._event_date_suffix(event)}.docx"
         file_name, _ = QFileDialog.getSaveFileName(self, "Evaluatie exporteren", str(suggested), "Word-document (*.docx)")
@@ -9664,7 +7808,7 @@ class BezoekerslijstWindow(QMainWindow):
                 "Het evaluatieformulier is macrovrij en volgens het aangeleverde format opgeslagen.",
             )
         except Exception as exc:
-            QMessageBox.critical(self, "Evaluatie exporteren mislukt", str(exc))
+            self._show_runtime_error("Evaluatie exporteren", exc)
 
     def _selected_attachment(self):
         event = self._document_event()
@@ -9763,7 +7907,7 @@ class BezoekerslijstWindow(QMainWindow):
             if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
                 raise OSError("Er is geen geschikt programma gevonden om dit bestand te openen.")
         except Exception as exc:
-            QMessageBox.critical(self, "Document openen mislukt", str(exc))
+            self._show_runtime_error("Document openen", exc)
 
     def export_selected_attachment(self):
         event, attachment = self._selected_attachment()
@@ -9784,7 +7928,7 @@ class BezoekerslijstWindow(QMainWindow):
             self.status_label.setText(f"Bijlage opgeslagen: {file_name}")
             self._offer_open_export_folder(file_name)
         except Exception as exc:
-            QMessageBox.critical(self, "Bijlage opslaan mislukt", str(exc))
+            self._show_runtime_error("Bijlage opslaan", exc)
 
     def remove_selected_attachment(self):
         event, attachment = self._selected_attachment()
@@ -9826,8 +7970,18 @@ class BezoekerslijstWindow(QMainWindow):
         if tab_index >= 0:
             self.tabs.setTabText(tab_index, f"Documenten ({len(attachments)})" if attachments else "Documenten")
 
-    def _filtered_records(self):
-        return [record for record in self.records if matches_event_filter(record, self.selected_events)]
+    def _filtered_records(self, include_skipped: bool = False):
+        """De deelnemers in beeld.
+
+        Een overgeslagen dubbele inschrijving hoort nergens meer op te duiken:
+        niet in de lijsten, niet in de tellingen en niet in de exports. Alleen
+        Gegevenscontrole vraagt hem op, want daar draai je het terug.
+        """
+        if self.selected_events and all((self._event_by_name(name) or {}).get("persoonsgegevens_gewist")
+                                        for name in self.selected_events):
+            return []
+        rows = [record for record in self.records if matches_event_filter(record, self.selected_events)]
+        return rows if include_skipped else [record for record in rows if not is_skipped(record)]
 
     def choose_event_filter(self):
         events = self._available_events()
@@ -9912,11 +8066,36 @@ class BezoekerslijstWindow(QMainWindow):
         self.settings.setValue("participants_include_introducees", include)
         self._filter_participants()
 
+    def _restore_picker(self, picker, setting: str, fallback: str):
+        """Zet een keuzelijst terug op de laatst gekozen waarde."""
+        stored = str(self.settings.value(setting, fallback) or fallback)
+        index = picker.findData(stored)
+        picker.setCurrentIndex(index if index >= 0 else 0)
+
+    def _crosstab_options_changed(self, *_):
+        self.settings.setValue("crosstab_view", self._crosstab_view())
+        self.settings.setValue("crosstab_value", self._crosstab_value_mode())
+        self._update_statistics()
+
+    def _crosstab_view(self) -> str:
+        return str(self.crosstab_view_picker.currentData() or "grafiek")
+
+    def _crosstab_value_mode(self) -> str:
+        return str(self.crosstab_value_picker.currentData() or "aantallen")
+
+    def _crosstab_data(self, records):
+        """De kruistabel zoals hij nu getoond moet worden, inclusief bundeling."""
+        data = education_crosstab(records)
+        if self._show_all_values():
+            return data
+        return education_collapse(data, CROSSTAB_COLUMN_LIMIT)
+
     def _statistics_scope_changed(self, *_):
         include = self.statistics_include_introducees.isChecked()
-        self.settings.setValue("statistics_include_introducees", include)
+        self.settings.setValue("statistics_include_introducees_v2", include)
         presence_filter = str(self.statistics_presence_filter.currentData() or "all")
         self.settings.setValue("statistics_presence_filter", presence_filter)
+        self.settings.setValue("statistics_show_all", self._show_all_values())
         self._update_statistics()
 
     def _sorted_records(self, records=None):
@@ -9934,6 +8113,33 @@ class BezoekerslijstWindow(QMainWindow):
         item.setFlags(flags)
         return item
 
+    PRESENCE_COLOURS = {
+        AANWEZIG: "#2f7d4f",
+        AFWEZIG: "#b8434a",
+        AFGEMELD: "#a5751f",
+        ONBEKEND: "#7b6d82",
+    }
+
+    def _status_item(self, status: str, record_id: str):
+        """De aanwezigheidsstand met een snel aanklikbaar aanwezig-vinkje."""
+        item = QTableWidgetItem(ATTENDANCE_LABELS.get(status, ATTENDANCE_LABELS[ONBEKEND]))
+        item.setData(Qt.ItemDataRole.UserRole, record_id)
+        item.setFlags(
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsUserCheckable
+        )
+        item.setCheckState(
+            Qt.CheckState.Checked if status == AANWEZIG else Qt.CheckState.Unchecked
+        )
+        item.setForeground(QColor(self.PRESENCE_COLOURS.get(status, "#7b6d82")))
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setToolTip(
+            "Vink aan zodra deze deelnemer langs is geweest. "
+            "Rechtsklik voor Afgemeld, Afwezig of Onbekend."
+        )
+        return item
+
     def _check_item(self, checked: bool, record_id: str, selectable: bool = True):
         item = QTableWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, record_id)
@@ -9945,8 +8151,76 @@ class BezoekerslijstWindow(QMainWindow):
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         return item
 
+    def _render_presence_table(self):
+        """Ververs alleen de snelle presentielijst, zonder alle grafieken."""
+        if not hasattr(self, "access_table"):
+            return
+        event = self._event_control_selected_event()
+        rows = self._sorted_records(self._event_visitors(event)) if event else []
+        presence_fields = self.visible_fields_by_view["presence"]
+        signature = self._presence_table_signature(rows, presence_fields)
+        if signature == self._presence_render_signature:
+            self._filter_presence(self.search_box.text() if hasattr(self, "search_box") else "")
+            return
+        self.loading_tables = True
+        try:
+            self.access_table.setSortingEnabled(False)
+            self.access_table.setColumnCount(len(presence_fields) + 1)
+            self.access_table.setHorizontalHeaderLabels(self._presence_headers())
+            self.access_table.setRowCount(len(rows))
+            for row_index, record in enumerate(rows):
+                record_id = record["_id"]
+                for column, field in enumerate(presence_fields):
+                    self.access_table.setItem(
+                        row_index,
+                        column,
+                        self._text_item(self._display_value(record, field), record_id),
+                    )
+                self.access_table.setItem(
+                    row_index,
+                    len(presence_fields),
+                    self._status_item(self._scoped_status(record), record_id),
+                )
+        finally:
+            self.loading_tables = False
+            self.access_table.setSortingEnabled(True)
+            self._restore_table_sort(self.access_table)
+        self._presence_render_signature = signature
+        self._filter_presence(self.search_box.text() if hasattr(self, "search_box") else "")
+
+    def _presence_table_signature(self, rows, presence_fields):
+        """Goedkope momentopname om een ongewijzigde tabel te kunnen hergebruiken."""
+        return (
+            tuple(presence_fields),
+            tuple(sorted(self.selected_events, key=normalize)),
+            tuple(
+                (
+                    str(record.get("_id", "")),
+                    tuple(self._display_value(record, field) for field in presence_fields),
+                    self._scoped_status(record),
+                )
+                for record in rows
+            ),
+        )
+
+    def _render_event_control_scope(self):
+        """Ververs alleen gegevens die door de Event Control-keuze veranderen."""
+        self._update_event_filter_ui()
+        self._render_presence_table()
+        self._update_summary()
+        self._update_statistics()
+        self._update_quality_table()
+        self._update_previous_live_session_action()
+        self._update_presence_registration_availability()
+
+    def _render_live_attendance_scope(self):
+        """Houd live check-ins licht: geen grafieken opnieuw tekenen per scan."""
+        self._render_presence_table()
+        self._update_summary()
+        self._update_presence_registration_availability()
+
     def _render_all(self):
-        status_changed = False
+        status_changed = self._archive_passed_events()
         for event in self.events:
             status_changed = self._sync_event_status_from_tasks(event) or status_changed
         # Cijfers van geweeste evenementen vastleggen zolang de bron er nog is;
@@ -9960,7 +8234,11 @@ class BezoekerslijstWindow(QMainWindow):
                 table.setSortingEnabled(False)
             self._update_event_filter_ui()
             rows = self._sorted_records(self._filtered_records())
-            callback_rows = [record for record in rows if not is_introducee(record)]
+            after_sales_event = self._combo_event(self.after_sales_event_combo)
+            callback_source = self._event_visitors(after_sales_event) if after_sales_event else []
+            callback_rows = [record for record in callback_source if not is_introducee(record)]
+            presence_event = self._event_control_selected_event()
+            presence_rows = self._sorted_records(self._event_visitors(presence_event)) if presence_event else []
             self._identifier_lookup = registration_lookup(self.records)
             participant_fields = self.visible_fields_by_view["participants"]
             callback_fields = self.visible_fields_by_view["callbacks"]
@@ -9974,7 +8252,7 @@ class BezoekerslijstWindow(QMainWindow):
             self.access_table.setHorizontalHeaderLabels(self._presence_headers())
             self.participant_table.setRowCount(len(rows))
             self.callback_table.setRowCount(len(callback_rows))
-            self.access_table.setRowCount(len(rows))
+            self.access_table.setRowCount(len(presence_rows))
             for row_index, record in enumerate(rows):
                 record_id = record["_id"]
                 for column, field in enumerate(participant_fields):
@@ -10001,11 +8279,12 @@ class BezoekerslijstWindow(QMainWindow):
                 presence_item = self._text_item("Aanwezig" if present else "Afwezig", record_id)
                 presence_item.setToolTip("Deze kandidaat is tijdens de livesessie aanwezig geweest." if present else "Voor deze kandidaat is geen aanwezigheid geregistreerd.")
                 self.callback_table.setItem(row_index, len(callback_fields), presence_item)
+                self._apply_callback_status_marker(row_index, record)
             self._apply_callback_column_widths(callback_fields)
             if self.callback_table.columnCount() > len(callback_fields):
                 self.callback_table.setColumnWidth(len(callback_fields), 110)
 
-            for row_index, record in enumerate(rows):
+            for row_index, record in enumerate(presence_rows):
                 record_id = record["_id"]
                 for column, field in enumerate(presence_fields):
                     self.access_table.setItem(
@@ -10016,13 +8295,14 @@ class BezoekerslijstWindow(QMainWindow):
                 self.access_table.setItem(
                     row_index,
                     len(presence_fields),
-                    self._check_item(is_present_in_scope(record, self.selected_events), record_id),
+                    self._status_item(self._scoped_status(record), record_id),
                 )
         finally:
             self.loading_tables = False
             for table in (self.participant_table, self.callback_table, self.access_table):
                 table.setSortingEnabled(True)
                 self._restore_table_sort(table)
+        self._presence_render_signature = self._presence_table_signature(presence_rows, presence_fields)
         self._filter_participants()
         self._filter_callbacks()
         self._filter_presence(self.search_box.text() if hasattr(self, "search_box") else "")
@@ -10033,6 +8313,7 @@ class BezoekerslijstWindow(QMainWindow):
         self._render_attachments()
         self._render_management()
         self._render_profile_page()
+        self._update_after_sales_availability()
 
     def _update_summary(self):
         scoped_records = self._filtered_records()
@@ -10044,29 +8325,43 @@ class BezoekerslijstWindow(QMainWindow):
             for row in regular_records
         )
         present = sum(is_present_in_scope(row, self.selected_events) for row in scoped_records)
-        self.count_total[1].setText(str(total))
-        self.count_total[2].setText(f"{len(regular_records)} regulier • {introducees} introducé")
-        open_callbacks = max(0, len(regular_records) - callbacks)
-        self.count_callbacks[1].setText(str(open_callbacks))
-        self.count_callbacks[2].setText("Nog te behandelen" if open_callbacks else "After sales bijgewerkt")
         event = self._active_event()
+        historical = self._event_is_anonymized(event) if event else False
+        snapshot = historical_scope(event) if historical else None
+        self.count_total[1].setText(
+            str(snapshot.get("aangemeld", "—")) if snapshot else ("—" if historical else str(total))
+        )
+        self.count_total[2].setText(
+            ("Geanonimiseerd" if snapshot else "Historische aantallen niet bewaard")
+            if historical else f"{len(regular_records)} regulier • {introducees} introducé"
+        )
+        open_callbacks = max(0, len(regular_records) - callbacks)
+        self.count_callbacks[1].setText("—" if historical else str(open_callbacks))
+        self.count_callbacks[2].setText("Geanonimiseerd" if historical else ("Nog te behandelen" if open_callbacks else "After sales bijgewerkt"))
         open_tasks = sum(not bool(task.get("done")) for task in event.get("tasks", [])) if event else 0
         self.count_tasks[1].setText(str(open_tasks))
         self.count_tasks[2].setText("Openstaande acties" if open_tasks else "Geen openstaande acties")
         if hasattr(self, "after_sales_total"):
-            open_callbacks = max(0, len(regular_records) - callbacks)
+            after_sales_event = self._combo_event(self.after_sales_event_combo)
+            after_sales_records = self._event_visitors(after_sales_event) if after_sales_event else []
+            after_sales_regular = [row for row in after_sales_records if not is_introducee(row)]
+            after_sales_callbacks = sum(
+                callback_is_done(row) or str(row.get("WhatsAppStatus", "")) == "Verzonden"
+                for row in after_sales_regular
+            )
+            open_callbacks = max(0, len(after_sales_regular) - after_sales_callbacks)
             followups = sum(
                 bool(str(row.get("TerugbellenOp", "") or "").strip())
                 and callback_status(row) not in {"Afgerond", "Niet meer benaderen"}
-                for row in regular_records
+                for row in after_sales_regular
             )
             fully_done = sum(
                 callback_status(row) in CALLBACK_DONE_STATUSES
                 and not str(row.get("TerugbellenOp", "") or "").strip()
-                for row in regular_records
+                for row in after_sales_regular
             )
-            actionable = max(0, len(regular_records) - fully_done)
-            self.after_sales_total[1].setText(str(len(regular_records)))
+            actionable = max(0, len(after_sales_regular) - fully_done)
+            self.after_sales_total[1].setText(str(len(after_sales_regular)))
             self.after_sales_total[2].setText("Reguliere kandidaten")
             self.after_sales_open[1].setText(str(actionable))
             self.after_sales_open[2].setText("Actie nodig" if actionable else "Alles bijgewerkt")
@@ -10074,12 +8369,33 @@ class BezoekerslijstWindow(QMainWindow):
             self.after_sales_followup[2].setText("Terugbellen gepland" if followups else "Geen vervolgafspraken")
             self.after_sales_done[1].setText(str(fully_done))
             self.after_sales_done[2].setText("Geen actie meer nodig")
-        self.count_present[1].setText(str(present))
-        self.count_present[2].setText(f"Nog {total - present} niet afgevinkt")
+        self.count_present[1].setText(
+            str(snapshot.get("aanwezig", "—")) if snapshot else ("—" if historical else str(present))
+        )
+        self.count_present[2].setText(
+            ("Historische aanwezigheid" if snapshot else "Historische cijfers niet bewaard")
+            if historical else f"Nog {total - present} niet afgevinkt"
+        )
         if hasattr(self, "participant_include_introducees"):
             self.participant_include_introducees.setText(f"Introducees tonen ({introducees})")
         if hasattr(self, "statistics_include_introducees"):
-            self.statistics_include_introducees.setText(f"Introducees meetellen in grafieken ({introducees})")
+            self.statistics_include_introducees.setText(
+                f"Introducees meetellen in grafieken ({snapshot.get('introducees', 0) if snapshot else introducees})"
+            )
+        if hasattr(self, "participant_history_notice"):
+            self.participant_history_notice.setVisible(historical)
+            self.participant_table.setVisible(not historical)
+            self.participant_search_box.setEnabled(not historical)
+            self.participant_include_introducees.setEnabled(not historical)
+            self.participant_import_button.setEnabled(not historical)
+            self.participant_columns_button.setEnabled(not historical)
+            self.participant_more_button.setEnabled(not historical)
+            if historical:
+                self.participant_history_notice.setText(
+                    "Geanonimiseerd — persoonsgegevens zijn verwijderd. "
+                    + ("Historische cijfers en export vindt u bij Statistieken." if snapshot else
+                       "Er is geen historische cijfermomentopname bewaard; daarom zijn de aantallen niet beschikbaar.")
+                )
 
     def _person_name(self, record: dict):
         return " ".join(filter(None, [
@@ -10140,9 +8456,12 @@ class BezoekerslijstWindow(QMainWindow):
     def _update_quality_table(self):
         if not hasattr(self, "quality_table"):
             return
-        issues = self._quality_issues(self._filtered_records())
+        issues = self._quality_issues(self._filtered_records(include_skipped=True))
         self.quality_table.setRowCount(len(issues))
         for row_index, (problem, record, advice) in enumerate(issues):
+            if is_skipped(record):
+                problem = f"{problem} — overgeslagen"
+                advice = f"Telt niet mee ({skip_reason(record)}). Rechtsklik om dat terug te draaien."
             values = [problem, self._person_name(record), record.get("Evenement", ""), advice]
             for column, value in enumerate(values):
                 item = self._text_item(value, record["_id"])
@@ -10158,6 +8477,89 @@ class BezoekerslijstWindow(QMainWindow):
         tab_index = self.tabs.indexOf(self.quality_tab)
         if tab_index >= 0:
             self.tabs.setTabText(tab_index, f"Gegevenscontrole ({len(issues)})")
+
+    def _duplicate_partners(self, record):
+        """Regels die over dezelfde persoon lijken te gaan.
+
+        Zelfde sleutels als de controle in Gegevenscontrole gebruikt: naam met
+        geboortedatum, e-mailadres of telefoonnummer.
+        """
+        def sleutels(other):
+            naam = normalize("|".join([
+                str(other.get("Voornaam", "")), str(other.get("Tussenvoegsel", "")),
+                str(other.get("Achternaam", "")), str(other.get("Geboortedatum", "")),
+            ]))
+            email = normalize(other.get("Email", ""))
+            telefoon = re.sub(r"\D", "", str(other.get("Telefoonnummer", "") or ""))
+            gevonden = set()
+            if naam.strip("|"):
+                gevonden.add(f"naam:{naam}")
+            if email:
+                gevonden.add(f"mail:{email}")
+            if len(telefoon) >= 9:
+                gevonden.add(f"tel:{telefoon}")
+            return gevonden
+
+        eigen = sleutels(record)
+        if not eigen:
+            return []
+        return [
+            other for other in self._filtered_records(include_skipped=True)
+            if other is not record and eigen & sleutels(other)
+        ]
+
+    def skip_duplicate_registration(self):
+        """Laat van een dubbel ingeschreven persoon nog een regel meetellen."""
+        record = self._record_from_item(self.quality_table.currentItem())
+        if not record:
+            QMessageBox.information(self, "Geen regel gekozen", "Selecteer eerst een aandachtspunt.")
+            return
+        partners = [other for other in self._duplicate_partners(record) if not is_skipped(other)]
+        if not partners:
+            QMessageBox.information(
+                self,
+                "Geen dubbele inschrijving",
+                f"Er staat geen tweede regel van {self._person_name(record)} in beeld.",
+            )
+            return
+        groep = [record, *partners] if not is_skipped(record) else partners
+        blijft = richest_record(groep)
+        rest = [other for other in groep if other is not blijft]
+        if not rest:
+            return
+        antwoord = QMessageBox.question(
+            self,
+            "Dubbele inschrijving overslaan",
+            f"{self._person_name(blijft)} staat {len(groep)} keer in de lijst.\n\n"
+            f"Een regel blijft meetellen en neemt de aanwezigheid en de ingevulde gegevens van de "
+            f"andere over. De {len(rest)} andere regel(s) verdwijnen uit de lijsten, de tellingen en "
+            "de exports, maar blijven hier zichtbaar zodat u het kunt terugdraaien.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if antwoord != QMessageBox.StandardButton.Yes:
+            return
+        for other in rest:
+            absorb_duplicate(blijft, other)
+        self._mark_dirty()
+        self._render_all()
+        self.status_label.setText(
+            f"{len(rest)} dubbele inschrijving(en) van {self._person_name(blijft)} tellen niet meer mee."
+        )
+
+    def include_record_again(self):
+        record = self._record_from_item(self.quality_table.currentItem())
+        if not record:
+            QMessageBox.information(self, "Geen regel gekozen", "Selecteer eerst een aandachtspunt.")
+            return
+        if not include_again(record):
+            QMessageBox.information(
+                self, "Telt al mee", f"{self._person_name(record)} telt gewoon mee in de lijsten en tellingen."
+            )
+            return
+        self._mark_dirty()
+        self._render_all()
+        self.status_label.setText(f"{self._person_name(record)} telt weer mee.")
 
     def edit_selected_quality_record(self):
         row = self.quality_table.currentRow()
@@ -10212,48 +8614,20 @@ class BezoekerslijstWindow(QMainWindow):
         self.status_label.setText(f"Gegevens bijgewerkt voor {self._person_name(record)}.")
 
     def _event_statistics_snapshot(self, event: dict) -> dict:
-        """Geaggregeerde cijfers van één evenement, zonder gegevens per persoon.
-
-        Dit is wat er van een evenement overblijft zodra de persoonsgegevens
-        na de bewaartermijn worden gewist: uitsluitend aantallen en
-        verdelingen, niet herleidbaar tot een individu.
-        """
-        records = self._event_visitors(event)
-        event_name = event.get("name", "")
-        reference = parse_date(event.get("date", "")) or date.today()
-        regular = [record for record in records if not is_introducee(record)]
-        present = [record for record in records if is_present(record, event_name)]
-        attended = len(present)
-        registered = len(records)
-        return {
-            # 2: verdelingen splitsen aangemeld en aanwezig, zodat achteraf nog
-            # te zien is bij welke groep de no-shows zaten.
-            "schema": 2,
-            "vastgelegd_op": datetime.now().isoformat(timespec="seconds"),
-            "peildatum": reference.strftime("%d-%m-%Y"),
-            "aangemeld": registered,
-            "aanwezig": attended,
-            "noshows": registered - attended,
-            "introducees": registered - len(regular),
-            "opkomst_percentage": round(attended / registered * 100, 1) if registered else 0.0,
-            "verdeling": {
-                dimension: self._grouped_counts(records, event_name, labeller)
-                for dimension, labeller in (
-                    ("Opleidingsniveau", lambda record: str(record.get("Opleiding", "") or "").strip() or "Onbekend"),
-                    ("Profiel", lambda record: str(record.get("Profiel", "") or "").strip() or "Onbekend"),
-                    ("Geslacht", lambda record: str(record.get("Geslacht", "") or "").strip() or "Onbekend"),
-                    ("Leeftijdsgroep", lambda record: self._age_label(record, reference)),
-                )
-            },
-        }
+        return snapshot_for_event(event, self.records) or {}
 
     def _grouped_counts(self, records, event_name: str, labeller) -> dict:
-        """Aangemeld en aanwezig per groep, zodat no-shows per groep afleidbaar zijn."""
+        """De vier standen per groep, zodat je ze achteraf kunt uitsplitsen."""
         grouped: dict[str, dict] = {}
         for record in records:
-            bucket = grouped.setdefault(labeller(record), {"aangemeld": 0, "aanwezig": 0})
+            bucket = grouped.setdefault(
+                labeller(record),
+                {"aangemeld": 0, "aanwezig": 0, "noshow": 0, "afgemeld": 0},
+            )
             bucket["aangemeld"] += 1
             bucket["aanwezig"] += is_present(record, event_name)
+            bucket["noshow"] += is_no_show(record, event_name)
+            bucket["afgemeld"] += is_cancelled(record, event_name)
         return dict(sorted(grouped.items(), key=lambda item: (-item[1]["aangemeld"], normalize(item[0]))))
 
     def _capture_event_statistics(self, event: dict) -> bool:
@@ -10264,7 +8638,12 @@ class BezoekerslijstWindow(QMainWindow):
         gewist wordt hij bevroren: opnieuw berekenen zou dan op een leeg
         dossier gebeuren en de cijfers definitief vernietigen.
         """
-        if not event or event.get("persoonsgegevens_gewist"):
+        if not event or event.get("persoonsgegevens_gewist") or event.get("exclude_from_analysis"):
+            return False
+        visitors = self._event_visitors(event)
+        if not visitors:
+            return False
+        if attendance_counts(visitors, str(event.get("name", "") or ""))[ONBEKEND]:
             return False
         snapshot = self._event_statistics_snapshot(event)
         if event.get("statistiek") == snapshot:
@@ -10282,15 +8661,37 @@ class BezoekerslijstWindow(QMainWindow):
                 changed = self._capture_event_statistics(event) or changed
         return changed
 
+    def _show_all_values(self) -> bool:
+        """Toont het tabblad elke waarde apart, of gaat de staart onder Overig?"""
+        return bool(getattr(self, "statistics_show_all", None) and self.statistics_show_all.isChecked())
+
+    def _grouped_value(self, field: str, record: dict, spellings: dict) -> str:
+        """De waarde zoals hij geteld wordt, op dezelfde noemer als de kruistabel.
+
+        Opleiding en Profiel komen als vrije tekst uit de aanmeldlijsten. MBO 4,
+        mbo-4 en MBO niveau 4 zijn hetzelfde niveau, en Techniek en techniek
+        hetzelfde profiel. Telde de grafiek die apart, dan stonden ze als losse
+        balken naast elkaar en verdrongen ze samen een echte categorie uit de
+        top acht.
+        """
+        raw = record.get(field, "")
+        if field == "Opleiding":
+            return education_level(raw)
+        if field == "Profiel":
+            return profile_label(raw, spellings)
+        return str(raw or "").strip() or "Onbekend"
+
     def _field_counts(self, field: str, limit: int = 8, records=None):
         source = self.records if records is None else records
-        counts = Counter((str(record.get(field, "") or "").strip() or "Onbekend") for record in source)
+        spellings: dict = {}
+        counts = Counter(self._grouped_value(field, record, spellings) for record in source)
         ordered = sorted(counts.items(), key=lambda item: (-item[1], normalize(item[0])))
-        if len(ordered) > limit:
-            visible = ordered[:limit]
-            visible.append(("Overig", sum(value for _, value in ordered[limit:])))
-            return visible
-        return ordered
+        if self._show_all_values() or limit <= 0 or len(ordered) <= limit:
+            return ordered
+        # Het aantal erbij: zonder dat weet je niet of er twee waarden onder
+        # Overig zitten of de helft van je bezoekers.
+        rest = ordered[limit:]
+        return ordered[:limit] + [(f"Overig ({len(rest)})", sum(value for _, value in rest))]
 
     def _age_from_text(self, value: str, reference: date | None = None):
         """Leeftijd in jaren, standaard vandaag maar desgewenst op een peildatum.
@@ -10329,9 +8730,47 @@ class BezoekerslijstWindow(QMainWindow):
         """
         return trend_age_group(self._age_from_text(record.get("Geboortedatum", ""), reference))
 
+    def _dimension_rows(self, labeller, records, limit: int = 8, order=None):
+        """Per categorie de aantallen per stand, klaar om horizontaal te lezen.
+
+        Levert (categorie, aangemeld, aanwezig, niet gekomen, afgemeld). Eerder
+        gingen dezelfde categorieen drie keer los gesorteerd de export in,
+        waardoor je niet kon zien hoeveel van een groep was komen opdagen.
+        """
+        spellings: dict = {}
+        buckets: dict = {}
+        for record in records or []:
+            label = labeller(record, spellings)
+            bucket = buckets.setdefault(label, Counter())
+            bucket["aangemeld"] += 1
+            bucket[self._scoped_status(record)] += 1
+        if order:
+            geordend = [(label, buckets[label]) for label in order if label in buckets]
+        else:
+            geordend = sorted(buckets.items(), key=lambda item: (-item[1]["aangemeld"], normalize(item[0])))
+        if not order and not self._show_all_values() and limit > 0 and len(geordend) > limit:
+            staart = geordend[limit:]
+            samen = Counter()
+            for _, bucket in staart:
+                samen.update(bucket)
+            geordend = geordend[:limit] + [(f"Overig ({len(staart)})", samen)]
+        return [
+            (label, bucket["aangemeld"], bucket[AANWEZIG], bucket[AFWEZIG], bucket[AFGEMELD])
+            for label, bucket in geordend
+        ]
+
+    def _registration_counts(self, records=None):
+        """Hoeveel deelnemers er via elke aanmeldpagina binnenkwamen."""
+        source = self.records if records is None else records
+        counts = Counter()
+        for record in source:
+            for label in registrations(record):
+                counts[label] += 1
+        return sorted(counts.items(), key=lambda item: (-item[1], normalize(item[0])))
+
     def _age_counts(self, records=None, reference: date | None = None):
         source = self.records if records is None else records
-        labels = ["Jonger dan 18", "18–20", "21–24", "25–29", "30–39", "40 en ouder", "Onbekend"]
+        labels = list(AGE_GROUPS)
         counts = Counter()
         for record in source:
             age = self._age_from_text(record.get("Geboortedatum", ""), reference)
@@ -10353,6 +8792,20 @@ class BezoekerslijstWindow(QMainWindow):
         return [(label, counts[label]) for label in labels if counts[label]]
 
     def _statistics_scope(self):
+        event = self._active_event()
+        if event and event.get("exclude_from_analysis"):
+            return [], (
+                "Dit evenement telt volgens de evenementgegevens niet mee in Statistieken en Trends. "
+                "De deelnemers- en presentiegegevens blijven verder beschikbaar."
+            )
+        incomplete_presence = False
+        if event:
+            visitors = self._event_visitors(event)
+            if not visitors:
+                return [], "Statistieken worden beschikbaar zodra een deelnemerslijst is toegevoegd."
+            incomplete_presence = bool(
+                attendance_counts(visitors, str(event.get("name", "") or ""))[ONBEKEND]
+            )
         include_introducees = self.statistics_include_introducees.isChecked()
         presence_filter = str(self.statistics_presence_filter.currentData() or "all")
         scoped_records = self._filtered_records()
@@ -10360,12 +8813,18 @@ class BezoekerslijstWindow(QMainWindow):
             record for record in scoped_records if not is_introducee(record)
         ]
         introducees = sum(is_introducee(record) for record in scoped_records)
-        if presence_filter == "present":
-            records = [record for record in records if is_present_in_scope(record, self.selected_events)]
-            presence_note = "alleen bezoekers die aanwezig waren"
-        elif presence_filter == "noshow":
-            records = [record for record in records if not is_present_in_scope(record, self.selected_events)]
-            presence_note = "alleen no-shows (aangemeld maar niet aanwezig)"
+        presence_notes = {
+            AANWEZIG: "alleen bezoekers die aanwezig waren",
+            AFWEZIG: "alleen no-shows (aangemeld maar niet gekomen)",
+            AFGEMELD: "alleen bezoekers die zich hebben afgemeld",
+            ONBEKEND: "alleen bezoekers zonder vastgelegde aanwezigheid",
+        }
+        if presence_filter in presence_notes:
+            records = [
+                record for record in records
+                if has_status_in_scope(record, self.selected_events, presence_filter)
+            ]
+            presence_note = presence_notes[presence_filter]
         else:
             presence_note = None
         if include_introducees:
@@ -10374,31 +8833,123 @@ class BezoekerslijstWindow(QMainWindow):
             base_text = f"Grafieken op basis van {len(records)} reguliere bezoekers; introducees zijn uitgesloten."
         if presence_note:
             base_text += f" Filter: {presence_note}."
+        if incomplete_presence:
+            base_text += (
+                " Aanwezigheid is nog niet voor iedereen geregistreerd; "
+                "opkomst- en no-showuitsplitsingen zijn daarom nog onvolledig."
+            )
+        overgeslagen = sum(1 for record in self._filtered_records(include_skipped=True) if is_skipped(record))
+        if overgeslagen:
+            base_text += f" {overgeslagen} dubbele inschrijving(en) tellen niet mee."
         return records, base_text
+
+    def _historical_statistics_selection(self):
+        event = self._active_event() or {}
+        base = historical_scope(event)
+        has_regular = isinstance((event.get("statistiek") or {}).get("regulier"), dict)
+        self.statistics_include_introducees.setEnabled(not base or not base.get("introducees") or has_regular)
+        if base and base.get("introducees") and not has_regular:
+            self.statistics_include_introducees.blockSignals(True)
+            self.statistics_include_introducees.setChecked(True)
+            self.statistics_include_introducees.blockSignals(False)
+        return historical_scope(event, self.statistics_include_introducees.isChecked()), str(
+            self.statistics_presence_filter.currentData() or "all"
+        )
+
+    def _update_historical_statistics(self):
+        snapshot, status = self._historical_statistics_selection()
+        note = "Geanonimiseerd — persoonsgegevens verwijderd; historische statistieken behouden."
+        if snapshot is None:
+            self.statistics_scope_label.setText(
+                note + " Voor dit oude evenement zijn geen statistieken vastgelegd; ze zijn niet uit gewiste gegevens te herstellen."
+            )
+            for card in self.statistics_cards.values():
+                card.chart.set_data([])
+            self.statistics_cards["listing"].hide()
+            self._update_historical_crosstab(None)
+            return
+        quantity = bucket_value(snapshot, status)
+        if quantity is not None:
+            note += f" {ATTENDANCE_LABELS.get(status, 'Alle statussen')}: {quantity}."
+        if status != "all" and any(
+            historical_distribution(snapshot, dimension, status) is None
+            for dimension in ("Opleidingsniveau", "Profiel", "Geslacht", "Leeftijdsgroep")
+        ):
+            note += " Deze oude momentopname bevat geen uitsplitsing per aanwezigheidsstatus; de totale verdelingen blijven wel beschikbaar."
+        if snapshot.get("onbekend"):
+            note += f" {snapshot['onbekend']} aanwezigheid(sstatussen) zijn onbekend en niet als no-show geteld."
+        self.statistics_scope_label.setText(note)
+        mapping = (("education", "Opleidingsniveau", 8), ("profile", "Profiel", 8),
+                   ("gender", "Geslacht", 10), ("age", "Leeftijdsgroep", 0))
+        for card_key, dimension, limit in mapping:
+            values = historical_distribution(snapshot, dimension, status) or []
+            if not self._show_all_values() and limit and len(values) > limit:
+                tail = values[limit:]
+                values = values[:limit] + [(f"Overig ({len(tail)})", sum(value for _, value in tail))]
+            if card_key == "age":
+                values.sort(key=lambda item: AGE_GROUPS.index(item[0]) if item[0] in AGE_GROUPS else len(AGE_GROUPS))
+            self.statistics_cards[card_key].chart.set_data(values)
+        self.statistics_cards["listing"].chart.set_data([])
+        self.statistics_cards["listing"].hide()
+        data = historical_crosstab(snapshot, status)
+        if data is not None and not self._show_all_values():
+            data = education_collapse(data, CROSSTAB_COLUMN_LIMIT)
+        self._update_historical_crosstab(data)
 
     def _update_statistics(self):
         if not hasattr(self, "statistics_cards"):
             return
+        if self._event_is_anonymized(self._active_event() or {}):
+            self._update_historical_statistics()
+            return
+        self.statistics_include_introducees.setEnabled(True)
         records, scope_text = self._statistics_scope()
         self.statistics_scope_label.setText(scope_text)
         self.statistics_cards["education"].chart.set_data(self._field_counts("Opleiding", records=records))
         self.statistics_cards["profile"].chart.set_data(self._field_counts("Profiel", records=records))
         self.statistics_cards["gender"].chart.set_data(self._field_counts("Geslacht", limit=10, records=records))
         self.statistics_cards["age"].chart.set_data(self._age_counts(records))
+        # Zonder samengevoegd evenement zegt deze grafiek niets; dan is hij weg
+        # in plaats van leeg.
+        inschrijvingen = self._registration_counts(records)
+        self.statistics_cards["listing"].setVisible(bool(inschrijvingen))
+        self.statistics_cards["listing"].chart.set_data(inschrijvingen)
         self._update_crosstab(records)
 
+    def _update_historical_crosstab(self, data):
+        self._historical_crosstab_data = data
+        try:
+            self._update_crosstab([])
+        finally:
+            self._historical_crosstab_data = _NO_HISTORICAL_CROSSTAB
+
     def _update_crosstab(self, records):
-        """Vul de kruistabel opleidingsniveau x profiel."""
+        """Vul de kruistabel opleidingsniveau x profiel: als heatmap en als tabel."""
         if not hasattr(self, "crosstab_table"):
             return
         table = self.crosstab_table
-        data = education_crosstab(records)
+        historical = getattr(self, "_historical_crosstab_data", _NO_HISTORICAL_CROSSTAB)
+        data = historical if historical is not _NO_HISTORICAL_CROSSTAB else self._crosstab_data(records)
+        if data is None:
+            self.crosstab_heatmap.set_data({}, self._crosstab_value_mode())
+            table.setRowCount(0)
+            table.setColumnCount(0)
+            self.crosstab_note.setText("Geanonimiseerd — deze kruistabel is niet vastgelegd in de historische gegevens.")
+            return
         rows, columns = data["rows"], data["columns"]
+        grafiek = self._crosstab_view() == "grafiek"
+        self.crosstab_stack.setCurrentIndex(0 if grafiek else 1)
+        # De keuze tussen aantallen en percentage kleurt de heatmap; de tabel
+        # is er juist voor de exacte getallen en blijft daarop staan.
+        self.crosstab_value_picker.setEnabled(grafiek)
         if not rows:
+            self.crosstab_heatmap.set_data({}, self._crosstab_value_mode())
             table.setRowCount(0)
             table.setColumnCount(0)
             self.crosstab_note.setText("Nog geen deelnemers met een opleidingsniveau.")
             return
+
+        self.crosstab_heatmap.set_data(data, self._crosstab_value_mode())
 
         table.setColumnCount(len(columns) + 2)
         table.setHorizontalHeaderLabels(["Opleidingsniveau", *columns, "Totaal"])
@@ -10429,16 +8980,19 @@ class BezoekerslijstWindow(QMainWindow):
         table.setItem(total_row, len(columns) + 1, cell(data["total"], bold=True))
         table.resizeColumnsToContents()
 
-        # Laat zien welke schrijfwijzen zijn samengevoegd, zodat zichtbaar
-        # blijft dat de weergave iets doet met de aangeleverde waarden.
+        # Laat zien wat de weergave met de aangeleverde waarden doet: welke
+        # profielen zijn gebundeld en welke schrijfwijzen zijn samengevoegd.
+        notes = []
+        bundled = data.get("gebundeld") or []
+        if bundled:
+            notes.append(f"Overig ({len(bundled)}) bundelt: {', '.join(bundled)}")
         merged = data["merged"]
         if merged:
             samenvatting = "; ".join(
                 f"{level}: {', '.join(values)}" for level, values in sorted(merged.items())
             )
-            self.crosstab_note.setText(f"Samengevoegde schrijfwijzen — {samenvatting}")
-        else:
-            self.crosstab_note.setText("")
+            notes.append(f"Samengevoegde schrijfwijzen — {samenvatting}")
+        self.crosstab_note.setText("\n".join(notes))
 
     def _app_data_root(self):
         return application_data_root()
@@ -10452,8 +9006,12 @@ class BezoekerslijstWindow(QMainWindow):
         payload = {
             "format": "DCPL Event Management Tool",
             # 11: aanwezigheid wordt per evenement bewaard in plaats van als
-            # één boolean per persoon. Oudere bestanden migreren bij openen.
-            "version": 11,
+            # één boolean per persoon.
+            # 12: per evenement staat er een stand in plaats van een ja/nee:
+            # aanwezig, afwezig, afgemeld of onbekend. Daarmee is 'niet gekomen'
+            # eindelijk te onderscheiden van 'we weten het niet'. Oudere
+            # bestanden migreren bij openen.
+            "version": 12,
             "visible_fields_by_view": self.visible_fields_by_view,
             "selected_events": sorted(self.selected_events, key=normalize),
             "profile": self.profile,
@@ -10596,7 +9154,7 @@ class BezoekerslijstWindow(QMainWindow):
         self._schedule_autosave()
 
     def _record_from_item(self, item: QTableWidgetItem):
-        return self._record_map().get(item.data(Qt.ItemDataRole.UserRole))
+        return self._record_map().get(item.data(Qt.ItemDataRole.UserRole)) if item else None
 
     def _participant_changed(self, item: QTableWidgetItem):
         if self.loading_tables:
@@ -10618,6 +9176,173 @@ class BezoekerslijstWindow(QMainWindow):
         # After sales is edited from the contact panel; the person table is read-only.
         return
 
+    def _presence_changed(self, item: QTableWidgetItem):
+        """Een klik op het vinkje registreert direct of iemand langs is geweest."""
+        if self.loading_tables or self._presence_registration_locked():
+            return
+        presence_fields = self.visible_fields_by_view["presence"]
+        if item.column() != len(presence_fields):
+            return
+        record = self._record_from_item(item)
+        if not record:
+            return
+        status = (
+            AANWEZIG
+            if item.checkState() == Qt.CheckState.Checked
+            else ONBEKEND
+        )
+        if self._scoped_status(record) == status:
+            return
+        for target in self._presence_targets(record):
+            set_attendance(record, target, status)
+        self._set_presence_save_pending(True)
+        self._mark_dirty()
+        self._refresh_presence_status_item(item, status)
+        self.status_label.setText(
+            f"{self._person_name(record)}: {ATTENDANCE_LABELS[status].lower()}."
+        )
+
+    def _refresh_presence_status_item(self, item: QTableWidgetItem, status: str):
+        """Werk één statuscel bij zonder alle schermen opnieuw op te bouwen."""
+        previous_loading = self.loading_tables
+        self.loading_tables = True
+        try:
+            item.setText(ATTENDANCE_LABELS.get(status, ATTENDANCE_LABELS[ONBEKEND]))
+            item.setCheckState(
+                Qt.CheckState.Checked if status == AANWEZIG else Qt.CheckState.Unchecked
+            )
+            item.setForeground(QColor(self.PRESENCE_COLOURS.get(status, "#7b6d82")))
+        finally:
+            self.loading_tables = previous_loading
+        self._presence_render_signature = None
+
+    def _set_presence_save_pending(self, pending: bool):
+        self.presence_changes_pending = pending
+        if hasattr(self, "presence_save_button"):
+            self.presence_save_button.setVisible(
+                pending and not self._presence_registration_locked()
+            )
+
+    def _presence_registration_event(self):
+        if hasattr(self, "event_control_event_combo"):
+            return self._combo_event(self.event_control_event_combo)
+        return self._active_event()
+
+    def _presence_registration_locked(self, event=None) -> bool:
+        event = event or self._presence_registration_event()
+        event_id = str(event.get("id", "") or "") if event else ""
+        if not event_id:
+            return False
+        return any(
+            window is not None
+            and str(getattr(window, "linked_event_id", "") or "") == event_id
+            and getattr(window, "server_thread", None) is not None
+            for window in self._live_server_windows
+        )
+
+    def _update_presence_registration_availability(self):
+        if not hasattr(self, "access_table"):
+            return
+        has_event = self._event_control_selected_event() is not None
+        locked = self._presence_registration_locked()
+        self.access_table.setEnabled(has_event and not locked)
+        if hasattr(self, "event_control_tabs"):
+            self.event_control_tabs.setEnabled(has_event)
+        if hasattr(self, "event_control_context_hint"):
+            self.event_control_context_hint.setVisible(not has_event)
+        if hasattr(self, "presence_live_lock_label"):
+            self.presence_live_lock_label.setVisible(locked)
+        if hasattr(self, "presence_save_button"):
+            self.presence_save_button.setVisible(
+                has_event and self.presence_changes_pending and not locked
+            )
+
+    def _update_after_sales_availability(self):
+        """Maak duidelijk dat After sales pas met een gekozen evenement werkt."""
+        if not hasattr(self, "after_sales_event_combo"):
+            return
+        has_event = self._combo_event(self.after_sales_event_combo) is not None
+        if hasattr(self, "after_sales_context_hint"):
+            self.after_sales_context_hint.setVisible(not has_event)
+        for naam in (
+            "callback_table",
+            "callback_search_box",
+            "callback_status_filter",
+            "select_all_callbacks_button",
+            "select_visible_callbacks_button",
+            "whatsapp_queue_button",
+        ):
+            widget = getattr(self, naam, None)
+            if widget is not None:
+                widget.setEnabled(has_event)
+        for naam in ("after_sales_total", "after_sales_open", "after_sales_followup", "after_sales_done"):
+            summary = getattr(self, naam, None)
+            if summary:
+                summary[0].setEnabled(has_event)
+
+    def _finish_presence_registration(self, _checked=False, *, event=None, confirm=True):
+        event = event or self._presence_registration_event()
+        if self._presence_registration_locked(event):
+            return False
+        event_name = str(event.get("name", "") or "") if event else ""
+        records = self._event_visitors(event) if event else []
+        counts = attendance_counts(records, event_name) if event_name else {
+            AANWEZIG: 0, AFWEZIG: 0, AFGEMELD: 0, ONBEKEND: 0,
+        }
+        unknown_count = counts[ONBEKEND]
+        if confirm and unknown_count:
+            answer = QMessageBox.warning(
+                self,
+                "Registratie afronden?",
+                f"Voor '{event_name}' zijn {counts[AANWEZIG]} deelnemer(s) aanwezig, "
+                f"{counts[AFGEMELD]} afgemeld en {counts[AFWEZIG]} afwezig.\n\n"
+                f"De {unknown_count} nog onbeoordeelde deelnemer(s) worden bij het afronden "
+                "als afwezig vastgelegd. Wilt u doorgaan?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return False
+        absent_count = 0
+        if event_name:
+            for record in records:
+                # Alleen de nog niet beoordeelde regels afronden. Expliciete
+                # statussen (Aanwezig, Afgemeld of Afwezig) blijven staan.
+                if attendance_status(record, event_name) == ONBEKEND:
+                    absent_count += int(set_attendance(record, event_name, AFWEZIG))
+        if absent_count:
+            self._mark_dirty()
+            current = self._presence_registration_event()
+            if current and str(current.get("id", "")) == str(event.get("id", "")):
+                self._render_event_control_scope()
+        if self.save_project():
+            self._set_presence_save_pending(False)
+            suffix = (
+                f" {absent_count} niet-beoordeelde deelnemer(s) zijn als afwezig vastgelegd."
+                if absent_count else ""
+            )
+            self.status_label.setText(f"Aanwezigheidsregistratie afgerond.{suffix}")
+            return True
+        return False
+
+    def _apply_callback_status_marker(self, row_index: int, record: dict):
+        """Toon de contactstatus als gekleurde stip vooraan de rij."""
+        item = self.callback_table.item(row_index, 0)
+        if item is None:
+            return
+        status = callback_status(record)
+        item.setIcon(callback_status_icon(status))
+        item.setData(Qt.ItemDataRole.ToolTipRole, f"Contactstatus: {status}")
+
+    def _refresh_callback_status_marker(self, record_id: str):
+        record = self._record_map().get(record_id)
+        if not record:
+            return
+        for row in range(self.callback_table.rowCount()):
+            item = self.callback_table.item(row, 0)
+            if item and item.data(Qt.ItemDataRole.UserRole) == record_id:
+                self._apply_callback_status_marker(row, record)
+
     def _callback_status_changed(self, record_id: str, status: str):
         if self.loading_tables:
             return
@@ -10630,28 +9355,53 @@ class BezoekerslijstWindow(QMainWindow):
             record["LaatsteContact"] = date.today().strftime("%d-%m-%Y")
         self._mark_dirty()
         self._update_summary()
+        self._refresh_callback_status_marker(record_id)
         self._filter_callbacks()
         self._update_callback_detail_panel()
 
-    def _access_changed(self, item: QTableWidgetItem):
-        presence_check_column = len(self.visible_fields_by_view["presence"])
-        if self.loading_tables or item.column() != presence_check_column:
-            return
-        record = self._record_from_item(item)
-        if not record:
-            return
-        present = item.checkState() == Qt.CheckState.Checked
-        # Aanwezigheid hoort bij één evenement. Staan er meerdere in beeld, dan
-        # is er geen eenduidig doel en gebruiken we alle evenementen van deze
-        # bezoeker die nu in de selectie zitten.
-        targets = [
+    def _presence_targets(self, record):
+        """Aanwezigheid hoort bij één evenement.
+
+        Staan er meerdere in beeld, dan is er geen eenduidig doel en gelden
+        alle evenementen van deze bezoeker die nu in de selectie zitten.
+        """
+        return [
             name for name in record_events(record)
             if not self.selected_events or name in self.selected_events
         ]
-        for target in targets:
-            set_present(record, target, present)
+
+    def _scoped_status(self, record) -> str:
+        """De stand zoals hij voor de huidige selectie geldt.
+
+        Bij meerdere evenementen in beeld wint de sterkste uitspraak: wie
+        ergens aanwezig was, was aanwezig.
+        """
+        statuses = {attendance_status(record, name) for name in self._presence_targets(record)}
+        for status in (AANWEZIG, AFWEZIG, AFGEMELD):
+            if status in statuses:
+                return status
+        return ONBEKEND
+
+    def _set_presence_status(self, status: str):
+        if self._presence_registration_locked():
+            return
+        current_item = self.access_table.currentItem()
+        record = self._record_from_item(current_item)
+        if not record:
+            QMessageBox.information(self, "Geen deelnemer gekozen", "Selecteer eerst een deelnemer.")
+            return
+        for target in self._presence_targets(record):
+            set_attendance(record, target, status)
+        self._set_presence_save_pending(True)
         self._mark_dirty()
-        self._update_summary()
+        status_item = self.access_table.item(
+            current_item.row(), len(self.visible_fields_by_view["presence"])
+        )
+        if status_item:
+            self._refresh_presence_status_item(status_item, status)
+        self.status_label.setText(
+            f"{self._person_name(record)}: {ATTENDANCE_LABELS[status].lower()}."
+        )
 
     def _filter_participants(self, *_):
         if not hasattr(self, "participant_include_introducees"):
@@ -10723,6 +9473,24 @@ class BezoekerslijstWindow(QMainWindow):
         self._update_callback_detail_panel()
 
     def eventFilter(self, watched, event):
+        if (
+            hasattr(self, "access_table")
+            and watched in (self.access_table, self.access_table.viewport())
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Space
+            and event.modifiers() == Qt.KeyboardModifier.NoModifier
+            and not self._presence_registration_locked()
+        ):
+            row = self.access_table.currentRow()
+            status_column = len(self.visible_fields_by_view["presence"])
+            item = self.access_table.item(row, status_column) if row >= 0 else None
+            if item:
+                item.setCheckState(
+                    Qt.CheckState.Unchecked
+                    if item.checkState() == Qt.CheckState.Checked
+                    else Qt.CheckState.Checked
+                )
+                return True
         if (
             hasattr(self, "sidebar_logo")
             and watched is self.sidebar_logo
@@ -10947,7 +9715,8 @@ class BezoekerslijstWindow(QMainWindow):
             )
         if not valid:
             return
-        dialog = WhatsAppQueueDialog(valid, event, self.profile, self)
+        dialog = WhatsAppQueueDialog(valid, event, self.profile, self,
+                                     templates=load_whatsapp_templates(self.settings))
         dialog.exec()
         if dialog.changed:
             self._mark_dirty()
@@ -11007,7 +9776,7 @@ class BezoekerslijstWindow(QMainWindow):
             values = dialog.value()
             template = dialog.selected_template()
             if template and isinstance(template.get("event"), dict):
-                source = deepcopy(template["event"])
+                source = event_from_template(template)
                 template_type = source.get("event_type", "Meeloopdag")
                 source["id"] = ""
                 source["attachments"] = []
@@ -11020,9 +9789,9 @@ class BezoekerslijstWindow(QMainWindow):
             source["tasks"] = [
                 prepare_task({**task, "id": "", "done": False, "completed_on": ""})
                 for task in source.get("tasks", [])
-                if task_allowed_for_event_type(task, values["event_type"])
+                if template or task_allowed_for_event_type(task, values["event_type"])
             ]
-            if template_type != values["event_type"] and values["event_type"] != "Online voorlichting":
+            if not template and template_type != values["event_type"] and values["event_type"] != "Online voorlichting":
                 existing_tasks = {normalize(task.get("title", "")) for task in source["tasks"]}
                 for task in tasks_from_templates(self.task_templates, values["event_type"]):
                     if normalize(task.get("title", "")) not in existing_tasks:
@@ -11072,6 +9841,12 @@ class BezoekerslijstWindow(QMainWindow):
         ] if isinstance(source_events, list) else []
         self._ensure_events_from_records()
         renamed_events = self._ensure_event_date_names()
+        # Dossiers van voor deze versie hebben aanwezigheid staan onder de naam
+        # van de aanmeldlijst. Die telt nergens mee tot hij is thuisgebracht.
+        self._repaired_attendance = repair_orphan_attendance(
+            self.records, [event.get("name", "") for event in self.events]
+        )
+        self._cleared_absence = self._migrate_future_absence(payload)
         project_profile = payload.get("profile")
         if isinstance(project_profile, dict):
             self.profile = {
@@ -11116,7 +9891,18 @@ class BezoekerslijstWindow(QMainWindow):
             self.page_stack.setCurrentWidget(self.home_page)
             self._set_project_context_ui(False)
             self.status_label.setStyleSheet("")
-            self.status_label.setText(f"EventHub-bestand geopend: {self.project_path.name} ({len(self.records)} deelnemers).")
+            opened = f"EventHub-bestand geopend: {self.project_path.name} ({len(self.records)} deelnemers)."
+            if getattr(self, "_repaired_attendance", 0):
+                opened += (
+                    f" Bij {self._repaired_attendance} deelnemers is de aanwezigheid uit een eerdere import"
+                    " alsnog aan het juiste evenement gekoppeld; sla het bestand op om dat te bewaren."
+                )
+            if getattr(self, "_cleared_absence", 0):
+                opened += (
+                    f" Bij {self._cleared_absence} deelnemers van evenementen die nog moeten plaatsvinden"
+                    " staat de aanwezigheid nu op onbekend in plaats van no-show."
+                )
+            self.status_label.setText(opened)
             # Elk geopend dossier wordt op de bewaartermijn gecontroleerd. Tijdens
             # het opstarten gebeurt dat bewust later, na de profiel- en
             # welkomstschermen, zodat de vraag niet tussen andere vensters valt.
@@ -11127,7 +9913,7 @@ class BezoekerslijstWindow(QMainWindow):
             if quiet:
                 self._write_error_log(f"EventHub-bestand automatisch openen: {path}", traceback.format_exc())
             else:
-                QMessageBox.critical(self, "Openen mislukt", str(exc))
+                self._show_runtime_error("EventHub-bestand openen", exc)
             return False
 
     def save_project(self):
@@ -11147,6 +9933,7 @@ class BezoekerslijstWindow(QMainWindow):
                 self._create_backup(self.project_path)
             self._write_payload_atomic(self.project_path, self._project_payload())
             self._set_clean()
+            self._set_presence_save_pending(False)
             self._remove_recovery_file()
             self._remember_project_path(self.project_path)
             self.setWindowTitle(APP_NAME)
@@ -11155,7 +9942,7 @@ class BezoekerslijstWindow(QMainWindow):
             self.status_label.setText(f"Opgeslagen: {self.project_path}")
             return True
         except Exception as exc:
-            QMessageBox.critical(self, "Opslaan mislukt", str(exc))
+            self._show_runtime_error("EventHub-bestand opslaan", exc)
             return False
 
     def _restore_autosave_payload(self, payload: dict):
@@ -11256,8 +10043,7 @@ class BezoekerslijstWindow(QMainWindow):
             self.status_label.setText(f"Vorige versie hersteld: {Path(backup_path).name}")
             return True
         except Exception as exc:
-            QMessageBox.critical(self, "Herstellen mislukt", str(exc))
-            self._write_error_log("Reservekopie herstellen", traceback.format_exc())
+            self._show_runtime_error("Reservekopie herstellen", exc)
             return False
 
     def restore_previous_version(self):
@@ -11350,7 +10136,7 @@ class BezoekerslijstWindow(QMainWindow):
                     self._restore_autosave_payload(payload)
                     dialog.accept()
                 except Exception as exc:
-                    QMessageBox.critical(dialog, "Herstellen mislukt", str(exc))
+                    self._show_runtime_error("Herstelbestand openen", exc)
             elif self._restore_backup_file(path):
                 dialog.accept()
 
@@ -11367,7 +10153,7 @@ class BezoekerslijstWindow(QMainWindow):
                         self.settings.remove("ignored_autosave_mtime_ns")
                     render()
                 except OSError as exc:
-                    QMessageBox.critical(dialog, "Verwijderen mislukt", str(exc))
+                    self._show_runtime_error("Herstelbestand verwijderen", exc)
 
         def open_folder():
             _, path = selected_file()
@@ -11410,20 +10196,15 @@ class BezoekerslijstWindow(QMainWindow):
             return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            result = import_registration_files(file_names, self.records)
+            # De import verhuist elke ingelezen regel naar dit evenement, ook
+            # de regels die een bestaande bezoeker aanvullen.
+            result = import_registration_files(file_names, self.records, target_event=active_event["name"])
         finally:
             QApplication.restoreOverrideCursor()
+        overwritten = self._ask_about_attendance_conflicts(result.get("attendance_conflicts") or [])
         added = [prepare_record(record) for record in result["records"]]
+        self._touch_event(active_event)
         linked_to_active = active_event["name"]
-        for record in added:
-            # De lijst wordt in dit evenement geimporteerd, dus hoort de
-            # aanwezigheid uit het bestand bij deze evenementnaam. Zonder deze
-            # verhuizing blijft die onder de naam uit de bronkolom staan, die
-            # in EventHub de datum mist, en telt iedereen als afwezig.
-            aanwezig_in_bestand = is_present(record)
-            record["Evenement"] = active_event["name"]
-            record["Aanwezig"] = {}
-            set_present(record, active_event["name"], aanwezig_in_bestand)
         self.records.extend(added)
         self._ensure_events_from_records()
         enriched = int(result.get("enriched", 0))
@@ -11436,6 +10217,8 @@ class BezoekerslijstWindow(QMainWindow):
         introducees = sum(int(report.get("introducees", 0)) for report in result["reports"])
         presence_detected = sum(int(report.get("presence_detected", 0)) for report in result["reports"])
         parts = [f"{len(added)} deelnemers toegevoegd"]
+        if overwritten:
+            parts.append(f"bij {overwritten} deelnemers is de aanwezigheid uit het bestand overgenomen")
         if linked_to_active:
             parts.append(f"gekoppeld aan {linked_to_active}")
         if introducees:
@@ -11486,10 +10269,11 @@ class BezoekerslijstWindow(QMainWindow):
         if not event:
             return
         if not PARTICIPANT_TEMPLATE.is_file():
-            QMessageBox.critical(
-                self,
+            self._show_error_with_report(
                 "Template ontbreekt",
                 "De vaste DCPL-deelnemerslijst kon niet worden gevonden. Installeer EventHub opnieuw of neem contact op met de beheerder.",
+                "Deelnemerslijst-template controleren",
+                f"Ontbrekend bestand: {PARTICIPANT_TEMPLATE}",
             )
             return
         safe_name = re.sub(r"[^A-Za-z0-9À-ÿ _.-]+", "", str(event.get("name", "") or "Evenement")).strip()
@@ -11673,48 +10457,206 @@ class BezoekerslijstWindow(QMainWindow):
             )
             self._offer_open_export_folder(file_name)
         except Exception as exc:
-            QMessageBox.critical(self, "Exporteren mislukt", str(exc))
+            self._show_runtime_error("Deelnemerslijst exporteren", exc)
+
+    def _crosstab_export_scope_dialog(self, records):
+        """Kies de groep voor de hele export en, apart, voor de kruistabel."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Deelnemers voor de export")
+        dialog.setMinimumWidth(430)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("<b>Hele export</b>"))
+        layout.addWidget(QLabel(
+            "Standaard worden alle groepen meegenomen. Kies desgewenst één aanwezigheidsstatus."
+        ))
+        export_scope = ScrollSafeComboBox()
+        for label, value in (
+            ("Alle groepen", "all"),
+            ("Alleen aanwezig", AANWEZIG),
+            ("Alleen afwezig", AFWEZIG),
+            ("Alleen afgemeld", AFGEMELD),
+        ):
+            export_scope.addItem(label, value)
+        layout.addWidget(export_scope)
+
+        layout.addWidget(QLabel("<b>Alleen de kruistabel</b>"))
+        layout.addWidget(QLabel(
+            "Deze aanvullende afvinklijst geldt uitsluitend voor Opleidingsniveau × Profiel."
+        ))
+
+        current_filter = str(self.statistics_presence_filter.currentData() or "all")
+        counts = Counter(self._scoped_status(record) for record in records)
+        checkboxes = {}
+        for status in (AANWEZIG, AFGEMELD, AFWEZIG, ONBEKEND):
+            checkbox = QCheckBox(f"{ATTENDANCE_LABELS[status]} ({counts[status]})")
+            checkbox.setChecked(current_filter == "all" or current_filter == status)
+            checkboxes[status] = checkbox
+            layout.addWidget(checkbox)
+
+        def sync_crosstab_with_export_scope(*_):
+            gekozen = str(export_scope.currentData() or "all")
+            if gekozen != "all":
+                for status, checkbox in checkboxes.items():
+                    checkbox.setChecked(status == gekozen)
+
+        export_scope.currentIndexChanged.connect(sync_crosstab_with_export_scope)
+
+        include_introducees = QCheckBox(
+            f"Introducees meenemen ({sum(is_introducee(record) for record in records)})"
+        )
+        include_introducees.setChecked(self.statistics_include_introducees.isChecked())
+        layout.addWidget(include_introducees)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Exporteren")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+
+        statuses = {status for status, checkbox in checkboxes.items() if checkbox.isChecked()}
+        if not statuses:
+            QMessageBox.information(
+                self, "Geen deelnemers gekozen", "Vink ten minste één aanwezigheidsstatus aan."
+            )
+            return None
+        return statuses, include_introducees.isChecked(), str(export_scope.currentData() or "all")
+
+    def _export_historical_statistics(self, event: dict):
+        snapshot, status = self._historical_statistics_selection()
+        if snapshot is None:
+            QMessageBox.information(
+                self, "Geen historische statistieken",
+                "De persoonsgegevens zijn verwijderd voordat een statistische momentopname beschikbaar was."
+            )
+            return
+        dimensions = historical_export_dimensions(snapshot, status)
+        if not dimensions:
+            QMessageBox.information(self, "Geen historische verdelingen", "Voor deze selectie zijn geen verdelingen vastgelegd.")
+            return
+        count = bucket_value(snapshot, status)
+        statuses = {AANWEZIG: "aanwezig", AFWEZIG: "noshows", AFGEMELD: "afgemeld", ONBEKEND: "onbekend"}
+        summary = {
+            "evenement": event.get("name", "Evenement"), "datum": event.get("date", ""),
+            "locatie": " — ".join(filter(None, [event.get("place", ""), event.get("location", "")])),
+            "aangemeld": count if count is not None else 0,
+            "aanwezig": snapshot.get("aanwezig", 0) if status == "all" else (count if status == AANWEZIG else 0),
+            "afwezig": snapshot.get("noshows", 0) if status == "all" else (count if status == AFWEZIG else 0),
+            "afgemeld": snapshot.get("afgemeld", 0) if status == "all" else (count if status == AFGEMELD else 0),
+            "onbekend": snapshot.get("onbekend", 0) if status == "all" else (count if status == ONBEKEND else 0),
+            "opmerkingen": ["Geanonimiseerd: persoonsgegevens zijn verwijderd; deze export bevat uitsluitend historische aggregaten."],
+        }
+        event_label = self._safe_document_name(event_base_name(event.get("name", "")))
+        default_name = exports_directory() / f"EventHub-statistieken - {event_label}{self._event_date_suffix(event)}.xlsx"
+        file_name, _ = QFileDialog.getSaveFileName(self, "Historische statistieken exporteren", str(default_name), "Excel-werkmap (*.xlsx)")
+        if not file_name:
+            return
+        if not file_name.lower().endswith(".xlsx"):
+            file_name += ".xlsx"
+        try:
+            export_statistics_workbook(dimensions, file_name, summary=summary,
+                                       crosstab=historical_crosstab(snapshot, status))
+            self.status_label.setText(f"Historische statistieken geëxporteerd: {file_name}")
+            self._offer_open_export_folder(file_name)
+        except Exception as exc:
+            self._show_runtime_error("Historische statistieken exporteren", exc)
 
     def export_statistics(self):
         if not self._active_event() or self.page_stack.currentWidget() is not self.event_page:
             QMessageBox.information(self, "Open eerst een evenement", "Open het evenement dat u wilt exporteren.")
             return
+        if self._active_event().get("exclude_from_analysis"):
+            QMessageBox.information(
+                self, "Uitgesloten van analyse",
+                "Dit evenement staat ingesteld op niet meetellen in Statistieken en Trends. Pas dit aan in de evenementgegevens om statistieken te exporteren.",
+            )
+            return
+        active_event = self._active_event()
+        if active_event.get("persoonsgegevens_gewist"):
+            self._export_historical_statistics(active_event)
+            return
+        event_visitors = self._event_visitors(active_event)
+        if (not event_visitors or attendance_counts(
+                event_visitors, str(active_event.get("name", "") or ""))[ONBEKEND]):
+            QMessageBox.information(
+                self, "Aanwezigheid nog niet afgerond",
+                "Statistieken kunnen worden geëxporteerd zodra een deelnemerslijst aanwezig is en iedere deelnemer als aanwezig, afwezig of afgemeld is geregistreerd.",
+            )
+            return
         event_records = self._filtered_records()
+        crosstab_scope = self._crosstab_export_scope_dialog(event_records)
+        if crosstab_scope is None:
+            return
+        crosstab_statuses, crosstab_include_introducees, export_status = crosstab_scope
+        if export_status != "all":
+            event_records = [
+                record for record in event_records if self._scoped_status(record) == export_status
+            ]
+        crosstab_records = [
+            record for record in event_records if self._scoped_status(record) in crosstab_statuses
+        ]
+        if not crosstab_include_introducees:
+            crosstab_records = [record for record in crosstab_records if not is_introducee(record)]
+        if not crosstab_records:
+            QMessageBox.information(
+                self, "Lege kruistabel", "De gekozen groepen bevatten geen deelnemers voor de kruistabel."
+            )
+            return
         if hasattr(self, "statistics_include_introducees") and not self.statistics_include_introducees.isChecked():
             event_records = [record for record in event_records if not is_introducee(record)]
         if not event_records:
             QMessageBox.information(self, "Niets te exporteren", "Voeg eerst één of meer aanmeldlijsten toe aan dit evenement.")
             return
-        present_records = [record for record in event_records if is_present_in_scope(record, self.selected_events)]
-        noshow_records = [record for record in event_records if not is_present_in_scope(record, self.selected_events)]
-
-        def breakdowns(records):
-            return {
-                "Opleidingsniveau": self._field_counts("Opleiding", records=records),
-                "Profiel": self._field_counts("Profiel", records=records),
-                "Geslacht": self._field_counts("Geslacht", limit=10, records=records),
-                "Leeftijdsgroep": self._age_counts(records),
-            }
-
-        all_counts = breakdowns(event_records)
-        present_counts = breakdowns(present_records)
-        noshow_counts = breakdowns(noshow_records)
-
-        dimension_sections = [
-            (dimension, [
-                (f"Alle deelnemers ({len(event_records)})", all_counts[dimension]),
-                (f"Aanwezig geweest ({len(present_records)})", present_counts[dimension]),
-                (f"No-shows ({len(noshow_records)})", noshow_counts[dimension]),
-            ])
-            for dimension in ("Opleidingsniveau", "Profiel", "Geslacht", "Leeftijdsgroep")
-        ]
-
         event = self._active_event()
-        scope_text = (
-            f"{event.get('name', 'Evenement')} — alle {len(event_records)} deelnemers van dit evenement, "
-            f"uitgesplitst naar aanwezig geweest ({len(present_records)}) en no-shows ({len(noshow_records)})."
+        peildatum = parse_date(str(event.get("date", "") or "")) or date.today()
+        dimensions = [
+            ("Opleidingsniveau", self._dimension_rows(
+                lambda record, spellings: self._grouped_value("Opleiding", record, spellings), event_records)),
+            ("Profiel", self._dimension_rows(
+                lambda record, spellings: self._grouped_value("Profiel", record, spellings), event_records)),
+            ("Geslacht", self._dimension_rows(
+                lambda record, spellings: self._grouped_value("Geslacht", record, spellings),
+                event_records, limit=10)),
+            ("Leeftijdsgroep", self._dimension_rows(
+                lambda record, spellings: self._age_label(record, peildatum),
+                event_records, order=AGE_GROUPS)),
+        ]
+        if self._registration_counts(event_records):
+            dimensions.append(("Inschrijving", self._dimension_rows(
+                lambda record, spellings: "; ".join(registrations(record)) or "Onbekend",
+                event_records, limit=0)))
+
+        standen = Counter(self._scoped_status(record) for record in event_records)
+        overgeslagen = sum(1 for record in self._filtered_records(include_skipped=True) if is_skipped(record))
+        opmerkingen = []
+        if overgeslagen:
+            opmerkingen.append(f"{overgeslagen} dubbele inschrijving(en) tellen niet mee.")
+        if not self.statistics_include_introducees.isChecked():
+            opmerkingen.append("Introducees zijn buiten de telling gelaten.")
+        if self._show_all_values():
+            opmerkingen.append("Alle waarden staan apart; er is niets samengevat onder Overig.")
+        if export_status != "all":
+            opmerkingen.append(f"Deze export bevat alleen: {ATTENDANCE_LABELS[export_status]}.")
+        summary = {
+            "evenement": event.get("name", "Evenement"),
+            "datum": event.get("date", ""),
+            "locatie": " — ".join(filter(None, [event.get("place", ""), event.get("location", "")])),
+            "aangemeld": len(event_records),
+            "aanwezig": standen[AANWEZIG],
+            "afwezig": standen[AFWEZIG],
+            "afgemeld": standen[AFGEMELD],
+            "onbekend": standen[ONBEKEND],
+            "opmerkingen": opmerkingen,
+        }
+        # De naam van het evenement hoort in de bestandsnaam; anders zijn twee
+        # exports van dezelfde dag niet uit elkaar te houden.
+        event_label = self._safe_document_name(event_base_name(event.get("name", "")))
+        default_name = exports_directory() / (
+            f"EventHub-statistieken - {event_label}{self._event_date_suffix(event)}.xlsx"
         )
-        default_name = exports_directory() / f"EventHub-statistieken{self._event_date_suffix(event)}.xlsx"
         file_name, _ = QFileDialog.getSaveFileName(self, "Statistieken exporteren naar Excel", str(default_name), "Excel-werkmap (*.xlsx)")
         if not file_name:
             return
@@ -11722,22 +10664,22 @@ class BezoekerslijstWindow(QMainWindow):
             file_name += ".xlsx"
         try:
             export_statistics_workbook(
-                dimension_sections, file_name, scope_description=scope_text,
-                # De kruistabel stond alleen op het scherm; in een export naar
-                # Excel hoort hij net zo goed thuis.
-                crosstab=education_crosstab(event_records),
+                dimensions, file_name, summary=summary,
+                # Dezelfde kruistabel als op het scherm, inclusief de keuze om
+                # de kleinste profielen wel of niet te bundelen.
+                crosstab=self._crosstab_data(crosstab_records),
             )
             self.status_label.setText(f"Statistieken geëxporteerd: {file_name}")
             self._offer_open_export_folder(file_name)
             QMessageBox.information(
                 self,
                 "Export gereed",
-                "De Excel-werkmap bevat alle deelnemers van dit evenement, per statistiek (Opleidingsniveau, "
-                "Profiel, Geslacht en Leeftijdsgroep) uitgesplitst in Alle deelnemers, Aanwezig geweest en "
-                "No-shows, elk met een grafiek.",
+                "De werkmap begint met een overzicht van de aantallen en de opkomst. Daarna staat per "
+                "statistiek een tabel met per categorie hoeveel er waren aangemeld, aanwezig, niet gekomen "
+                "en afgemeld, met de opkomst per categorie en een grafiek eronder.",
             )
         except Exception as exc:
-            QMessageBox.critical(self, "Exporteren mislukt", str(exc))
+            self._show_runtime_error("Volledige Excel-export", exc)
 
     def remove_selected(self):
         ids = set()
@@ -11879,6 +10821,7 @@ class BezoekerslijstWindow(QMainWindow):
         if self._rudder_bridge is not None:
             self._rudder_bridge.stop()
             self._rudder_bridge = None
+        self.rudder_attendance_service.stop()
         for window in list(self._live_server_windows):
             try:
                 linked_event_id = str(getattr(window, "linked_event_id", "") or "")
@@ -11914,6 +10857,9 @@ def main():
     window = BezoekerslijstWindow(progress_callback=splash.set_progress)
     splash.set_progress(100, "Gereed")
     window.show()
+    # Draait er al een EventHub, dan houdt die de poort; deze werkt dan gewoon
+    # zonder de assistent.
+    window.rudder_attendance_service.start()
     splash.finish(window)
     QTimer.singleShot(250, window.run_post_startup)
     return app.exec()

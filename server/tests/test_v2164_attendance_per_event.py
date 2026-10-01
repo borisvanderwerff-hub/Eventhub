@@ -5,6 +5,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from bezoekerslijst_core import (
@@ -28,21 +29,27 @@ def visitor(**overrides):
 
 
 class AttendanceMigrationTests(unittest.TestCase):
+    """Vanaf versie 12 staat er een stand per evenement in plaats van een ja/nee."""
+
     def test_old_boolean_applies_to_every_linked_event(self):
         record = visitor(Aanwezig=True)
         self.assertEqual(
             attendance_map(record),
-            {VOORLICHTING: True, MEELOOPDAG: True},
+            {VOORLICHTING: "aanwezig", MEELOOPDAG: "aanwezig"},
         )
 
     def test_old_false_boolean_never_invents_attendance(self):
         record = visitor(Aanwezig=False)
-        self.assertEqual(attendance_map(record), {VOORLICHTING: False, MEELOOPDAG: False})
+        self.assertEqual(attendance_map(record), {VOORLICHTING: "afwezig", MEELOOPDAG: "afwezig"})
         self.assertFalse(is_present(record))
 
-    def test_dict_format_is_returned_unchanged(self):
+    def test_the_old_dict_of_booleans_migrates_per_event(self):
         record = visitor(Aanwezig={VOORLICHTING: True, MEELOOPDAG: False})
-        self.assertEqual(attendance_map(record), {VOORLICHTING: True, MEELOOPDAG: False})
+        self.assertEqual(attendance_map(record), {VOORLICHTING: "aanwezig", MEELOOPDAG: "afwezig"})
+
+    def test_the_new_statuses_survive_unchanged(self):
+        record = visitor(Aanwezig={VOORLICHTING: "afgemeld", MEELOOPDAG: "onbekend"})
+        self.assertEqual(attendance_map(record), {VOORLICHTING: "afgemeld", MEELOOPDAG: "onbekend"})
 
 
 class AttendancePerEventTests(unittest.TestCase):
@@ -98,7 +105,7 @@ class AttendanceFollowsTheEventTests(unittest.TestCase):
         retained = detach_event_from_records([record], VOORLICHTING)
 
         self.assertEqual(len(retained), 1)
-        self.assertEqual(attendance_map(retained[0]), {MEELOOPDAG: True})
+        self.assertEqual(attendance_map(retained[0]), {MEELOOPDAG: "aanwezig"})
 
 
 class LiveSessionWriteBackTests(unittest.TestCase):
@@ -109,16 +116,20 @@ class LiveSessionWriteBackTests(unittest.TestCase):
         # nodig, dus de functie wordt los uit de bron uitgevoerd.
         import ast
 
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         tree = ast.parse(source)
         function = next(
             node for node in tree.body
             if isinstance(node, ast.FunctionDef) and node.name == "apply_live_attendance"
         )
+        core = __import__("bezoekerslijst_core")
         namespace = {
-            "normalize": __import__("bezoekerslijst_core").normalize,
-            "record_events": __import__("bezoekerslijst_core").record_events,
+            "normalize": core.normalize,
+            "record_events": core.record_events,
             "set_present": set_present,
+            "set_attendance": core.set_attendance,
+            "AANWEZIG": core.AANWEZIG,
+            "ONBEKEND": core.ONBEKEND,
         }
         exec(compile(ast.Module([function], []), "<apply_live_attendance>", "exec"), namespace)
         return namespace["apply_live_attendance"](records, participants, event_name)

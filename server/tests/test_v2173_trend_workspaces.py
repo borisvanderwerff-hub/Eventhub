@@ -6,6 +6,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from bezoekerslijst_app import BezoekerslijstWindow, TrendPanel
@@ -108,7 +109,11 @@ class PanelTests(unittest.TestCase):
     """Het paneel bestaat één keer en wordt door beide werkgebieden gebruikt."""
 
     def setUp(self):
-        self.source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        self.source = desktop_source(ROOT)
+
+    def _block(self, name):
+        start = self.source.index(f"def {name}(self")
+        return self.source[start:self.source.index(chr(10) + "    def ", start + 1)]
 
     def test_panel_is_a_reusable_widget(self):
         self.assertIn("class TrendPanel(QWidget):", self.source)
@@ -127,6 +132,9 @@ class PanelTests(unittest.TestCase):
     def test_own_panel_reads_from_the_dossier(self):
         start = self.source.index("def _build_trends_page(self")
         block = self.source[start:self.source.index("\n    def ", start + 1)]
+        self.assertIn("self._own_trend_summaries", block)
+        start = self.source.index("def _own_trend_summaries(self")
+        block = self.source[start:self.source.index("\n    def ", start + 1)]
         self.assertIn("collect_trend_summaries(self.events", block)
 
     def test_loose_panel_reads_from_the_imported_sets(self):
@@ -134,20 +142,30 @@ class PanelTests(unittest.TestCase):
         block = self.source[start:self.source.index("\n    def ", start + 1)]
         self.assertIn("TrendPanel(self._loose_trend_summaries)", block)
 
-    def test_each_workspace_has_its_own_export(self):
+    def test_the_export_follows_the_open_workspace(self):
+        """Eén knop rechtsboven, die exporteert wat er openstaat.
+
+        De knop stond eerst in de filterrij van elk paneel afzonderlijk. Nu
+        hangt hij aan de tabbladen, dus mag hij niet aan een vast paneel
+        gekoppeld zijn maar moet hij het actieve werkgebied opzoeken.
+        """
         start = self.source.index("def _build_trends_page(self")
         block = self.source[start:self.source.index("\n    def ", start + 1)]
-        self.assertIn("self.own_trend_panel.export_button.clicked.connect", block)
-        self.assertIn("self.loose_trend_panel.export_button.clicked.connect", block)
-        # De export moet het paneel meekrijgen, anders exporteert hij het
-        # verkeerde werkgebied wanneer het andere tabblad actief is.
-        self.assertIn("self.export_trend_data(self.own_trend_panel)", block)
-        self.assertIn("self.export_trend_data(self.loose_trend_panel)", block)
+        self.assertIn(
+            "self.trend_export_button.clicked.connect(lambda: self.export_trend_data())",
+            block,
+        )
+
+        handler = self._block("export_trend_data")
+        self.assertIn("panel = panel or self._active_trend_panel()", handler)
+
+    def test_the_active_workspace_is_the_open_tab(self):
+        self.assertIn("self.trend_tabs.currentIndex()", self._block("_active_trend_panel"))
 
 
 class ManagementTests(unittest.TestCase):
     def setUp(self):
-        self.source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        self.source = desktop_source(ROOT)
 
     def _block(self, name):
         start = self.source.index(f"def {name}(self")
@@ -171,10 +189,15 @@ class ManagementTests(unittest.TestCase):
         self.assertIn('"aangemeld"', block)
         self.assertIn("len(source[\"summaries\"])", block)
 
-    def test_pdf_names_the_workspace_it_came_from(self):
-        block = self._block("_trend_pdf_document")
-        self.assertIn('scope = "Losse analyse"', block)
-        self.assertIn('scope = "Eigen evenementen"', block)
+    def test_the_report_names_the_workspace_it_came_from(self):
+        """Een rapport zonder herkomst is niet na te lopen."""
+        block = self._block("export_trend_data")
+        self.assertIn("self.trend_source.currentText()", block)
+        self.assertIn('"Eigen dossier"', block)
+        self.assertIn("bron=bron", block)
+
+        opmaak = (ROOT / "emt_report_layout.py").read_text(encoding="utf-8")
+        self.assertIn('f"Bron: {self.model[', opmaak)
 
 
 if __name__ == "__main__":

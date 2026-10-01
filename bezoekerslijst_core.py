@@ -10,11 +10,23 @@ from xml.sax.saxutils import escape as xml_escape
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.chart import BarChart, Reference
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.datetime import from_excel
 import xlrd
 
+
+from emt_attendance import (
+    ABSENT_VALUES, AANWEZIG, AFGEMELD, AFWEZIG, ATTENDANCE_LABELS,
+    ATTENDANCE_STATUSES, CALLBACK_DONE_STATUSES, CALLBACK_STATUSES,
+    CANCELLED_VALUES, DUBBELE_INSCHRIJVING, INSCHRIJVING, ONBEKEND,
+    OVERGESLAGEN, PRESENT_VALUES, UNKNOWN_VALUES, attendance_counts,
+    attendance_map, attendance_status, attendance_value, callback_is_done,
+    callback_status, infer_attendance_from_text, infer_presence_from_text,
+    is_cancelled, is_introducee, is_no_show, is_present, is_present_in_scope,
+    normalize, record_events, rename_attendance_event, set_attendance,
+    set_present, strongest_status, text, turnout_percentage, _STATUS_GEWICHT,
+)
 
 STRING_FIELDS = [
     "Evenement", "Identifier", "GastVan", "Voornaam", "Tussenvoegsel", "Achternaam",
@@ -22,17 +34,6 @@ STRING_FIELDS = [
     "Opleiding", "Profiel", "Type", "Aanwezigheid", "Gebruik",
 ]
 
-CALLBACK_STATUSES = [
-    "Nog bellen",
-    "Geen gehoor",
-    "Voicemail",
-    "Gesproken",
-    "Terugbellen op verzoek",
-    "WhatsApp verzonden",
-    "Afgerond",
-    "Niet meer benaderen",
-]
-CALLBACK_DONE_STATUSES = {"Gesproken", "WhatsApp verzonden", "Afgerond", "Niet meer benaderen"}
 
 FIELD_ALIASES = {
     "Evenement": [
@@ -69,103 +70,109 @@ FIELD_ALIASES = {
     "Gebruik": ["Gebruik"],
 }
 
-PRESENT_VALUES = {
-    "ja", "yes", "y", "aanwezig", "present", "1", "true", "waar", "opgekomen", "gekomen", "show",
-}
-ABSENT_VALUES = {
-    "nee", "no", "n", "afwezig", "absent", "0", "false", "onwaar",
-    "noshow", "no-show", "nietopgekomen", "nietgekomen",
-}
+
+# De vier standen die een aanmelding kan hebben. Tot bestandsversie 11 was dit
+# een ja/nee, waarin 'nee' zowel 'was er niet' als 'we weten het niet' betekende.
+# Die samenklap was de bron van stille fouten: een import zonder ingevulde
+# kolom en een livesessie zonder scans maakten allebei van iedereen een
+# no-show. Met vier standen valt er niets meer te raden.
+# Van welke aanmeldpagina een deelnemer kwam. Dezelfde dag staat soms onder
+# meerdere namen online om verschillende doelgroepen te trekken; na het
+# bundelen is dit het enige wat daarvan overblijft, en juist die informatie is
+# de reden dat die aparte pagina's bestaan.
+
+# Waarom een deelnemer nergens meer meetelt. Leeg betekent gewoon meetellen.
+# Dit is bewust een reden en geen ja/nee: zonder reden is later niet meer te
+# zien waarom iemand uit de lijst is verdwenen.
 
 
-def infer_presence_from_text(value) -> bool | None:
-    key = normalize(value)
-    if not key:
-        return None
-    key = key.replace("-", "")
-    if key in PRESENT_VALUES:
-        return True
-    if key in ABSENT_VALUES:
-        return False
-    return None
+_STATUS_GEWICHT = {ONBEKEND: 0, AFGEMELD: 1, AFWEZIG: 2, AANWEZIG: 3}
 
 
-def is_introducee(record: dict) -> bool:
-    return bool(text(record.get("GastVan", "")))
+EVENT_NAME_DATE_SUFFIX = re.compile(
+    r"\s*(?:\(\d{2}[_-]\d{2}[_-]\d{4}\)|\(\d{2}-\d{2}-'\d{2}\)|—\s*\d{2}-\d{2}-\d{4})\s*$"
+)
 
 
-def callback_status(record: dict) -> str:
-    status = text(record.get("Terugbelstatus", ""))
-    if status in CALLBACK_STATUSES:
-        return status
-    return "Afgerond" if bool(record.get("Teruggebeld", False)) else "Nog bellen"
+def event_base_name(name: str) -> str:
+    """De evenementnaam zonder de datum die EventHub erachter zet."""
+    return EVENT_NAME_DATE_SUFFIX.sub("", str(name or "").strip()).strip()
 
 
-def callback_is_done(record: dict) -> bool:
-    return callback_status(record) in CALLBACK_DONE_STATUSES
+def _home_for_orphan_attendance(orphan: str, linked_events: list[str]) -> str:
+    """Bij welk evenement hoort aanwezigheid die onder een losse naam staat?"""
+    if len(linked_events) == 1:
+        # De bezoeker hangt maar aan een evenement; ergens anders kan het niet horen.
+        return linked_events[0]
+    wanted = normalize(event_base_name(orphan))
+    matches = [name for name in linked_events if normalize(event_base_name(name)) == wanted]
+    return matches[0] if len(matches) == 1 else ""
 
 
-def record_events(record: dict) -> list[str]:
-    return [value.strip() for value in text(record.get("Evenement", "")).split(";") if value.strip()]
+def clear_absence_for_events(records: list[dict], event_names) -> int:
+    """Zet 'niet gekomen' terug naar 'onbekend' bij deze evenementen.
 
-
-def attendance_map(record: dict) -> dict:
-    """Aanwezigheid per evenement, met migratie van het oude formaat.
-
-    Tot bestandsversie 10 was ``Aanwezig`` één boolean voor de hele persoon.
-    Bij een bezoeker die aan meerdere evenementen hangt overschreef elke
-    livesessie daardoor de registratie van het vorige evenement. Vanaf
-    versie 11 is het een dict per evenementnaam.
-
-    Een oude boolean geldt bij het lezen voor alle gekoppelde evenementen:
-    bij het gebruikelijke ene evenement is dat exact, bij meerdere is het de
-    enige aanname die geen aanwezigheid verzint die er nooit was.
+    Bedoeld voor dossiers van voor bestandsversie 12. Daarin was er maar een
+    ja/nee, en alles wat geen ja was werd een nee. Bij een evenement dat nog
+    moet plaatsvinden is dat aantoonbaar onjuist: er kan nog niemand zijn
+    weggebleven. Wie al als aanwezig geregistreerd staat blijft ongemoeid.
     """
-    value = record.get("Aanwezig", False)
-    if isinstance(value, dict):
-        return {str(name): bool(present) for name, present in value.items()}
-    return {name: bool(value) for name in record_events(record)}
-
-
-def is_present(record: dict, event_name: str = "") -> bool:
-    """Aanwezigheid bij één evenement, of bij welk evenement dan ook."""
-    presence = attendance_map(record)
-    if not event_name:
-        return any(presence.values())
-    wanted = normalize(event_name)
-    return any(present for name, present in presence.items() if normalize(name) == wanted)
-
-
-def is_present_in_scope(record: dict, scope_events) -> bool:
-    """Aanwezigheid binnen de evenementen die nu in beeld zijn."""
-    if not scope_events:
-        return is_present(record)
-    return any(is_present(record, name) for name in scope_events)
-
-
-def set_present(record: dict, event_name: str, present: bool) -> bool:
-    """Leg aanwezigheid vast voor één evenement. Geeft terug of er iets wijzigde."""
-    event_name = str(event_name or "").strip()
-    presence = attendance_map(record)
-    if not event_name:
-        record["Aanwezig"] = presence
-        return False
-    wanted = normalize(event_name)
-    key = next((name for name in presence if normalize(name) == wanted), event_name)
-    changed = bool(presence.get(key, False)) != bool(present)
-    presence[key] = bool(present)
-    record["Aanwezig"] = presence
+    wanted = {normalize(name) for name in event_names if str(name or "").strip()}
+    if not wanted:
+        return 0
+    changed = 0
+    for record in records:
+        presence = attendance_map(record)
+        aangepast = False
+        for name, status in list(presence.items()):
+            if status == AFWEZIG and normalize(name) in wanted:
+                presence[name] = ONBEKEND
+                aangepast = True
+        if aangepast:
+            record["Aanwezig"] = presence
+            changed += 1
     return changed
 
 
-def rename_attendance_event(record: dict, old_name: str, new_name: str) -> None:
-    """Houd de aanwezigheidsregistratie mee bij het hernoemen van een evenement."""
-    presence = attendance_map(record)
-    wanted = normalize(old_name)
-    moved = {}
-    for name, value in presence.items():
-        moved[new_name if normalize(name) == wanted else name] = value
-    record["Aanwezig"] = moved
+def repair_orphan_attendance(records: list[dict], event_names) -> int:
+    """Breng aanwezigheid onder een naam die geen evenement is alsnog thuis.
+
+    Lijsten die voor deze versie zijn ingelezen legden de aanwezigheid vast
+    onder de evenementnaam uit de bron. Die naam mist de datum die EventHub
+    erbij zet, en soms heet de aanmeldlijst zelfs heel anders dan het
+    evenement. Zolang zo'n sleutel bij geen enkel evenement hoort, telt die
+    aanwezigheid nergens mee: iedereen staat als no-show.
+
+    Verhuizen gebeurt alleen als er een ondubbelzinnig tehuis is, en een
+    registratie die er al staat wordt nooit teruggedraaid.
+    """
+    known = {normalize(name) for name in event_names if str(name or "").strip()}
+    repaired = 0
+    for record in records:
+        presence = attendance_map(record)
+        orphans = [name for name in presence if normalize(name) not in known]
+        if not orphans:
+            continue
+        linked = [name for name in record_events(record) if normalize(name) in known]
+        changed = False
+        for orphan in orphans:
+            home = _home_for_orphan_attendance(orphan, linked)
+            if not home:
+                continue
+            gevonden = presence.pop(orphan)
+            key = next((name for name in presence if normalize(name) == normalize(home)), home)
+            bestaand = presence.get(key, ONBEKEND)
+            # Wat er al staat blijft staan, behalve wanneer het nog onbekend is
+            # of wanneer de gevonden stand aanwezigheid bevestigt.
+            if bestaand == ONBEKEND or gevonden == AANWEZIG:
+                presence[key] = gevonden
+            else:
+                presence[key] = bestaand
+            changed = True
+        if changed:
+            record["Aanwezig"] = presence
+            repaired += 1
+    return repaired
 
 
 def detach_event_from_records(records: list[dict], event_name: str) -> list[dict]:
@@ -187,6 +194,201 @@ def detach_event_from_records(records: list[dict], event_name: str) -> list[dict
             }
             retained.append(record)
     return retained
+
+
+def has_status_in_scope(record: dict, scope_events, status: str) -> bool:
+    """Heeft deze bezoeker die stand bij een van de evenementen in beeld?"""
+    names = list(scope_events) if scope_events else record_events(record)
+    return any(attendance_status(record, name) == status for name in names)
+
+
+def _name_words(name: str) -> list[str]:
+    return [word for word in event_base_name(name).split() if word]
+
+
+def common_event_name(names) -> str:
+    """Het deel dat alle namen delen; de voorgestelde naam voor de bundel.
+
+    Meeloopdag Marine Catering, Administratie en Logistiek delen Meeloopdag
+    Marine. Delen ze niets, dan valt hij terug op de eerste naam.
+    """
+    woordenlijsten = [_name_words(name) for name in names if str(name or "").strip()]
+    if not woordenlijsten:
+        return ""
+    gemeen: list[str] = []
+    for positie in range(min(len(woorden) for woorden in woordenlijsten)):
+        kandidaat = woordenlijsten[0][positie]
+        if all(normalize(woorden[positie]) == normalize(kandidaat) for woorden in woordenlijsten):
+            gemeen.append(kandidaat)
+        else:
+            break
+    return " ".join(gemeen) or event_base_name(next(iter(names)))
+
+
+def distinctive_labels(names) -> dict:
+    """Wat elke naam uniek maakt: Catering, Administratie, Logistiek.
+
+    Het gedeelde deel valt weg, zodat het label kort blijft in de statistieken.
+    Blijft er niets over, dan is de hele naam het label - dan is er niets
+    onderscheidends en is de volledige naam het eerlijkste antwoord.
+    """
+    namen = [str(name or "").strip() for name in names if str(name or "").strip()]
+    gedeeld = len(_name_words(common_event_name(namen))) if len(namen) > 1 else 0
+    labels = {}
+    for naam in namen:
+        rest = " ".join(_name_words(naam)[gedeeld:]).strip()
+        labels[naam] = rest or event_base_name(naam)
+    return labels
+
+
+def is_skipped(record: dict) -> bool:
+    """Telt en toont deze regel nog mee?"""
+    return bool(str(record.get(OVERGESLAGEN, "") or "").strip())
+
+
+def skip_reason(record: dict) -> str:
+    return str(record.get(OVERGESLAGEN, "") or "").strip()
+
+
+def counting_records(records) -> list:
+    """Alles wat meetelt; overgeslagen regels vallen hier af."""
+    return [record for record in records or [] if not is_skipped(record)]
+
+
+def richest_record(records) -> dict | None:
+    """Welke regel het meeste weet.
+
+    Bij een dubbele inschrijving blijft die staan: hij heeft de meeste kans
+    de juiste gegevens te bevatten, en aanwezigheid weegt daarbij het zwaarst.
+    """
+    kandidaten = [record for record in records or [] if record is not None]
+    if not kandidaten:
+        return None
+
+    def gewicht(record):
+        gevuld = sum(1 for field in STRING_FIELDS if text(record.get(field)))
+        return (AANWEZIG in attendance_map(record).values(), gevuld)
+
+    return max(kandidaten, key=gewicht)
+
+
+def absorb_duplicate(keeper: dict, duplicate: dict, reason: str = DUBBELE_INSCHRIJVING) -> None:
+    """Laat de blijvende regel overnemen wat de dubbele weet, en sla die over.
+
+    Zonder dat overnemen verdwijnt met de dubbele regel ook zijn aanwezigheid:
+    bij een van de dubbele deelnemers stond de aanwezigheid juist op de regel
+    die zou worden verborgen, en dan telde hij ineens als no-show.
+
+    De regel blijft in het dossier staan. Weghalen zou hem bij de volgende
+    import gewoon terugbrengen; overslaan houdt stand.
+    """
+    if keeper is None or duplicate is None or keeper is duplicate:
+        return
+    for field in STRING_FIELDS:
+        if not text(keeper.get(field)) and text(duplicate.get(field)):
+            keeper[field] = text(duplicate.get(field))
+    for event_name, status in attendance_map(duplicate).items():
+        set_attendance(keeper, event_name,
+                       strongest_status(attendance_status(keeper, event_name), status))
+    for label in registrations(duplicate):
+        add_registration(keeper, label)
+    duplicate[OVERGESLAGEN] = str(reason or DUBBELE_INSCHRIJVING).strip() or DUBBELE_INSCHRIJVING
+
+
+def include_again(record: dict) -> bool:
+    """Laat een overgeslagen regel weer meetellen."""
+    if not is_skipped(record):
+        return False
+    record[OVERGESLAGEN] = ""
+    return True
+
+
+def registrations(record: dict) -> list[str]:
+    """Via welke aanmeldpagina's deze deelnemer binnenkwam."""
+    raw = str(record.get(INSCHRIJVING, "") or "")
+    return [part.strip() for part in raw.split(";") if part.strip()]
+
+
+def add_registration(record: dict, label: str) -> bool:
+    """Noteer de aanmeldpagina, zonder dubbele vermeldingen."""
+    label = str(label or "").strip()
+    if not label:
+        return False
+    bestaand = registrations(record)
+    if any(normalize(name) == normalize(label) for name in bestaand):
+        return False
+    record[INSCHRIJVING] = "; ".join(bestaand + [label])
+    return True
+
+
+def merge_event_into(records: list[dict], source_name: str, target_name: str,
+                     label: str = "") -> int:
+    """Verhuis de koppeling en de aanwezigheid van het ene evenement naar het andere.
+
+    Anders dan relink_to_event blijven andere evenementen van dezelfde bezoeker
+    ongemoeid: alleen het samengevoegde evenement verandert van naam. Stond
+    iemand al bij het doelevenement, dan wint de meest uitgesproken stand.
+    """
+    source_name = str(source_name or "").strip()
+    target_name = str(target_name or "").strip()
+    if not source_name or not target_name:
+        return 0
+    verplaatst = 0
+    for record in records:
+        namen = record_events(record)
+        if not any(normalize(name) == normalize(source_name) for name in namen):
+            continue
+        presence = attendance_map(record)
+        uit_bron = presence.pop(
+            next((name for name in presence if normalize(name) == normalize(source_name)), ""),
+            ONBEKEND,
+        )
+        doel_sleutel = next(
+            (name for name in presence if normalize(name) == normalize(target_name)), target_name
+        )
+        presence[doel_sleutel] = strongest_status(presence.get(doel_sleutel, ONBEKEND), uit_bron)
+        record["Aanwezig"] = presence
+
+        vernieuwd: list[str] = []
+        for name in namen:
+            nieuwe = target_name if normalize(name) == normalize(source_name) else name
+            if not any(normalize(nieuwe) == normalize(bestaand) for bestaand in vernieuwd):
+                vernieuwd.append(nieuwe)
+        record["Evenement"] = "; ".join(vernieuwd)
+        add_registration(record, label or source_name)
+        verplaatst += 1
+    return verplaatst
+
+
+def merge_duplicate_registrations(records: list[dict], event_name: str) -> tuple[list[dict], int]:
+    """Dezelfde persoon uit twee aanmeldlijsten wordt één deelnemer.
+
+    Bij losse evenementen zag je zo iemand helemaal niet; na het bundelen staat
+    hij er twee keer in. Zijn beide inschrijvingen blijven bewaard, zodat
+    zichtbaar blijft dat hij zich twee keer heeft aangemeld.
+    """
+    wanted = normalize(event_name)
+    gezien: dict = {}
+    behouden: list[dict] = []
+    samengevoegd = 0
+    for record in records:
+        hoort_erbij = any(normalize(name) == wanted for name in record_events(record))
+        key = duplicate_key(record) if hoort_erbij else None
+        eerste = gezien.get(key) if key else None
+        if eerste is None:
+            if key:
+                gezien[key] = record
+            behouden.append(record)
+            continue
+        # Alles wat de dubbele regel extra weet, gaat mee naar de eerste.
+        _enrich_record(eerste, record)
+        for naam, status in attendance_map(record).items():
+            eerste["Aanwezig"] = attendance_map(eerste)
+            set_attendance(eerste, naam, strongest_status(attendance_status(eerste, naam), status))
+        for label in registrations(record):
+            add_registration(eerste, label)
+        samengevoegd += 1
+    return behouden, samengevoegd
 
 
 def matches_event_filter(record: dict, selected_events) -> bool:
@@ -218,18 +420,6 @@ def primary_visitor_name(record: dict, lookup: dict[str, dict]) -> str:
         text(primary.get("Tussenvoegsel")),
         text(primary.get("Achternaam")),
     ]))
-
-
-def normalize(value) -> str:
-    value = unicodedata.normalize("NFD", str(value or "").strip().lower())
-    value = "".join(char for char in value if unicodedata.category(char) != "Mn")
-    return re.sub(r"[^a-z0-9]", "", value)
-
-
-def text(value) -> str:
-    if value is None:
-        return ""
-    return str(value).strip()
 
 
 def date_text(value) -> str:
@@ -306,608 +496,109 @@ HEADER_PATTERNS = {
     ),
 }
 
-
 def _first_column(value) -> int:
-    if isinstance(value, list):
-        return value[0] if value else -1
-    return int(value)
+    from emt_registration_import import _first_column as _implementation
+    return _implementation(value)
 
 
 def build_map(headers: dict[str, list[int] | int]) -> dict[str, int]:
-    result = {}
-    for field, aliases in FIELD_ALIASES.items():
-        result[field] = -1
-        for alias in aliases:
-            key = normalize(alias)
-            if key in headers:
-                result[field] = _first_column(headers[key])
-                break
-        if result[field] < 0:
-            patterns = HEADER_PATTERNS.get(field, ())
-            for header, columns in headers.items():
-                if any(pattern in header for pattern in patterns):
-                    result[field] = _first_column(columns)
-                    break
-    return result
+    from emt_registration_import import build_map as _implementation
+    return _implementation(headers)
 
 
 def _looks_like_date_value(value) -> bool:
-    if isinstance(value, (date, datetime)):
-        return True
-    if isinstance(value, (int, float)):
-        return 1 <= value <= 100000
-    value = text(value)
-    if not value:
-        return False
-    patterns = (
-        r"^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$",
-        r"^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$",
-    )
-    return any(re.match(pattern, value) for pattern in patterns)
+    from emt_registration_import import _looks_like_date_value as _implementation
+    return _implementation(value)
 
 
 def _duplicate_birthplace_column(headers, rows, header_row_index, mapping) -> int:
-    if mapping.get("Geboorteplaats", -1) >= 0:
-        return -1
-    birthdate_columns = []
-    for alias in FIELD_ALIASES["Geboortedatum"]:
-        columns = headers.get(normalize(alias), [])
-        if not isinstance(columns, list):
-            columns = [columns]
-        birthdate_columns.extend(columns)
-    birthdate_columns = sorted(set(birthdate_columns))
-    if len(birthdate_columns) < 2:
-        return -1
-
-    first_birthdate = mapping.get("Geboortedatum", birthdate_columns[0])
-    candidates = [column for column in birthdate_columns if column != first_birthdate]
-    candidates.sort(key=lambda column: (column != first_birthdate + 1, column))
-    for column in candidates:
-        values = []
-        for row in rows[header_row_index + 1:header_row_index + 41]:
-            if column < len(row) and text(row[column]):
-                values.append(row[column])
-        if not values:
-            return column
-        date_values = sum(_looks_like_date_value(value) for value in values)
-        if date_values / len(values) < 0.5:
-            return column
-    return -1
+    from emt_registration_import import _duplicate_birthplace_column as _implementation
+    return _implementation(headers, rows, header_row_index, mapping)
 
 
 def _xlsx_sheets(file_path: Path):
-    workbook = load_workbook(file_path, read_only=True, data_only=True, keep_vba=False)
-    try:
-        for worksheet in workbook.worksheets:
-            rows = [list(row) for row in worksheet.iter_rows(values_only=True)]
-            yield worksheet.title, rows
-    finally:
-        workbook.close()
+    from emt_registration_import import _xlsx_sheets as _implementation
+    return _implementation(file_path)
 
 
 def _xls_sheets(file_path: Path):
-    workbook = xlrd.open_workbook(file_path)
-    for worksheet in workbook.sheets():
-        rows = []
-        for row_index in range(worksheet.nrows):
-            row = []
-            for column_index in range(worksheet.ncols):
-                cell = worksheet.cell(row_index, column_index)
-                value = cell.value
-                if cell.ctype == xlrd.XL_CELL_DATE:
-                    value = datetime(*xlrd.xldate_as_tuple(value, workbook.datemode))
-                row.append(value)
-            rows.append(row)
-        yield worksheet.name, rows
+    from emt_registration_import import _xls_sheets as _implementation
+    return _implementation(file_path)
 
 
 def read_registration_file(file_path: str | Path):
-    file_path = Path(file_path)
-    sheets = list(_xls_sheets(file_path) if file_path.suffix.lower() == ".xls" else _xlsx_sheets(file_path))
-    best = None
-    for sheet_index, (sheet_name, rows) in enumerate(sheets):
-        for row_index, row in enumerate(rows[:25]):
-            headers = {}
-            for column_index, value in enumerate(row):
-                key = normalize(value)
-                if key:
-                    headers.setdefault(key, []).append(column_index)
-            mapping = build_map(headers)
-            if mapping["Voornaam"] < 0 or mapping["Achternaam"] < 0:
-                continue
-            repaired_birthplace_column = _duplicate_birthplace_column(headers, rows, row_index, mapping)
-            if repaired_birthplace_column >= 0:
-                mapping["Geboorteplaats"] = repaired_birthplace_column
-            score = sum(index >= 0 for index in mapping.values())
-            if best is None or score > best["score"]:
-                best = {
-                    "sheet_index": sheet_index,
-                    "sheet_name": sheet_name,
-                    "row_index": row_index,
-                    "rows": rows,
-                    "mapping": mapping,
-                    "score": score,
-                    "repaired_birthplace_header": repaired_birthplace_column >= 0,
-                }
-    if best is None:
-        raise ValueError("Geen werkblad met de kolommen Voornaam en Achternaam gevonden.")
-
-    records = []
-    fallback_events = 0
-    missing_birth_places = 0
-    presence_detected = 0
-    fallback_event = file_path.stem
-    mapping = best["mapping"]
-
-    for source in best["rows"][best["row_index"] + 1:]:
-        def get(field):
-            column = mapping[field]
-            return source[column] if 0 <= column < len(source) else ""
-
-        first_name = text(get("Voornaam"))
-        last_name = text(get("Achternaam"))
-        if not first_name and not last_name:
-            continue
-        record = {field: text(get(field)) for field in STRING_FIELDS}
-        record.update({
-            "Voornaam": first_name,
-            "Achternaam": last_name,
-            "Geboortedatum": date_text(get("Geboortedatum")),
-            "Telefoonnummer": phone_text(get("Telefoonnummer")),
-            "Teruggebeld": False,
-            "Terugbelstatus": "Nog bellen",
-            "LaatsteContact": "",
-            "TerugbellenOp": "",
-            "Opmerkingen": "",
-            "WhatsAppStatus": "Nog te sturen",
-            "WhatsAppGeopendOp": "",
-            "WhatsAppVerzondenOp": "",
-            "Aanwezig": {},
-        })
-        if not record["Evenement"]:
-            record["Evenement"] = fallback_event
-            fallback_events += 1
-        # Pas na het vaststellen van het evenement: aanwezigheid wordt per
-        # evenement vastgelegd en heeft die naam dus nodig.
-        detected_presence = infer_presence_from_text(record.get("Aanwezigheid", ""))
-        if detected_presence is not None:
-            for event_name in record_events(record):
-                set_present(record, event_name, detected_presence)
-            presence_detected += 1
-        if not record["Geboorteplaats"]:
-            missing_birth_places += 1
-        records.append(record)
-
-    return {
-        "records": records,
-        "report": {
-            "file_name": file_path.name,
-            "sheet_name": best["sheet_name"],
-            "introducees": sum(is_introducee(record) for record in records),
-            "fallback_events": fallback_events,
-            "missing_birth_places": missing_birth_places,
-            "presence_detected": presence_detected,
-            "repaired_birthplace_header": best.get("repaired_birthplace_header", False),
-        },
-    }
+    from emt_registration_import import read_registration_file as _implementation
+    return _implementation(file_path)
 
 
-def _enrich_record(target: dict, incoming: dict) -> bool:
-    changed = False
-    for field in STRING_FIELDS:
-        current = text(target.get(field))
-        new_value = text(incoming.get(field))
-        if not new_value:
-            continue
-        if not current:
-            target[field] = new_value
-            changed = True
-        elif field == "Evenement":
-            current_events = {normalize(value) for value in current.split(";") if value.strip()}
-            if normalize(new_value) not in current_events:
-                target[field] = f"{current}; {new_value}"
-                changed = True
-    return changed
+def relink_to_event(record: dict, event_name: str) -> None:
+    from emt_registration_import import relink_to_event as _implementation
+    return _implementation(record, event_name)
 
 
-def import_registration_files(file_paths, existing_records=None):
-    records = list(existing_records or [])
-    keyed_records = {duplicate_key(record): record for record in records}
-    added = []
-    duplicates = 0
-    enriched = 0
-    reports = []
-    errors = []
-    for file_path in file_paths:
-        try:
-            result = read_registration_file(file_path)
-            reports.append(result["report"])
-            for record in result["records"]:
-                key = duplicate_key(record)
-                if key in keyed_records:
-                    duplicates += 1
-                    if _enrich_record(keyed_records[key], record):
-                        enriched += 1
-                    continue
-                keyed_records[key] = record
-                added.append(record)
-        except Exception as exc:
-            errors.append(f"{Path(file_path).name}: {exc}")
-    return {
-        "records": added,
-        "duplicates": duplicates,
-        "enriched": enriched,
-        "reports": reports,
-        "errors": errors,
-    }
+def _merge_attendance(target: dict, incoming: dict, overwrite: bool=False, conflicts: list | None=None) -> bool:
+    from emt_registration_import import _merge_attendance as _implementation
+    return _implementation(target, incoming, overwrite, conflicts)
+
+
+def _enrich_record(target: dict, incoming: dict, overwrite: bool=False, conflicts: list | None=None) -> bool:
+    from emt_registration_import import _enrich_record as _implementation
+    return _implementation(target, incoming, overwrite, conflicts)
+
+
+def import_registration_files(file_paths, existing_records=None, target_event: str='', overwrite_attendance: bool=False):
+    from emt_registration_import import import_registration_files as _implementation
+    return _implementation(file_paths, existing_records, target_event, overwrite_attendance)
+
+
+def apply_attendance_conflicts(conflicts) -> int:
+    from emt_registration_import import apply_attendance_conflicts as _implementation
+    return _implementation(conflicts)
 
 
 def _style_sheet(worksheet, widths, wrap_columns=()):
-    worksheet.freeze_panes = "A2"
-    worksheet.auto_filter.ref = worksheet.dimensions
-    worksheet.sheet_view.showGridLines = False
-    worksheet.page_setup.orientation = "landscape"
-    worksheet.page_setup.fitToWidth = 1
-    worksheet.page_setup.fitToHeight = 0
-    worksheet.sheet_properties.pageSetUpPr.fitToPage = True
-    worksheet.print_options.horizontalCentered = True
-    header_fill = PatternFill("solid", fgColor="071A33")
-    alternate_fill = PatternFill("solid", fgColor="F7FAFC")
-    for cell in worksheet[1]:
-        cell.font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
-        cell.fill = header_fill
-        cell.alignment = Alignment(vertical="center")
-    worksheet.row_dimensions[1].height = 24
-    for column_index, width in enumerate(widths, 1):
-        worksheet.column_dimensions[get_column_letter(column_index)].width = width
-    for row_index in range(2, worksheet.max_row + 1):
-        for column_index in range(1, worksheet.max_column + 1):
-            cell = worksheet.cell(row_index, column_index)
-            cell.font = Font(name="Segoe UI", size=10)
-            cell.alignment = Alignment(vertical="top", wrap_text=column_index in wrap_columns)
-            if row_index % 2 == 0:
-                cell.fill = copy(alternate_fill)
+    from emt_excel_export import _style_sheet as _implementation
+    return _implementation(worksheet, widths, wrap_columns)
 
 
-def export_participant_template(
-    records,
-    event: dict,
-    profile: dict,
-    template_path: str | Path,
-    output_path: str | Path,
-):
-    """Vul uitsluitend de daarvoor bedoelde cellen van de vaste DCPL-bezoekerslijst."""
-    del event, profile
-    template_path = Path(template_path)
-    output_path = Path(output_path)
-    if not template_path.is_file():
-        raise FileNotFoundError(f"De deelnemerslijst-template ontbreekt: {template_path}")
-
-    sorted_records = sorted(
-        records,
-        key=lambda row: (
-            normalize(row.get("Achternaam")), normalize(row.get("Tussenvoegsel")),
-            normalize(row.get("Voornaam")),
-        ),
-    )
-    if not sorted_records:
-        raise ValueError("Er zijn geen deelnemers om in de template te zetten.")
-
-    data_start_row = 8
-    last_data_row = data_start_row + len(sorted_records) - 1
-    print_last_row = last_data_row
-
-    with zipfile.ZipFile(template_path, "r") as source:
-        entries = {item.filename: source.read(item.filename) for item in source.infolist()}
-        infos = source.infolist()
-
-    sheet_path = "xl/worksheets/sheet1.xml"
-    workbook_path = "xl/workbook.xml"
-    table_path = "xl/tables/table1.xml"
-    if sheet_path not in entries or workbook_path not in entries or table_path not in entries:
-        raise ValueError("De vaste deelnemerslijst-template is onvolledig.")
-
-    sheet_xml = entries[sheet_path].decode("utf-8")
-    workbook_xml = entries[workbook_path].decode("utf-8")
-    table_xml = entries[table_path].decode("utf-8")
-    if not all(f'r="{column}7"' in sheet_xml for column in "ABCDE"):
-        raise ValueError("De vaste deelnemerslijst-template heeft een onverwachte kolomindeling.")
-
-    def safe_xml_text(value) -> str:
-        value = text(value)
-        value = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", value)[:32767]
-        preserve = ' xml:space="preserve"' if value != value.strip() else ""
-        return f"<is><t{preserve}>{xml_escape(value)}</t></is>"
-
-    def put_cell(xml: str, cell_ref: str, value) -> str:
-        pattern = re.compile(rf'<c(?P<attrs>[^>]*\br="{re.escape(cell_ref)}"[^>]*)/>')
-
-        def replacement(match):
-            attrs = re.sub(r'\s+t="[^"]*"', "", match.group("attrs"))
-            return f'<c{attrs} t="inlineStr">{safe_xml_text(value)}</c>'
-
-        updated, count = pattern.subn(replacement, xml, count=1)
-        if count != 1:
-            raise ValueError(f"Invulveld {cell_ref} ontbreekt in de vaste deelnemerslijst-template.")
-        return updated
-
-    template_last_row = 181
-    if last_data_row > template_last_row:
-        for row_index in range(template_last_row + 1, last_data_row + 1):
-            source_row_number = 180 if row_index % 2 == 0 else 181
-            row_match = re.search(
-                rf'(<row\s+r="{source_row_number}"(?=\s|>).*?</row>)',
-                sheet_xml,
-                flags=re.DOTALL,
-            )
-            if not row_match:
-                raise ValueError("De vaste deelnemerslijst-template kan niet veilig worden uitgebreid.")
-            new_row = re.sub(
-                rf'\br="([A-Z]*){source_row_number}"',
-                lambda match: f'r="{match.group(1)}{row_index}"',
-                row_match.group(1),
-            )
-            sheet_xml = sheet_xml.replace("</sheetData>", new_row + "</sheetData>", 1)
-        sheet_xml = sheet_xml.replace(
-            '<dimension ref="A1:K181"/>',
-            f'<dimension ref="A1:K{last_data_row}"/>',
-            1,
-        )
-        table_xml = table_xml.replace('ref="A7:E181"', f'ref="A7:E{last_data_row}"', 2)
-
-    for row_index, record in enumerate(sorted_records, data_start_row):
-        values = (
-            text(record.get("Achternaam", "")),
-            text(record.get("Tussenvoegsel", "")),
-            initials_text(record.get("Voornaam", "")),
-            date_text(record.get("Geboortedatum", "")),
-            text(record.get("Geboorteplaats", "")),
-        )
-        for column, value in zip("ABCDE", values):
-            sheet_xml = put_cell(sheet_xml, f"{column}{row_index}", value)
-
-    workbook_xml = re.sub(
-        r'<definedName\s+name="_xlnm\.Print_Area"\s+localSheetId="0">.*?</definedName>',
-        "",
-        workbook_xml,
-        flags=re.DOTALL,
-    )
-    print_area_xml = (
-        '<definedName name="_xlnm.Print_Area" localSheetId="0">'
-        f'Blad1!$A$1:$E${print_last_row}</definedName>'
-    )
-    if "</definedNames>" not in workbook_xml:
-        raise ValueError("De vaste deelnemerslijst-template mist de Excel-naamdefinities.")
-    workbook_xml = workbook_xml.replace("</definedNames>", print_area_xml + "</definedNames>", 1)
-
-    entries[sheet_path] = sheet_xml.encode("utf-8")
-    entries[workbook_path] = workbook_xml.encode("utf-8")
-    entries[table_path] = table_xml.encode("utf-8")
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(output_path, "w") as destination:
-        for info in infos:
-            destination.writestr(info, entries[info.filename])
-    return {
-        "participants": len(sorted_records),
-        "last_data_row": last_data_row,
-        "print_last_row": print_last_row,
-        "print_area": f"A1:E{print_last_row}",
-    }
+def export_participant_template(records, event: dict, profile: dict, template_path: str | Path, output_path: str | Path):
+    from emt_excel_export import export_participant_template as _implementation
+    return _implementation(records, event, profile, template_path, output_path)
 
 
 def export_workbook(records, output_path: str | Path, reference_records=None):
-    workbook = Workbook()
-    workbook.remove(workbook.active)
-    sorted_records = sorted(
-        records,
-        key=lambda row: (
-            normalize(row.get("Achternaam")), normalize(row.get("Tussenvoegsel")),
-            normalize(row.get("Voornaam")),
-        ),
-    )
-    yes_no = lambda value: "Ja" if value else "Nee"
-    lookup = registration_lookup(sorted_records if reference_records is None else reference_records)
-
-    present = workbook.create_sheet("Deelnemerslijst")
-    present.append([
-        "Achternaam", "Tussenvoegsel", "Voornaam", "Geboortedatum",
-        "Geboorteplaats", "Evenement", "Type bezoeker", "Introducé van",
-    ])
-    for row in sorted_records:
-        present.append([
-            row.get("Achternaam", ""), row.get("Tussenvoegsel", ""),
-            row.get("Voornaam", ""), row.get("Geboortedatum", ""),
-            row.get("Geboorteplaats", ""), row.get("Evenement", ""),
-            visitor_type(row), primary_visitor_name(row, lookup),
-        ])
-    _style_sheet(present, [22, 16, 18, 16, 21, 30, 20, 28])
-
-    raw = workbook.create_sheet("Ruwe aanmeldingen")
-    raw.append(["Evenement", "Identifier", "Gast van", "Voornaam", "Tussenvoegsel", "Achternaam", "E-mail", "Telefoonnummer", "Geboortedatum", "Geboorteplaats", "Geslacht", "Opleiding", "Opleidingsrichting", "Type", "Aanwezigheid", "Gebruik"])
-    for row in sorted_records:
-        raw.append([row.get(field, "") for field in STRING_FIELDS])
-    for cell in raw["H"]:
-        cell.number_format = "@"
-    _style_sheet(raw, [28, 18, 38, 18, 16, 22, 28, 18, 16, 21, 14, 22, 28, 16, 16, 16])
-
-    callbacks = workbook.create_sheet("Nazorg")
-    callbacks.append([
-        "Evenement", "Voornaam", "Achternaam", "Telefoonnummer",
-        "Opleidingsniveau", "Profiel", "Contactstatus", "Laatste contact",
-        "Opnieuw contact op", "WhatsApp-status", "WhatsApp geopend",
-        "WhatsApp verzonden", "Opmerkingen",
-    ])
-    for row in sorted_records:
-        if is_introducee(row):
-            continue
-        last_name = " ".join(filter(None, [row.get("Tussenvoegsel", ""), row.get("Achternaam", "")]))
-        callbacks.append([
-            row.get("Evenement", ""), row.get("Voornaam", ""), last_name,
-            row.get("Telefoonnummer", ""), row.get("Opleiding", ""),
-            row.get("Profiel", ""), callback_status(row),
-            row.get("LaatsteContact", ""), row.get("TerugbellenOp", ""),
-            row.get("WhatsAppStatus", "Nog te sturen"), row.get("WhatsAppGeopendOp", ""),
-            row.get("WhatsAppVerzondenOp", ""),
-            row.get("Opmerkingen", ""),
-        ])
-    for cell in callbacks["D"]:
-        cell.number_format = "@"
-    _style_sheet(callbacks, [30, 18, 24, 18, 22, 30, 23, 18, 18, 20, 20, 20, 45], (13,))
-
-    access = workbook.create_sheet("Presentie")
-    access.append(["Voornaam", "Tussenvoegsel", "Achternaam", "Geboortedatum", "Geboorteplaats", "Aanwezig"])
-    for row in sorted_records:
-        access.append([row.get("Voornaam", ""), row.get("Tussenvoegsel", ""), row.get("Achternaam", ""), row.get("Geboortedatum", ""), row.get("Geboorteplaats", ""), yes_no(is_present(row))])
-    _style_sheet(access, [19, 16, 24, 17, 23, 14])
-
-    workbook.save(output_path)
+    from emt_excel_export import export_workbook as _implementation
+    return _implementation(records, output_path, reference_records)
 
 
-def export_statistics_workbook(dimension_sections, output_path: str | Path,
-                               scope_description: str = "", crosstab: dict | None = None):
-    """Write statistics breakdowns with readable bar charts to an .xlsx file.
+KOP_VULLING = PatternFill("solid", fgColor="071A33")
 
-    dimension_sections: list of (dimension_title, groups) where groups is a list of
-    (group_label, [(category_label, count), ...]) — up to 3 groups per dimension are
-    placed side by side (e.g. Alle deelnemers / Aanwezig geweest / No-shows).
-    """
-    workbook = Workbook()
-    workbook.remove(workbook.active)
 
-    if scope_description:
-        overview = workbook.create_sheet("Overzicht")
-        overview.append(["Statistieken export"])
-        overview.append([scope_description])
-        overview["A1"].font = Font(name="Segoe UI", size=13, bold=True)
-        overview["A2"].font = Font(name="Segoe UI", size=10)
-        overview["A2"].alignment = Alignment(wrap_text=True)
-        overview.column_dimensions["A"].width = 90
-        overview.row_dimensions[2].height = 30
+def _titel(sheet, regel: int, tekst: str, grootte: int=13):
+    from emt_excel_export import _titel as _implementation
+    return _implementation(sheet, regel, tekst, grootte)
 
-    header_fill = PatternFill("solid", fgColor="071A33")
-    block_start_columns = [1, 5, 9]
-    chart_anchor_row = 22
 
-    for dimension_title, groups in dimension_sections:
-        sheet_name = re.sub(r"[\[\]\*\?/\\:]", " ", dimension_title)[:31] or "Statistiek"
-        sheet = workbook.create_sheet(sheet_name)
-        sheet.sheet_view.showGridLines = False
+def _koprij(sheet, regel: int, koppen, breedtes):
+    from emt_excel_export import _koprij as _implementation
+    return _implementation(sheet, regel, koppen, breedtes)
 
-        for group_index, (group_label, data) in enumerate(groups[:len(block_start_columns)]):
-            start_col = block_start_columns[group_index]
-            col_letter = get_column_letter(start_col)
-            sheet.column_dimensions[col_letter].width = 26
-            sheet.column_dimensions[get_column_letter(start_col + 1)].width = 12
-            sheet.column_dimensions[get_column_letter(start_col + 2)].width = 14
 
-            title_cell = sheet.cell(1, start_col, group_label)
-            title_cell.font = Font(name="Segoe UI", size=11, bold=True)
+def _write_summary_sheet(workbook, summary: dict) -> None:
+    from emt_excel_export import _write_summary_sheet as _implementation
+    return _implementation(workbook, summary)
 
-            headers = ["Categorie", "Aantal", "Percentage"]
-            for offset, header in enumerate(headers):
-                cell = sheet.cell(2, start_col + offset, header)
-                cell.font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
-                cell.fill = header_fill
 
-            total = sum(count for _, count in data)
-            row = 3
-            for label, count in data:
-                sheet.cell(row, start_col, label)
-                sheet.cell(row, start_col + 1, count)
-                percentage_cell = sheet.cell(row, start_col + 2, (count / total) if total else 0)
-                percentage_cell.number_format = "0.0%"
-                row += 1
+def export_statistics_workbook(dimensions, output_path: str | Path, summary: dict | None=None, crosstab: dict | None=None):
+    from emt_excel_export import export_statistics_workbook as _implementation
+    return _implementation(dimensions, output_path, summary, crosstab)
 
-            if data:
-                last_data_row = row - 1
-                sheet.cell(row, start_col, "Totaal").font = Font(name="Segoe UI", size=10, bold=True)
-                sheet.cell(row, start_col + 1, total).font = Font(name="Segoe UI", size=10, bold=True)
-                total_percentage_cell = sheet.cell(row, start_col + 2, 1.0 if total else 0)
-                total_percentage_cell.font = Font(name="Segoe UI", size=10, bold=True)
-                total_percentage_cell.number_format = "0.0%"
 
-                if total:
-                    chart = BarChart()
-                    chart.type = "col"
-                    chart.title = f"{dimension_title} — {group_label}"
-                    chart.y_axis.title = "Aantal"
-                    chart.x_axis.title = dimension_title
-                    chart.legend = None
-                    chart.height = 8
-                    chart.width = 12
-                    # Zonder deze instellingen tekent Excel wel de balken maar
-                    # geen aslabels: openpyxl laat tickLblPos leeg en zet de
-                    # streepjes op none, en de categorie-as belandt links in
-                    # plaats van onder de balken.
-                    for axis, position in ((chart.x_axis, "b"), (chart.y_axis, "l")):
-                        axis.delete = False
-                        axis.axPos = position
-                        axis.majorTickMark = "out"
-                        axis.minorTickMark = "none"
-                        axis.tickLblPos = "nextTo"
-                    categories = Reference(sheet, min_col=start_col, min_row=3, max_row=last_data_row)
-                    values = Reference(sheet, min_col=start_col + 1, min_row=2, max_row=last_data_row)
-                    chart.add_data(values, titles_from_data=True)
-                    chart.set_categories(categories)
-                    sheet.add_chart(chart, f"{col_letter}{chart_anchor_row}")
-            else:
-                sheet.cell(row, start_col, "Geen gegevens")
-
-    if crosstab and crosstab.get("rows"):
-        _write_crosstab_sheet(workbook, crosstab, header_fill)
-
-    if not workbook.sheetnames:
-        workbook.create_sheet("Statistiek")
-
-    workbook.save(output_path)
+def _heatmap_fill(fraction: float) -> PatternFill:
+    from emt_excel_export import _heatmap_fill as _implementation
+    return _implementation(fraction)
 
 
 def _write_crosstab_sheet(workbook, crosstab: dict, header_fill) -> None:
-    """Zet opleidingsniveau tegen profiel in een aparte kruistabel.
-
-    De losse verdelingen laten zien hoeveel MBO'ers er waren en hoeveel
-    technische profielen, maar niet welke profielen bij welk niveau horen.
-    Daar is deze tabel voor.
-    """
-    sheet = workbook.create_sheet("Niveau x profiel")
-    sheet.sheet_view.showGridLines = False
-    rows = crosstab["rows"]
-    columns = crosstab["columns"]
-
-    kop = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
-    vet = Font(name="Segoe UI", size=10, bold=True)
-
-    sheet.cell(1, 1, "Opleidingsniveau x profiel").font = Font(name="Segoe UI", size=13, bold=True)
-    for offset, label in enumerate(["Opleidingsniveau", *columns, "Totaal"]):
-        cell = sheet.cell(3, 1 + offset, label)
-        cell.font = kop
-        cell.fill = header_fill
-        cell.alignment = Alignment(wrap_text=True, vertical="center")
-    sheet.column_dimensions["A"].width = 24
-    for offset in range(len(columns) + 1):
-        sheet.column_dimensions[get_column_letter(2 + offset)].width = 16
-    sheet.row_dimensions[3].height = 30
-
-    for row_index, level in enumerate(rows, start=4):
-        sheet.cell(row_index, 1, level).font = vet
-        for column_index, profile in enumerate(columns, start=2):
-            sheet.cell(row_index, column_index, crosstab["counts"].get((level, profile), 0))
-        sheet.cell(row_index, len(columns) + 2, crosstab["row_totals"].get(level, 0)).font = vet
-
-    total_row = len(rows) + 4
-    sheet.cell(total_row, 1, "Totaal").font = vet
-    for column_index, profile in enumerate(columns, start=2):
-        sheet.cell(total_row, column_index, crosstab["column_totals"].get(profile, 0)).font = vet
-    sheet.cell(total_row, len(columns) + 2, crosstab.get("total", 0)).font = vet
-
-    # Welke schrijfwijzen zijn samengevoegd, zodat zichtbaar blijft dat de
-    # weergave iets met de aangeleverde waarden doet.
-    merged = crosstab.get("merged") or {}
-    if merged:
-        note_row = total_row + 2
-        sheet.cell(note_row, 1, "Samengevoegde schrijfwijzen").font = vet
-        for offset, (level, spellings) in enumerate(sorted(merged.items()), start=1):
-            sheet.cell(note_row + offset, 1, level)
-            sheet.cell(note_row + offset, 2, ", ".join(spellings))
-
+    from emt_excel_export import _write_crosstab_sheet as _implementation
+    return _implementation(workbook, crosstab, header_fill)

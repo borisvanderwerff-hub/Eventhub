@@ -17,8 +17,10 @@ import unittest
 from pathlib import Path
 
 # Isolate all file-system state for the test run before importing server.*.
+# Ook als dit bestand los wordt gedraaid, buiten het testpakket om.
 _TEST_DATA_ROOT = Path(tempfile.mkdtemp(prefix="eventhub_server_tests_"))
-os.environ["XDG_DATA_HOME"] = str(_TEST_DATA_ROOT)
+os.environ.setdefault("EVENTHUB_SERVER_DATA", str(_TEST_DATA_ROOT))
+os.environ.setdefault("XDG_DATA_HOME", str(_TEST_DATA_ROOT))
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 

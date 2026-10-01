@@ -195,6 +195,23 @@ def apply_retention_cleanup(
     """
     today = today or date.today()
     plan = plan or plan_retention_cleanup(events, records, retention_days, today)
+    # Eerst alle momentopnames maken, pas daarna ook maar één rij verwijderen.
+    # Dit geldt ook voor back-ups en herstelbestanden, niet alleen het open dossier.
+    from emt_history import snapshot_for_event
+    due_ids = {item["id"] for item in plan.get("events", [])}
+    snapshots = []
+    for event in events:
+        existing = event.get("statistiek")
+        # Een bestaande, handmatig/oud opgeslagen momentopname zonder schema
+        # overschrijven we niet. Schema 5 is de vorige EventHub-opname en kan
+        # veilig worden aangevuld met de kruistabel van schema 6.
+        may_upgrade = not isinstance(existing, dict) or int(existing.get("schema", 0) or 0) >= 5
+        if event.get("id") in due_ids and not event.get("persoonsgegevens_gewist") and may_upgrade:
+            snapshot = snapshot_for_event(event, records)
+            if snapshot is not None:
+                snapshots.append((event, snapshot))
+    for event, snapshot in snapshots:
+        event["statistiek"] = snapshot
     doomed = {id(record) for record in plan.get("_removable", [])}
 
     records[:] = [record for record in records if id(record) not in doomed]

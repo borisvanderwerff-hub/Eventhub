@@ -6,6 +6,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from bezoekerslijst_app import BezoekerslijstWindow
@@ -100,7 +101,7 @@ class TriggerPointTests(unittest.TestCase):
     """De handhaving hangt aan drie momenten, niet alleen aan het opstarten."""
 
     def setUp(self):
-        self.source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        self.source = desktop_source(ROOT)
 
     def _block(self, name):
         start = self.source.index(f"def {name}(self")
@@ -131,14 +132,14 @@ class AuditTrailTests(unittest.TestCase):
     """Automatisch wissen zonder spoor is niet te verantwoorden."""
 
     def test_cleanup_writes_a_log_entry(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         start = source.index("def apply_retention_cleanup_now(self")
         block = source[start:source.index("\n    def ", start + 1)]
         self.assertIn("self._write_retention_log(", block)
         self.assertIn("self._add_recent_activity(", block)
 
     def test_log_records_counts_but_no_names(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         start = source.index("def _write_retention_log(self")
         block = source[start:source.index("\n    def ", start + 1)]
         self.assertIn("records_removed", block)

@@ -5,6 +5,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from emt_rudder import (
@@ -72,7 +73,7 @@ class RudderWorkflowTests(unittest.TestCase):
         self.assertEqual(updates["target_audience"], "Opleiding vanaf VMBO Basis · Leeftijd 16–35 jaar")
 
     def test_desktop_flow_uses_overview_then_linked_update(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         self.assertEqual(RUDDER_EVENTS_OVERVIEW_URL, "https://werkenbijdefensie.nl/rudder/event/events")
         self.assertIn('destination_url = canonical_rudder_url(expected_event_id, "edit") if linked else RUDDER_EVENTS_OVERVIEW_URL', source)
         self.assertIn('self.rudder_import_button.setText("Bijwerken uit Rudder" if connected else "Importeren uit Rudder")', source)
@@ -96,7 +97,7 @@ class RudderWorkflowTests(unittest.TestCase):
         self.assertIn("readPendingImportReference", edit)
 
     def test_import_uses_matching_template_tasks_without_duplicates(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         block = source[source.index("def _apply_rudder_event_import"):source.index("def export_event_to_rudder")]
         self.assertIn("matching_eventhub_template(imported, self.project_templates)", block)
         self.assertIn('existing_titles = {normalize(task.get("title", ""))', block)

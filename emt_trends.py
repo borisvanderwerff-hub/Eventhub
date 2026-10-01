@@ -14,7 +14,8 @@ Qt-vrij gehouden zodat de rekenkant los te testen is.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta
+import re
 
 from bezoekerslijst_core import normalize
 from emt_models import parse_date
@@ -24,7 +25,9 @@ METRICS = (
     ("Aanmeldingen", "aangemeld"),
     ("Aanwezigen", "aanwezig"),
     ("No-shows", "noshows"),
+    ("Afmeldingen", "afgemeld"),
     ("Opkomstpercentage", "opkomst_percentage"),
+    ("No-showpercentage", "noshow_percentage"),
 )
 
 # Uitsplitsingen: de eerste komt uit de evenementgegevens zelf, de rest uit
@@ -92,41 +95,65 @@ def summarise_records(records: list[dict], event_name: str, event_date=None) -> 
     op aantallen, zodat het inladen van een lijst geen nieuwe verzameling
     persoonsgegevens oplevert die buiten de bewaartermijn valt.
     """
-    from bezoekerslijst_core import is_introducee, is_present
+    from bezoekerslijst_core import (
+        AANWEZIG, AFWEZIG, AFGEMELD, ONBEKEND, attendance_counts,
+        is_cancelled, is_introducee, is_no_show, is_present,
+    )
 
     reference = parse_date(event_date) or date.today()
-    registered = len(records)
-    attended = sum(is_present(record, event_name) for record in records)
-
-    def grouped(labeller):
+    def grouped(scope_records, labeller):
+        # Ook no-shows en afmeldingen per groep: anders is achteraf niet te
+        # zien bij welke groep ze zaten, en zou een afmelding als no-show
+        # meetellen omdat alleen aangemeld min aanwezig bekend is.
         buckets: dict[str, dict] = {}
-        for record in records:
-            bucket = buckets.setdefault(labeller(record), {"aangemeld": 0, "aanwezig": 0})
+        for record in scope_records:
+            bucket = buckets.setdefault(
+                labeller(record),
+                {"aangemeld": 0, "aanwezig": 0, "noshow": 0, "afgemeld": 0},
+            )
             bucket["aangemeld"] += 1
             bucket["aanwezig"] += is_present(record, event_name)
+            bucket["noshow"] += is_no_show(record, event_name)
+            bucket["afgemeld"] += is_cancelled(record, event_name)
         return dict(sorted(buckets.items(), key=lambda item: (-item[1]["aangemeld"], normalize(item[0]))))
 
     def field(name):
         return lambda record: str(record.get(name, "") or "").strip() or "Onbekend"
 
-    return {
-        "schema": 2,
+    def scope_snapshot(scope_records):
+        statuses = attendance_counts(scope_records, event_name)
+        registered = len(scope_records)
+        attended = statuses[AANWEZIG]
+        return {
+            "aangemeld": registered,
+            "aanwezig": attended,
+            "noshows": statuses[AFWEZIG],
+            "afgemeld": statuses[AFGEMELD],
+            "onbekend": statuses[ONBEKEND],
+            "opkomst_percentage": round(attended / registered * 100, 1) if registered else 0.0,
+            "verdeling": {
+                "Opleidingsniveau": grouped(scope_records, field("Opleiding")),
+                "Profiel": grouped(scope_records, field("Profiel")),
+                "Geslacht": grouped(scope_records, field("Geslacht")),
+                "Leeftijdsgroep": grouped(scope_records,
+                lambda record: age_group(age_on(record.get("Geboortedatum", ""), reference))
+                ),
+            },
+        }
+
+    snapshot = scope_snapshot(records)
+    regular = [record for record in records if not is_introducee(record)]
+    snapshot.update({
+        # 5: reguliere deelnemers zijn apart geaggregeerd. Daarmee kunnen
+        # introducees ook na de AVG-opschoning worden uitgesloten zonder te
+        # bewaren welke persoon introducé was.
+        "schema": 5,
         "vastgelegd_op": date.today().isoformat(),
         "peildatum": reference.strftime("%d-%m-%Y"),
-        "aangemeld": registered,
-        "aanwezig": attended,
-        "noshows": registered - attended,
-        "introducees": sum(is_introducee(record) for record in records),
-        "opkomst_percentage": round(attended / registered * 100, 1) if registered else 0.0,
-        "verdeling": {
-            "Opleidingsniveau": grouped(field("Opleiding")),
-            "Profiel": grouped(field("Profiel")),
-            "Geslacht": grouped(field("Geslacht")),
-            "Leeftijdsgroep": grouped(
-                lambda record: age_group(age_on(record.get("Geboortedatum", ""), reference))
-            ),
-        },
-    }
+        "introducees": len(records) - len(regular),
+        "regulier": scope_snapshot(regular),
+    })
+    return snapshot
 
 
 def summaries_from_records(records: list[dict], dates: dict | None = None, source: str = "") -> list[dict]:
@@ -166,11 +193,25 @@ def event_summary(event: dict, source: str = "") -> dict | None:
     Levert None wanneer er nog geen momentopname is vastgelegd; zonder cijfers
     valt er niets te vergelijken.
     """
+    if event.get("exclude_from_analysis"):
+        return None
     snapshot = event.get("statistiek")
     if not isinstance(snapshot, dict) or not snapshot:
         return None
+    # Een lege/testimport is geen historische meting en mag KPI's zoals het
+    # aantal evenementen of het gemiddelde opkomstpercentage niet vertekenen.
+    if int(snapshot.get("aangemeld", 0) or 0) <= 0:
+        return None
+    # Vanaf schema 3 is 'onbekend' expliciet beschikbaar. Zolang daar nog
+    # deelnemers staan is de presentieregistratie niet definitief. Oude
+    # momentopnames missen dit veld en blijven voor compatibiliteit bruikbaar.
+    if int(snapshot.get("onbekend", 0) or 0) > 0 and not event.get("persoonsgegevens_gewist"):
+        return None
     return {
         "id": str(event.get("id", "") or ""),
+        "template_id": str(event.get("template_id", "") or ""),
+        "historisch": bool(event.get("persoonsgegevens_gewist")),
+        "template_name": str(event.get("template_name", "") or ""),
         "name": str(event.get("name", "") or "Onbenoemd evenement"),
         "date": str(event.get("date", "") or ""),
         "event_type": str(event.get("event_type", "") or "Onbekend"),
@@ -196,6 +237,51 @@ def anonymous_bundle(events: list[dict], label: str) -> dict:
     }
 
 
+ANALYSIS_FORMAT = "EventHub trendanalyse"
+ANALYSIS_VERSION = 1
+
+
+def analysis_file_name(name: str) -> str:
+    """Een bestandsnaam die op elk besturingssysteem mag."""
+    veilig = re.sub(r"[<>:\"/\\|?*]+", "-", str(name or "").strip()).strip(" .")
+    return (veilig or "Analyse") + ".json"
+
+
+def analysis_payload(name: str, sources) -> dict:
+    """Wat er van een losse analyse op schijf gaat.
+
+    Uitsluitend de geaggregeerde cijfers, net als in de analyse zelf: de
+    deelnemersrijen zijn bij het inladen al weggegooid en horen ook hier niet
+    thuis.
+    """
+    return {
+        "format": ANALYSIS_FORMAT,
+        "version": ANALYSIS_VERSION,
+        "naam": str(name or "").strip(),
+        "bijgewerkt": datetime.now().isoformat(timespec="seconds"),
+        "sources": [
+            {"label": str(source.get("label", "") or ""), "summaries": list(source.get("summaries", []))}
+            for source in sources or []
+            if str(source.get("label", "") or "").strip()
+        ],
+    }
+
+
+def read_analysis(payload: dict) -> tuple[str, list]:
+    """Lees een bewaarde analyse terug; onbruikbare inhoud levert niets op."""
+    if not isinstance(payload, dict) or payload.get("format") != ANALYSIS_FORMAT:
+        return "", []
+    sources = []
+    for source in payload.get("sources", []) or []:
+        if not isinstance(source, dict):
+            continue
+        label = str(source.get("label", "") or "").strip()
+        summaries = source.get("summaries", [])
+        if label and isinstance(summaries, list):
+            sources.append({"label": label, "summaries": summaries})
+    return str(payload.get("naam", "") or "").strip(), sources
+
+
 def read_bundle(payload: dict, label: str = "") -> list[dict]:
     """Lees zowel een trendpakket als een volledig EventHub-dossier.
 
@@ -218,9 +304,10 @@ def read_bundle(payload: dict, label: str = "") -> list[dict]:
 
 
 def _snapshot_value(snapshot: dict, metric: str) -> float:
-    if metric == "opkomst_percentage":
+    if metric in {"opkomst_percentage", "noshow_percentage"}:
         registered = float(snapshot.get("aangemeld", 0) or 0)
-        return round(float(snapshot.get("aanwezig", 0) or 0) / registered * 100, 1) if registered else 0.0
+        numerator = snapshot.get("aanwezig", 0) if metric == "opkomst_percentage" else snapshot.get("noshows", 0)
+        return round(float(numerator or 0) / registered * 100, 1) if registered else 0.0
     return float(snapshot.get(metric, 0) or 0)
 
 
@@ -238,9 +325,15 @@ def _group_counts(snapshot: dict, dimension: str) -> dict:
             counts[str(label)] = {
                 "aangemeld": int(value.get("aangemeld", 0) or 0),
                 "aanwezig": int(value.get("aanwezig", 0) or 0),
+                "noshows": (
+                    int(value.get("noshow", value.get("noshows", 0)) or 0)
+                    if "noshow" in value or "noshows" in value else None
+                ),
+                "afgemeld": int(value.get("afgemeld", 0) or 0) if "afgemeld" in value else None,
             }
         else:
-            counts[str(label)] = {"aangemeld": int(value or 0), "aanwezig": None}
+            counts[str(label)] = {"aangemeld": int(value or 0), "aanwezig": None,
+                                  "noshows": None, "afgemeld": None}
     return counts
 
 
@@ -249,17 +342,56 @@ def _group_value(bucket: dict, metric: str):
     attended = bucket.get("aanwezig")
     if metric == "aangemeld":
         return float(registered)
+    if metric == "afgemeld":
+        # Alleen momentopnames vanaf schema 4 kennen afmeldingen per groep.
+        afgemeld = bucket.get("afgemeld")
+        return None if afgemeld is None else float(afgemeld)
     if attended is None:
         # Oude momentopname: aanwezigheid per groep is niet vastgelegd.
         return None
     if metric == "aanwezig":
         return float(attended)
     if metric == "noshows":
-        return float(registered - attended)
+        return float(bucket.get("noshows")) if bucket.get("noshows") is not None else float(registered - attended)
+    if metric == "noshow_percentage":
+        noshows = bucket.get("noshows")
+        if noshows is None:
+            noshows = registered - attended
+        return round(noshows / registered * 100, 1) if registered else 0.0
     return round(attended / registered * 100, 1) if registered else 0.0
 
 
+def regular_scope_available(summaries: list[dict]) -> bool:
+    """Kan elke set met introducees betrouwbaar tot regulier worden beperkt?"""
+    return all(
+        not int(item.get("statistiek", {}).get("introducees", 0) or 0)
+        or isinstance(item.get("statistiek", {}).get("regulier"), dict)
+        for item in summaries or []
+    )
+
+
+def participant_scope(summaries: list[dict], include_introducees: bool) -> list[dict]:
+    """Selecteer alleen een geaggregeerde scope; nooit individuele deelnemers."""
+    if include_introducees:
+        return list(summaries or [])
+    scoped = []
+    for item in summaries or []:
+        snapshot = item.get("statistiek", {})
+        regular = snapshot.get("regulier")
+        if isinstance(regular, dict):
+            copy = dict(item)
+            copy["statistiek"] = regular
+            scoped.append(copy)
+        elif not int(snapshot.get("introducees", 0) or 0):
+            scoped.append(item)
+    return scoped
+
+
 def period_label(event_date: date | None, period: str) -> str:
+    # 'total' gooit alles op één hoop: dan telt niet wanneer iets gebeurde,
+    # maar alleen hoe de selectie als geheel eruitziet.
+    if period == "total":
+        return "Hele selectie"
     if event_date is None:
         return "Zonder datum"
     if period == "month":
@@ -272,6 +404,8 @@ def period_label(event_date: date | None, period: str) -> str:
 
 
 def _period_sort_key(event_date: date | None, period: str):
+    if period == "total":
+        return (0, 0, 0)
     if event_date is None:
         return (1, 0, 0)
     if period == "month":
@@ -283,7 +417,7 @@ def _period_sort_key(event_date: date | None, period: str):
     return (0, event_date.toordinal(), 0)
 
 
-def _aggregate(metric: str, registered: float, attended: float, values: list[float]) -> float:
+def _aggregate(metric: str, registered: float, attended: float, noshows: float, values: list[float]) -> float:
     """Percentages worden herberekend, aantallen opgeteld.
 
     Het gemiddelde van percentages is niet het percentage van het geheel: een
@@ -292,6 +426,8 @@ def _aggregate(metric: str, registered: float, attended: float, values: list[flo
     """
     if metric == "opkomst_percentage":
         return round(attended / registered * 100, 1) if registered else 0.0
+    if metric == "noshow_percentage":
+        return round(noshows / registered * 100, 1) if registered else 0.0
     return round(sum(values), 1)
 
 
@@ -302,6 +438,7 @@ def build_series(
     period: str = "event",
     since: date | None = None,
     until: date | None = None,
+    percentage_of_total: bool = False,
 ) -> dict:
     """Bereken één trendreeks.
 
@@ -333,10 +470,12 @@ def build_series(
 
         if dimension in {"", "event_type", "place", "location"}:
             key = "Totaal" if not dimension else str(summary.get(dimension, "") or "Onbekend")
-            entry = buckets[label].setdefault(key, {"values": [], "registered": 0.0, "attended": 0.0})
+            entry = buckets[label].setdefault(key, {"values": [], "registered": 0.0, "attended": 0.0, "noshows": 0.0, "event_ids": []})
             entry["values"].append(_snapshot_value(snapshot, metric))
             entry["registered"] += float(snapshot.get("aangemeld", 0) or 0)
             entry["attended"] += float(snapshot.get("aanwezig", 0) or 0)
+            entry["noshows"] += float(snapshot.get("noshows", 0) or 0)
+            entry["event_ids"].append(str(summary.get("id", "") or ""))
             continue
 
         counts = _group_counts(snapshot, dimension)
@@ -347,10 +486,12 @@ def build_series(
             if value is None:
                 incomplete = True
                 continue
-            entry = buckets[label].setdefault(group, {"values": [], "registered": 0.0, "attended": 0.0})
+            entry = buckets[label].setdefault(group, {"values": [], "registered": 0.0, "attended": 0.0, "noshows": 0.0, "event_ids": []})
             entry["values"].append(value)
             entry["registered"] += float(bucket.get("aangemeld") or 0)
             entry["attended"] += float(bucket.get("aanwezig") or 0)
+            entry["noshows"] += float(bucket.get("noshows") or 0)
+            entry["event_ids"].append(str(summary.get("id", "") or ""))
 
     groups = sorted(
         {group for bucket in buckets.values() for group in bucket},
@@ -360,33 +501,93 @@ def build_series(
         ),
     )
     points = []
+    totals: dict[str, dict] = {group: {"registered": 0.0, "attended": 0.0, "noshows": 0.0, "values": []} for group in groups}
     for label in order:
-        row = {"label": label, "values": {}}
+        row = {"label": label, "values": {}, "event_ids": []}
         for group in groups:
             entry = buckets[label].get(group)
             row["values"][group] = (
-                _aggregate(metric, entry["registered"], entry["attended"], entry["values"])
+                _aggregate(metric, entry["registered"], entry["attended"], entry["noshows"], entry["values"])
                 if entry else 0.0
             )
+            if entry:
+                row["event_ids"].extend(entry["event_ids"])
+                totals[group]["registered"] += entry["registered"]
+                totals[group]["attended"] += entry["attended"]
+                totals[group]["noshows"] += entry["noshows"]
+                totals[group]["values"].extend(entry["values"])
+        row["event_ids"] = list(dict.fromkeys(filter(None, row["event_ids"])))
         points.append(row)
+
+    raw_totals = {
+        group: _aggregate(metric, data["registered"], data["attended"], data["noshows"], data["values"])
+        for group, data in totals.items()
+    }
+    percentage_enabled = bool(
+        percentage_of_total and dimension and metric in {
+            "aangemeld", "aanwezig", "noshows", "afgemeld"
+        }
+    )
+    if percentage_enabled:
+        for row in points:
+            raw_values = dict(row["values"])
+            denominator = sum(raw_values.values())
+            row["raw_values"] = raw_values
+            row["raw_total"] = denominator
+            row["values"] = {
+                group: round(value / denominator * 100, 1) if denominator else 0.0
+                for group, value in raw_values.items()
+            }
+        total_denominator = sum(raw_totals.values())
+        displayed_totals = {
+            group: round(value / total_denominator * 100, 1) if total_denominator else 0.0
+            for group, value in raw_totals.items()
+        }
+    else:
+        displayed_totals = raw_totals
 
     return {
         "metric": metric,
+        "display_metric": "aandeel_percentage" if percentage_enabled else metric,
+        "percentage_of_total": percentage_enabled,
         "dimension": dimension,
         "period": period,
         "groups": groups,
         "points": points,
         "events": len(selected),
         "incomplete": incomplete,
+        "selected": [summary for _event_date, summary in selected],
+        "totals": displayed_totals,
+        "raw_totals": raw_totals,
     }
+
+
+def select_series_groups(series: dict, selections: dict | None = None) -> dict:
+    """Select visible categories, retaining the original population/denominators."""
+    from copy import deepcopy
+    chosen = (selections or {}).get(series.get("dimension"))
+    if chosen is None:
+        return series
+    result = deepcopy(series)
+    result["groups"] = [group for group in series.get("groups", []) if group in chosen]
+    for point in result.get("points", []):
+        for key in ("values", "raw_values"):
+            if key in point:
+                point[key] = {group: value for group, value in point[key].items() if group in result["groups"]}
+    for key in ("totals", "raw_totals"):
+        if key in result:
+            result[key] = {group: value for group, value in result[key].items() if group in result["groups"]}
+    return result
 
 
 def series_totals(series: dict) -> list[tuple[str, float]]:
     """Totaal per groep over de hele reeks, voor een staaf- of donutweergave."""
+    if isinstance(series.get("totals"), dict):
+        return [(group, float(series["totals"].get(group, 0.0))) for group in series["groups"]]
     totals = []
     for group in series["groups"]:
         values = [point["values"].get(group, 0.0) for point in series["points"]]
-        if series["metric"] == "opkomst_percentage":
+        if series["metric"] in {"opkomst_percentage", "noshow_percentage"}:
             usable = [value for value in values if value]
             totals.append((group, round(sum(usable) / len(usable), 1) if usable else 0.0))
         else:
@@ -404,7 +605,9 @@ def describe_change(series: dict, group: str | None = None) -> str:
         return "Geen gegevens."
     first = points[0]["values"].get(group, 0.0)
     last = points[-1]["values"].get(group, 0.0)
-    unit = "%" if series["metric"] == "opkomst_percentage" else ""
+    unit = "%" if series.get("display_metric", series["metric"]) in {
+        "opkomst_percentage", "noshow_percentage", "aandeel_percentage"
+    } else ""
     difference = round(last - first, 1)
     if not difference:
         return f"{group}: gelijk gebleven op {last:g}{unit}."
@@ -413,3 +616,105 @@ def describe_change(series: dict, group: str | None = None) -> str:
         f"{group}: {richting} van {first:g}{unit} naar {last:g}{unit} "
         f"({difference:+g}{unit}) tussen {points[0]['label']} en {points[-1]['label']}."
     )
+
+
+def available_dimensions(summaries: list[dict]) -> list[str]:
+    """Alleen dimensies tonen waarvoor ten minste één echte waarde bestaat."""
+    available = [""]
+    for key in ("event_type", "place", "location"):
+        if any(str(item.get(key, "") or "").strip() not in {"", "Onbekend"} for item in summaries):
+            available.append(key)
+    for dimension in GROUP_DIMENSIONS:
+        if any((item.get("statistiek", {}).get("verdeling", {}).get(dimension) or {}) for item in summaries):
+            available.append(dimension)
+    return available
+
+
+def filter_summaries(summaries: list[dict], filters: dict | None = None) -> list[dict]:
+    """Combineer uitsluitend evenementniveau-filters; die blijven exact op aggregaten."""
+    filters = filters or {}
+    since, until = filters.get("since"), filters.get("until")
+    selected = []
+    for summary in summaries or []:
+        event_date = parse_date(summary.get("date", ""))
+        if since and (event_date is None or event_date < since):
+            continue
+        if until and (event_date is None or event_date > until):
+            continue
+        if filters.get("event_type") and summary.get("event_type") != filters["event_type"]:
+            continue
+        if filters.get("template_id") and str(summary.get("template_id", "")) != str(filters["template_id"]):
+            continue
+        if filters.get("location") and summary.get("location") != filters["location"]:
+            continue
+        if filters.get("event_id") and str(summary.get("id", "")) != str(filters["event_id"]):
+            continue
+        selected.append(summary)
+    return selected
+
+
+def overview_kpis(summaries: list[dict]) -> dict:
+    registered = sum(int(item.get("statistiek", {}).get("aangemeld", 0) or 0) for item in summaries)
+    attended = sum(int(item.get("statistiek", {}).get("aanwezig", 0) or 0) for item in summaries)
+    noshows = sum(int(item.get("statistiek", {}).get("noshows", 0) or 0) for item in summaries)
+    cancelled = sum(int(item.get("statistiek", {}).get("afgemeld", 0) or 0) for item in summaries)
+    return {
+        "evenementen": len(summaries), "aangemeld": registered, "aanwezig": attended,
+        "noshows": noshows, "afgemeld": cancelled,
+        "opkomst_percentage": round(attended / registered * 100, 1) if registered else 0.0,
+        "noshow_percentage": round(noshows / registered * 100, 1) if registered else 0.0,
+    }
+
+
+def compare_periods(summaries: list[dict], since: date, until: date,
+                    previous_since: date | None = None, previous_until: date | None = None) -> dict:
+    """Vergelijk twee inclusieve perioden met aantallen, procenten en procentpunten."""
+    days = max(1, (until - since).days + 1)
+    previous_until = previous_until or (since - timedelta(days=1))
+    previous_since = previous_since or (previous_until - timedelta(days=days - 1))
+    current = overview_kpis(filter_summaries(summaries, {"since": since, "until": until}))
+    previous = overview_kpis(filter_summaries(summaries, {"since": previous_since, "until": previous_until}))
+    changes = {}
+    for key, value in current.items():
+        old = previous[key]
+        changes[key] = {
+            "absolute": round(value - old, 1),
+            "percentage": round((value - old) / old * 100, 1) if old else None,
+            "percentage_points": round(value - old, 1) if key.endswith("percentage") else None,
+        }
+    return {"current": current, "previous": previous, "changes": changes,
+            "current_range": (since, until), "previous_range": (previous_since, previous_until)}
+
+
+def ranked_events(summaries: list[dict]) -> list[dict]:
+    result = []
+    for item in summaries:
+        stats = item.get("statistiek", {})
+        registered = int(stats.get("aangemeld", 0) or 0)
+        attended = int(stats.get("aanwezig", 0) or 0)
+        result.append({**item, "turnout": round(attended / registered * 100, 1) if registered else 0.0})
+    return sorted(result, key=lambda item: (-item["turnout"], -int(item.get("statistiek", {}).get("aangemeld", 0) or 0), normalize(item.get("name", ""))))
+
+
+def generate_insights(summaries: list[dict]) -> list[dict]:
+    """Deterministische signalen met de gebruikte evenementen als onderbouwing."""
+    if len(summaries) < 2:
+        return []
+    insights = []
+    ordered = sorted(summaries, key=lambda item: parse_date(item.get("date", "")) or date.min)
+    midpoint = max(1, len(ordered) // 2)
+    earlier, later = overview_kpis(ordered[:midpoint]), overview_kpis(ordered[midpoint:])
+    delta = round(later["opkomst_percentage"] - earlier["opkomst_percentage"], 1)
+    if delta:
+        direction = "hoger" if delta > 0 else "lager"
+        insights.append({"title": f"Opkomst {abs(delta):g} procentpunt {direction}",
+                         "detail": "Vergelijking van de recentste evenementen met de eerdere helft; dit is geen causale verklaring.",
+                         "event_ids": [str(item.get("id", "")) for item in ordered]})
+    for dimension, label in (("event_type", "evenementsoort"), ("location", "locatie")):
+        series = build_series(summaries, "opkomst_percentage", dimension, "year")
+        totals = sorted(series_totals(series), key=lambda item: item[1], reverse=True)
+        if len(totals) >= 2 and totals[0][1] - totals[-1][1] >= 10:
+            insights.append({"title": f"Verschil naar {label}: {totals[0][0]} scoort hoger",
+                             "detail": f"{totals[0][1]:g}% tegenover {totals[-1][1]:g}% voor {totals[-1][0]}. Samenhang, geen causaliteit.",
+                             "event_ids": [str(item.get("id", "")) for item in summaries]})
+    return insights[:4]

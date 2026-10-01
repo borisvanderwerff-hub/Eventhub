@@ -42,7 +42,7 @@ def _age_bucket(value: str) -> str | None:
 
 
 def _fetch_participants(connection: sqlite3.Connection, event_id: str, include_introducees: bool) -> list[dict]:
-    sql = "SELECT * FROM participant WHERE event_id = ?"
+    sql = "SELECT * FROM participant WHERE event_id = ? AND temporary_walkin = 0"
     params: list = [event_id]
     if not include_introducees:
         sql += " AND introducee = 0"
@@ -53,7 +53,8 @@ def _fetch_participants(connection: sqlite3.Connection, event_id: str, include_i
 def overview(connection: sqlite3.Connection, event_id: str, include_introducees: bool = True) -> dict:
     participants = _fetch_participants(connection, event_id, include_introducees)
     registered = len(participants)
-    inside = sum(1 for p in participants if p["attendance_status"] == "present")
+    walkins = [dict(row) for row in connection.execute("SELECT * FROM participant WHERE event_id=? AND temporary_walkin=1", (event_id,)).fetchall()]
+    inside = sum(1 for p in participants if p["attendance_status"] == "present") + sum(1 for p in walkins if p["attendance_status"] == "present")
     checked_out = sum(1 for p in participants if p["attendance_status"] == "checked_out")
     absent = sum(1 for p in participants if p["attendance_status"] == "absent")
     attended = sum(1 for p in participants if p.get("checkin_time"))

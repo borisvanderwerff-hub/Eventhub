@@ -5,11 +5,12 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from emt_education import ONBEKEND, crosstab, education_level, level_sort_key
 
-APP_SOURCE = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+APP_SOURCE = desktop_source(ROOT)
 
 
 def visitor(opleiding, profiel=""):
@@ -124,14 +125,19 @@ class IntegrationTests(unittest.TestCase):
             self.assertIn(f'self.statistics_cards["{chart}"].chart.set_data(', APP_SOURCE)
 
     def test_the_crosstab_is_an_extra_card_below_them(self):
-        self.assertIn('statistics_grid.addWidget(crosstab_box, 2, 0, 1, 2)', APP_SOURCE)
+        """Onder de grafieken en over de volle breedte; welke rij precies mag schuiven."""
+        kaarten = APP_SOURCE.index('statistics_grid.addWidget(self.statistics_cards["age"]')
+        kruistabel = APP_SOURCE.index("statistics_grid.addWidget(crosstab_box, ")
+
+        self.assertLess(kaarten, kruistabel)
+        self.assertIn(", 0, 1, 2)", APP_SOURCE[kruistabel:kruistabel + 80])
         self.assertIn("def _update_crosstab(self, records):", APP_SOURCE)
 
     def test_the_crosstab_is_included_in_the_excel_export(self):
         """Op het scherm stond hij wel, in de export niet."""
         start = APP_SOURCE.index("def export_statistics(self)")
         block = APP_SOURCE[start:APP_SOURCE.index("\n    def ", start + 1)]
-        self.assertIn("crosstab=education_crosstab(event_records)", block)
+        self.assertIn("crosstab=self._crosstab_data(crosstab_records)", block)
 
     def test_the_export_button_label_is_short(self):
         """De volledige titel liep buiten de knop."""
@@ -159,9 +165,10 @@ class ExcelSheetTests(unittest.TestCase):
             visitor("MBO niveau 4", "Zorg"), visitor("HAVO", "Economie"),
         ]
         output = Path(tempfile.mkdtemp()) / "stat.xlsx"
+        # (categorie, aangemeld, aanwezig, niet gekomen, afgemeld)
         export_statistics_workbook(
-            [("Opleidingsniveau", [("Alle", [("MBO 4", 3)])])],
-            output, "Test", crosstab=crosstab(records),
+            [("Opleidingsniveau", [("MBO 4", 3, 3, 0, 0)])],
+            output, crosstab=crosstab(records),
         )
         cls.workbook = openpyxl.load_workbook(output)
 
@@ -176,7 +183,7 @@ class ExcelSheetTests(unittest.TestCase):
             if any(value is not None for value in row)
         ]
         kop = rijen[0]
-        self.assertEqual(kop[0], "Opleidingsniveau")
+        self.assertEqual(kop[0], "Aantallen")
         self.assertEqual(kop[-1], "Totaal")
         mbo = next(rij for rij in rijen if rij[0] == "MBO 4")
         self.assertEqual(mbo[kop.index("Techniek")], 2)
@@ -206,7 +213,7 @@ class ExcelSheetTests(unittest.TestCase):
         from bezoekerslijst_core import export_statistics_workbook
 
         output = Path(tempfile.mkdtemp()) / "zonder.xlsx"
-        export_statistics_workbook([("Opleidingsniveau", [("Alle", [("MBO", 1)])])], output, "Test")
+        export_statistics_workbook([("Opleidingsniveau", [("MBO", 1, 1, 0, 0)])], output)
         self.assertNotIn("Niveau x profiel", openpyxl.load_workbook(output).sheetnames)
 
 

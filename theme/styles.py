@@ -8,11 +8,15 @@ def build_stylesheet(dark_mode: bool = False) -> str:
         hover, text, muted = "#1b2940", "#f5f7fb", "#93a4ba"
         border, selected, input_background = "#26334a", "#243c69", "#0d1420"
         danger_bg, danger_hover = "#24151b", "#3a1823"
+        glass_top, glass_bottom = "rgba(23, 32, 52, 0.88)", "rgba(36, 26, 74, 0.58)"
+        glass_hover_top, glass_hover_bottom = "rgba(31, 43, 69, 0.95)", "rgba(48, 34, 96, 0.72)"
     else:
         background, surface, surface_alt = "#f3f6fb", "#ffffff", "#eef3f9"
         hover, text, muted = "#e7eef9", "#172235", "#637187"
         border, selected, input_background = "#d8e0eb", "#dce9ff", "#ffffff"
         danger_bg, danger_hover = "#fff7f8", "#ffedf0"
+        glass_top, glass_bottom = "rgba(255, 255, 255, 0.92)", "rgba(226, 233, 250, 0.55)"
+        glass_hover_top, glass_hover_bottom = "rgba(255, 255, 255, 0.99)", "rgba(214, 224, 249, 0.75)"
 
     return f"""
         QMainWindow, QWidget {{ background: {background}; color: {text}; font-family: 'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif; font-size: 10pt; }}
@@ -67,6 +71,59 @@ def build_stylesheet(dark_mode: bool = False) -> str:
 
         QFrame#toolbar, QFrame#summaryCard, QFrame#compactSummaryCard, QFrame#statisticsCard, QFrame#eventBar, QGroupBox {{ background: {surface}; border: 1px solid {border}; border-radius: 12px; }}
 
+        QLabel#reportStep {{ color: {muted}; background: {surface_alt}; border: 1px solid {border}; border-radius: 9px; padding: 6px 8px; font-size: 8.6pt; font-weight: 700; }}
+        QLabel#reportStep[gedaan="true"] {{ color: {text}; border-color: #6c5cff; }}
+        QLabel#reportStep[actief="true"] {{ color: #ffffff; background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #6c2cff, stop:1 #8f3cff); border-color: #8a52ff; }}
+        QScrollArea#eventBoard, QWidget#eventBoardBody {{ background: transparent; border: none; }}
+        QScrollArea#callbackDetailScroll, QWidget#callbackDetailBody {{ background: transparent; border: none; }}
+        QPushButton#boardSectionToggle {{ background: transparent; border: none; color: {muted}; text-align: left; font-size: 9pt; font-weight: 800; letter-spacing: 1.1px; padding: 6px 2px 2px 2px; }}
+        QPushButton#boardSectionToggle:hover {{ color: #9b8cff; }}
+        QPushButton#viewToggleButton {{ background: {surface}; color: {text}; border: 1px solid {border}; border-radius: 8px; padding: 7px 12px; font-weight: 700; }}
+        QPushButton#viewToggleButton:hover {{ background: {hover}; border-color: #6c5cff; }}
+
+        QFrame#eventOverviewCard {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 {glass_top}, stop:1 {glass_bottom}); border: 1px solid {border}; border-left: 5px solid {muted}; border-radius: 16px; }}
+        QFrame#eventOverviewCard:hover {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 {glass_hover_top}, stop:1 {glass_hover_bottom}); border-color: #6c5cff; }}
+        QFrame#eventOverviewCard[gekozen="true"] {{ border: 2px solid #6c5cff; }}
+        QFrame#eventOverviewCard[eventStatus="concept"] {{ border-left: 5px solid #8b9bb4; }}
+        QFrame#eventOverviewCard[eventStatus="invoorbereiding"] {{ border-left: 5px solid #e0a33a; }}
+        QFrame#eventOverviewCard[eventStatus="gereed"] {{ border-left: 5px solid #2fb37a; }}
+        QFrame#eventOverviewCard[eventStatus="afgerond"] {{ border-left: 5px solid #6c5cff; }}
+        QFrame#eventOverviewCard[eventStatus="geannuleerd"] {{ border-left: 5px solid #e0566a; }}
+        QLabel#eventOverviewEyebrow {{ color: {muted}; font-size: 7.6pt; font-weight: 800; letter-spacing: 1.3px; }}
+        QLabel#eventOverviewTitle {{ color: {text}; font-size: 12.5pt; font-weight: 800; }}
+        QLabel#eventOverviewMeta {{ color: {muted}; font-size: 9pt; }}
+        QLabel#eventOverviewFigures {{ color: {text}; font-size: 9pt; }}
+        QLabel#eventOverviewFoot {{ color: {muted}; font-size: 8pt; }}
+        QLabel#eventOverviewPercentage {{ color: {text}; font-size: 8.5pt; font-weight: 800; }}
+        QPushButton#cardMenuButton {{ background: transparent; border: none; color: {muted}; padding: 0px 4px; font-size: 12pt; font-weight: 800; }}
+        QPushButton#cardMenuButton:hover {{ color: #6c5cff; }}
+        QPushButton#cardMenuButton::menu-indicator {{ image: none; width: 0px; }}
+
+        QLabel#eventStatusChip {{ color: {muted}; background: rgba(139, 155, 180, 0.16); border: 1px solid rgba(139, 155, 180, 0.42); border-radius: 9px; padding: 2px 9px; font-size: 8pt; font-weight: 800; }}
+        QLabel#eventStatusChip[eventStatus="invoorbereiding"] {{ color: #e0a33a; background: rgba(224, 163, 58, 0.16); border-color: rgba(224, 163, 58, 0.45); }}
+        QLabel#eventStatusChip[eventStatus="gereed"] {{ color: #2fb37a; background: rgba(47, 179, 122, 0.16); border-color: rgba(47, 179, 122, 0.45); }}
+        QLabel#eventStatusChip[eventStatus="afgerond"] {{ color: #8b7dff; background: rgba(108, 92, 255, 0.16); border-color: rgba(108, 92, 255, 0.45); }}
+        QLabel#eventStatusChip[eventStatus="geannuleerd"] {{ color: #e0566a; background: rgba(224, 86, 106, 0.16); border-color: rgba(224, 86, 106, 0.45); }}
+
+        QProgressBar#preparationBar {{ background: {input_background}; border: 1px solid {border}; border-radius: 7px; max-height: 12px; min-height: 12px; text-align: center; color: transparent; }}
+        QProgressBar#preparationBar::chunk {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #6c2cff, stop:1 #b44cff); border-radius: 6px; }}
+        QProgressBar#preparationBar[vervallen="true"]::chunk {{ background: #6b7280; }}
+
+        QFrame#eventCard {{ background: {surface}; border: 1px solid {border}; border-left: 5px solid {muted}; border-radius: 14px; }}
+        QFrame#eventCard:hover {{ background: {hover}; border-color: #6c5cff; }}
+        QFrame#eventCard[huidig="true"] {{ background: {selected}; border: 2px solid #6c5cff; border-left: 5px solid #6c5cff; }}
+        QFrame#eventCard[eventStatus="concept"] {{ border-left: 5px solid #8b9bb4; }}
+        QFrame#eventCard[eventStatus="invoorbereiding"] {{ border-left: 5px solid #e0a33a; }}
+        QFrame#eventCard[eventStatus="gereed"] {{ border-left: 5px solid #2fb37a; }}
+        QFrame#eventCard[eventStatus="afgerond"] {{ border-left: 5px solid #6c5cff; }}
+        QFrame#eventCard[eventStatus="geannuleerd"] {{ border-left: 5px solid #e0566a; }}
+        QLabel#eventCardTitle {{ color: {text}; font-size: 11.5pt; font-weight: 800; }}
+        QLabel#eventCardMeta {{ color: {muted}; font-size: 9pt; }}
+        QLabel#eventCardFoot {{ color: {muted}; font-size: 8pt; }}
+        QLabel#eventGroupTitle {{ color: #9b8cff; font-size: 11pt; font-weight: 800; letter-spacing: 0.4px; }}
+        QPushButton#eventPickerButton {{ background: {surface}; color: {text}; border: 1px solid {border}; border-radius: 10px; padding: 8px 14px; text-align: left; font-weight: 700; }}
+        QPushButton#eventPickerButton:hover {{ background: {hover}; border-color: #6c5cff; }}
+
         QFrame#eventWorkspaceHeader {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #111827, stop:0.65 #161b34, stop:1 #211847); border: 1px solid #343b62; border-left: 3px solid #765dff; border-radius: 14px; }}
         QLabel#eventWorkspaceTitle {{ color: #ffffff; font-size: 17pt; font-weight: 800; }}
         QLabel#eventStatusBadge {{ color: #d7ccff; background: #211b45; border: 1px solid #6259d6; border-radius: 12px; padding: 5px 10px; font-size: 8.5pt; font-weight: 800; }}
@@ -111,6 +168,11 @@ def build_stylesheet(dark_mode: bool = False) -> str:
         QComboBox QAbstractItemView {{ background: {surface}; color: {text}; border: 1px solid {border}; selection-background-color: {selected}; }}
         QTableWidget {{ background: {surface}; alternate-background-color: {surface_alt}; color: {text}; border: 1px solid {border}; border-radius: 9px; gridline-color: {border}; selection-background-color: {selected}; selection-color: {text}; }}
         QTableWidget#dashboardTable {{ border-radius: 10px; }}
+        QListWidget {{ background: {surface}; color: {text}; border: 1px solid {border}; border-radius: 9px; outline: none; }}
+        QListWidget::item {{ padding: 7px 8px; border-bottom: 1px solid {border}; }}
+        QListWidget::item:selected {{ background: #202f4f; color: {text}; border-left: 2px solid #765dff; }}
+        QListWidget::item:hover {{ background: {hover}; }}
+        QListWidget::item:disabled {{ color: {muted}; }}
         QWidget#appFooter {{ background: {background}; border: none; }}
         QTableWidget::item {{ padding: 6px 9px; border-bottom: 1px solid {border}; }}
         QTableWidget::item:selected {{ background: #202f4f; color: {text}; border-left: 2px solid #765dff; }}

@@ -3,13 +3,14 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 
 
 class Version2163HomeTodayTests(unittest.TestCase):
     """Home 'Vandaag'-blok en dag-afhankelijke verversing."""
 
     def setUp(self):
-        self.source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        self.source = desktop_source(ROOT)
 
     def _render_block(self):
         start = self.source.index("def _render_management")

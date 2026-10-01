@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS participant (
     email TEXT,
     gast_van TEXT,
     introducee INTEGER NOT NULL DEFAULT 0,
+    temporary_walkin INTEGER NOT NULL DEFAULT 0,
     attendance_status TEXT NOT NULL DEFAULT 'not_checked_in',
     checkin_time TEXT,
     checkin_by TEXT,
@@ -150,6 +151,8 @@ def _run_migrations(connection: sqlite3.Connection) -> None:
     if "operation_id" not in audit_columns:
         connection.execute("ALTER TABLE audit_log ADD COLUMN operation_id TEXT")
     participant_columns = {row["name"] for row in connection.execute("PRAGMA table_info(participant)")}
+    if "temporary_walkin" not in participant_columns:
+        connection.execute("ALTER TABLE participant ADD COLUMN temporary_walkin INTEGER NOT NULL DEFAULT 0")
     if "stop_marked_absent" not in participant_columns:
         connection.execute("ALTER TABLE participant ADD COLUMN stop_marked_absent INTEGER NOT NULL DEFAULT 0")
         # 2.11.0 could already have stopped a session before this migration.

@@ -1,3 +1,98 @@
+EVENTHUB 0.2.1 BETA — BRONCODE OPGESPLITST, FASE 1 (01-10-2026)
+
+WAT IS GEWIJZIGD
+- De schermonderdelen zijn uit bezoekerslijst_app.py gehaald en staan nu in eigen modules:
+  emt_base.py (bestandslocaties, versie, evenementhulpjes), emt_widgets.py (kaarten, keuzevenster,
+  datum- en tijdkeuze), emt_dialogs.py (invulvensters), emt_whatsapp_ui.py (After sales via WhatsApp),
+  emt_live_ui.py (incheckclient en browserkoppeling), emt_trends_panel.py (Trends en grafieken) en
+  emt_tutorial.py (rondleiding).
+- bezoekerslijst_app.py gaat van 16.776 naar 11.612 regels. De verhuisde namen worden bovenin opnieuw
+  geimporteerd, zodat bestaande code en tests ze via bezoekerslijst_app kunnen blijven gebruiken.
+- Imports die alleen bij verhuisde onderdelen hoorden zijn opgeruimd; er blijven geen ongebruikte
+  imports over.
+- Geen gedragswijzigingen: alleen verplaatste code, imports en de testhulp hieronder.
+
+TESTS
+- server/tests/desktop_source.py is nieuw: die plakt het hoofdbestand en de schermmodules achter
+  elkaar. De 48 tests die de brontekst controleren gebruiken die functie nu.
+- Twee tests knipten de brontekst af op een punt dat door de verhuizing verschoof
+  (test_v2201_scroll_safe_dropdowns en test_v2186_data_location); zij knippen nu op het eerstvolgende
+  blok.
+
+UITGEVOERDE CONTROLES
+- Volledige testset (1061 tests, Python 3.12): exact dezelfde uitslag als voor de opsplitsing
+  (15 bekende fouten, o.a. ontbrekende afbeeldingen in de testomgeving en grafiek-XML-notatie).
+- pyflakes op alle modules: geen onbekende namen en geen ongebruikte imports.
+- Schermtest zonder beeldscherm: alle schermen geopend (Home, Taken, After sales, Event Control,
+  Trends, Profiel, evenementdossier) plus de WhatsApp-wachtrij, het sjabloonbeheer, de instellingen
+  en het evenementkeuzevenster. De schermafbeeldingen zijn pixel voor pixel gelijk aan die van voor
+  de opsplitsing.
+- Niet gedaan: een Windows-build. PyInstaller volgt gewone imports, dus EventHub.spec hoeft niet te
+  worden aangepast; bouw de installer wel een keer om dat te bevestigen.
+
+EERDERE CONTROLES
+
+EVENTHUB 0.2.1 BETA — AANVULLING AFTER SALES (17-09-2026)
+
+NIEUW
+- Evenementkeuzevenster (After sales, Event Control en Ander evenement): elke kaart toont het aantal
+  aanmeldingen en hoeveel daarvan introducé zijn. Bij geanonimiseerde evenementen het bewaarde aantal.
+- WhatsApp-sjablonen: via Instellingen → WhatsApp-sjablonen een eigen lijst met berichten toevoegen,
+  bewerken, dupliceren, ordenen en verwijderen. De lijst wordt lokaal bewaard.
+- In de WhatsApp-wachtrij staat een keuzelijst Sjabloon op dezelfde regel als naam, telefoonnummer en
+  WhatsApp-status. De lijst blijft smal en toont maximaal 8 regels; daarna scrolt hij.
+  Een aangepaste berichttekst wordt pas na bevestiging vervangen.
+- Contactstatus in kleur: After sales toont per kandidaat een gekleurde stip vooraan de rij en in de
+  statuskeuzelijsten. Groen: Gesproken, Afgerond, WhatsApp verzonden. Oranje: Terugbellen op verzoek,
+  Voicemail, Geen gehoor. Rood: Niet meer benaderen. Grijs: Nog bellen. De stip past zich direct aan
+  bij een statuswijziging.
+
+OPGELOST
+- De evenementdatum stond twee keer in een WhatsApp-bericht: [evenement] nam de datum uit de
+  evenementnaam mee en [datum] voegde hem nogmaals toe. [evenement] gebruikt nu de naam zonder
+  datum (en zonder intern volgnummer); [datum] blijft de enige datum.
+- Kandidaatpaneel After sales: bij een lage vensterhoogte of Windows-schaal (125/150%) werden velden
+  over elkaar gedrukt, viel tekst als "dd-mm-jjjj" half weg en verdween de kalenderknop bij Opnieuw
+  contact rechts buiten beeld. Oorzaak: vaste maximale veldhoogtes (32 px) en een paneel dat kleiner
+  kon worden dan de inhoud. Het paneel scrolt nu verticaal, is nooit smaller dan de inhoud en de
+  velden gebruiken hun natuurlijke hoogte. Opmerkingen vult de resterende ruimte.
+- Datum- en tijdkeuze: het uitklapvak opende rechtsonder de knop en viel bij een knop aan de rand van
+  het scherm buiten beeld. Beide openen nu als klein venster (Datum kiezen / Tijd kiezen) midden boven
+  het EventHub-venster en worden altijd binnen het scherm geplaatst. De kalender heeft de knoppen
+  Vandaag, Leegmaken en Annuleren, toont Nederlandse dagnamen met maandag als eerste dag, en de
+  dagnamenrij en maandpijlen zijn nu leesbaar in het donkere en lichte thema.
+
+UITGEVOERDE CONTROLES
+- Python-syntaxcontrole (Python 3.12) van de desktopapp: geslaagd.
+- Nieuwe regressietests server/tests/test_v2213_whatsapp_templates.py (18): geslaagd.
+- Nieuwe regressietests server/tests/test_v2214_after_sales_detail_layout.py (4): geslaagd op schaal
+  100%, 125% en 150%; drie ervan falen op de versie zonder deze correctie.
+- Nieuwe regressietests server/tests/test_v2215_picker_dialogs.py (4): geslaagd; alle vier falen op de
+  versie met het oude uitklapvak. Bestaande kalendertests (test_v2185) blijven slagen.
+- Nieuwe regressietests server/tests/test_v2216_picker_registrations.py (3): geslaagd.
+- Volledige testset (Python 3.12): geen nieuwe fouten ten opzichte van vóór deze wijziging. De 20 al
+  bestaande fouten (o.a. ontbrekende afbeeldingen in de testomgeving, grafiek-XML-notatie en tests rond
+  statistiek na het wissen van persoonsgegevens) staan hier los van.
+- Let op: de bestaande test BridgeBatchTests.test_single_use_mode_still_closes_after_one_event faalt
+  af en toe op timing, ook zonder deze wijziging (1 van 8 runs); de Rudder-koppeling is niet aangepast.
+
+EERDERE CONTROLES
+
+EVENTHUB 0.2.0 BETA — CONTROLES
+
+NIEUW IN 0.2.0 BETA
+- EventControl koppelt hosten, verbinden en het dashboard aan het gekozen evenement.
+- Tijdens een geopende livesessie toont EventControl evenement, looptijd, apparaten en directe beheer- en dashboardacties.
+- Het losse tabblad Live dashboard is verwijderd.
+- Aanwezigheid afronden toont vooraf hoeveel onbeoordeelde deelnemers als afwezig worden vastgelegd.
+- Na het sluiten van het sessiebeheervenster kan de gebruiker controleren, veilig afronden of dit uitstellen.
+
+UITGEVOERDE CONTROLES 0.2.0 BETA
+- Python-syntaxcontrole van de gewijzigde desktop-, netwerk- en sessiebeheermodules: geslaagd.
+- 976 regressietests geslaagd, inclusief EventControl, Rudder, Trends, imports en exports.
+
+EERDERE CONTROLES
+
 EVENTHUB 2.16.2 — CONTROLES
 
 NIEUW IN 2.16.2

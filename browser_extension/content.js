@@ -13,7 +13,12 @@
   const picker = document.createElement("input");
   picker.type = "file"; picker.accept = ".json,application/json"; picker.hidden = true;
   document.body.appendChild(picker);
-  launcher.addEventListener("click", () => { picker.value = ""; picker.click(); });
+  const pageEventId = location.pathname.match(/\/rudder\/event\/events\/(\d+)\/attendance\/?$/i)?.[1] || "";
+  launcher.addEventListener("click", () => {
+    if (!pageEventId) { chooseFile(); return; }
+    requestFromEventHub(pageEventId);
+  });
+  function chooseFile() { picker.value = ""; picker.click(); }
 
   function closeOverlay() { document.getElementById("eventhub-rudder-overlay")?.remove(); }
   function listBlock(title, rows) {
@@ -25,11 +30,14 @@
   function escapeHtml(value) {
     const node = document.createElement("span"); node.textContent = String(value || ""); return node.innerHTML;
   }
-  function showError(message) {
+  function showError(message, offerFile) {
     closeOverlay();
     const overlay = document.createElement("div"); overlay.id = "eventhub-rudder-overlay";
-    overlay.innerHTML = `<section class="eventhub-rudder-panel"><h2>EventHub Browserassistent</h2><p class="eventhub-rudder-warning">${escapeHtml(message)}</p><div class="eventhub-rudder-actions"><button class="eventhub-rudder-action" data-close>Sluiten</button></div></section>`;
-    document.body.appendChild(overlay); overlay.querySelector("[data-close]").addEventListener("click", closeOverlay);
+    const fileButton = offerFile ? `<button class="eventhub-rudder-action" data-file>Toch een bestand kiezen</button>` : "";
+    overlay.innerHTML = `<section class="eventhub-rudder-panel"><h2>EventHub Browserassistent</h2><p class="eventhub-rudder-warning">${escapeHtml(message)}</p><div class="eventhub-rudder-actions">${fileButton}<button class="eventhub-rudder-action" data-close>Sluiten</button></div></section>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector("[data-close]").addEventListener("click", closeOverlay);
+    overlay.querySelector("[data-file]")?.addEventListener("click", () => { closeOverlay(); chooseFile(); });
   }
 
   function pageRows() {
@@ -115,13 +123,35 @@
     });
   }
 
+  function applyPayload(payload) {
+    if (!payload || payload.format !== "EventHub Rudder Attendance" || !Array.isArray(payload.participants)) {
+      throw new Error("Dit is geen geldig EventHub-aanwezigheidsbestand.");
+    }
+    const payloadEvent = String(payload?.event?.rudder_event_id || "");
+    if (payloadEvent && pageEventId && payloadEvent !== pageEventId) {
+      throw new Error(`Deze presentie hoort bij Rudder-event ${payloadEvent}, maar deze pagina is event ${pageEventId}.`);
+    }
+    if (!pageRows().length) throw new Error("Op deze pagina is geen Rudder-aanwezigheidsformulier gevonden.");
+    showPreview(payload, preparePlan(payload));
+  }
+
+  function requestFromEventHub(eventId) {
+    launcher.textContent = "EventHub raadplegen…";
+    chrome.runtime.sendMessage({type:"eventhub-request-attendance", event:eventId}, response => {
+      launcher.textContent = "EventHub aanwezigheid";
+      if (chrome.runtime.lastError) {
+        showError(`De Browserassistent kon EventHub niet bereiken: ${chrome.runtime.lastError.message}`, true);
+        return;
+      }
+      if (!response?.ok) { showError(response?.error || "EventHub gaf geen antwoord.", true); return; }
+      try { applyPayload(response.payload); } catch (error) { showError(error.message || String(error), true); }
+    });
+  }
+
   picker.addEventListener("change", async () => {
     const file = picker.files?.[0]; if (!file) return;
     try {
-      const payload = JSON.parse(await file.text());
-      if (payload.format !== "EventHub Rudder Attendance" || !Array.isArray(payload.participants)) throw new Error("Dit is geen geldig EventHub-aanwezigheidsbestand.");
-      const rows = pageRows(); if (!rows.length) throw new Error("Op deze pagina is geen Rudder-aanwezigheidsformulier gevonden.");
-      showPreview(payload, preparePlan(payload));
+      applyPayload(JSON.parse(await file.text()));
     } catch (error) { showError(error.message || String(error)); }
   });
 

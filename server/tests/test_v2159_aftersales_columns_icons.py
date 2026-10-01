@@ -4,11 +4,12 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 
 
 class Version2159AfterSalesColumnsAndIconsTests(unittest.TestCase):
     def setUp(self):
-        self.source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        self.source = desktop_source(ROOT)
 
     def test_each_columns_button_opens_its_own_menu(self):
         self.assertIn('self._columns_button("participants")', self.source)

@@ -354,3 +354,15 @@ html[data-theme="dark"] .emergency-card { box-shadow:0 0 0 4px rgba(255,73,112,.
 html[data-theme="dark"] .state-success { background:#12392d; color:#65e1b0; }
 html[data-theme="dark"] .state-warning { background:#3d3217; color:#ffe08a; }
 html[data-theme="dark"] .state-danger { background:#421c27; color:#ff9ab0; }
+
+.viewer-waiting-card { text-align:center; padding:42px 28px; }
+.viewer-waiting-card h2 { margin-bottom:8px; }
+.viewer-waiting-icon { font-size:2rem; margin-bottom:12px; }
+.participant-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.participant-heading h2 { margin-bottom:0; }
+.participant-heading .btn { margin-top:0; }
+.walkin-modal-card h2 { color:var(--eh-purple); }
+.walkin-actions { display:flex; justify-content:flex-end; gap:10px; }
+.walkin-actions .btn { margin-top:16px; }
+.walkin-badge { display:inline-block; margin-left:8px; font-size:.72rem; font-weight:700; padding:2px 7px; border-radius:999px; background:var(--eh-surface-alt); color:var(--eh-muted); border:1px solid var(--eh-border); }
+@media (max-width:640px) { .participant-heading { align-items:stretch; flex-direction:column; } .participant-heading .btn { width:100%; } }

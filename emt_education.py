@@ -134,6 +134,51 @@ def profile_label(value, seen: dict | None = None) -> str:
     return seen.setdefault(key, raw)
 
 
+OVERIG = "Overig"
+
+
+def collapse_columns(data: dict, limit: int = 8) -> dict:
+    """Bundel de staart van de profielen tot een kolom Overig.
+
+    Een kruistabel van dertien niveaus bij achtentwintig profielen is in de
+    praktijk voor ruim tachtig procent leeg: je leest een veld nullen om een
+    handvol getallen te vinden. Door alleen de grootste profielen apart te
+    tonen en de rest samen te nemen blijft het beeld leesbaar zonder dat er
+    een deelnemer buiten de telling valt.
+
+    Er wordt niets weggegooid: de gebundelde namen komen terug onder
+    ``gebundeld``, en de aantallen zitten in de kolom Overig.
+    """
+    columns = list(data.get("columns", []))
+    column_totals = data.get("column_totals", {})
+    # Een enkele kolom bundelen levert niets op; dan is Overig (1) alleen maar
+    # een omweg naar hetzelfde getal.
+    if limit <= 0 or len(columns) <= limit + 1:
+        return data
+
+    ranked = sorted(columns, key=lambda name: (-column_totals.get(name, 0), _bare(name)))
+    kept = set(ranked[:limit])
+    tail = [name for name in columns if name not in kept]
+    label = f"{OVERIG} ({len(tail)})"
+
+    counts: dict = {}
+    for (level, profile), value in data["counts"].items():
+        target = profile if profile in kept else label
+        counts[(level, target)] = counts.get((level, target), 0) + value
+
+    totals = {name: column_totals[name] for name in columns if name in kept}
+    totals[label] = sum(column_totals.get(name, 0) for name in tail)
+
+    collapsed = dict(data)
+    collapsed.update({
+        "columns": [name for name in columns if name in kept] + [label],
+        "counts": counts,
+        "column_totals": totals,
+        "gebundeld": sorted(tail, key=lambda name: (-column_totals.get(name, 0), _bare(name))),
+    })
+    return collapsed
+
+
 def crosstab(records: list[dict]) -> dict:
     """Kruis opleidingsniveau met profiel.
 

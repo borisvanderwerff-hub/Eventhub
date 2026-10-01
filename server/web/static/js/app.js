@@ -65,10 +65,25 @@ const EventHubClient = (() => {
         return response.json();
     }
 
+    function detectDeviceType() {
+        const ua = navigator.userAgent || "";
+        const platform = navigator.platform || "";
+        const touchPoints = Number(navigator.maxTouchPoints || 0);
+        // iPadOS kan zich in Safari als een Mac presenteren.
+        if (/iPad/i.test(ua) || (platform === "MacIntel" && touchPoints > 1)) return "iPad";
+        if (/iPhone|iPod/i.test(ua)) return "iPhone";
+        if (/Android/i.test(ua)) return /Mobile/i.test(ua) ? "Android-telefoon" : "Android-tablet";
+        if (/Windows/i.test(ua)) return "Windows-pc";
+        if (/Macintosh|Mac OS X/i.test(ua)) return "Mac";
+        if (/CrOS/i.test(ua)) return "Chromebook";
+        if (/Linux/i.test(ua)) return "Linux-apparaat";
+        return "Onbekend apparaat";
+    }
+
     async function registerClient(clientName, role, eventCode) {
         const client = await apiFetch("/api/clients/register", {
             method: "POST",
-            json: { client_name: clientName, client_type: "Browser", role, event_code: eventCode },
+            json: { client_name: clientName, client_type: detectDeviceType(), role, event_code: eventCode },
         });
         storeClient(client);
         startHeartbeat();

@@ -17,7 +17,9 @@ Gebruik:
 8. Controleer de Rudder-pagina en klik bij exporteren altijd zelf op de Rudder-opslagknop.
 
 Reserveoptie:
-Kies JSON-reservebestand maken en selecteer dat bestand via de paarse knop EventHub aanwezigheid.
+Klik op de aanwezigheidspagina in Rudder op de paarse knop EventHub aanwezigheid. EventHub
+vraagt dan om bevestiging en stuurt de presentie rechtstreeks door; er hoeft geen bestand
+te worden gekozen. Lukt dat niet, dan biedt de assistent alsnog een bestandskeuze aan.
 
 De extensie leest geen wachtwoord, cookies of beveiligingstokens. De overdracht loopt eenmalig
 via 127.0.0.1 op dezelfde laptop. Zij werkt uitsluitend op de Rudder-pagina's voor evenementbewerking

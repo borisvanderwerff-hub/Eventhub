@@ -112,7 +112,7 @@ def overview(connection: sqlite3.Connection, incident_id: str = "") -> dict:
         return {"active": False, "participants": [], "total": 0, "safe": 0, "unaccounted": 0}
     incident = dict(incident)
     rows = connection.execute(
-        "SELECT p.id,p.voornaam,p.tussenvoegsel,p.achternaam,p.geboortedatum,p.geboorteplaats,"
+        "SELECT p.id,p.voornaam,p.tussenvoegsel,p.achternaam,p.geboortedatum,p.geboorteplaats,p.telefoonnummer,p.temporary_walkin,"
         "e.safe,e.assembly_point,e.team,e.marked_at,e.marked_by "
         "FROM emergency_status e JOIN participant p ON p.id=e.participant_id "
         "WHERE e.incident_id=? ORDER BY p.achternaam,p.tussenvoegsel,p.voornaam",

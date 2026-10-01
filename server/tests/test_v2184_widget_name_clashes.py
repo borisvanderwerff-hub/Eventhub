@@ -17,11 +17,12 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from PySide6.QtWidgets import QApplication, QFrame, QMainWindow, QWidget
 
-SOURCE = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+SOURCE = desktop_source(ROOT)
 
 # Namen die de app zelf bewust definieert of die Qt juist verwacht.
 TOEGESTAAN = {"event", "close", "show", "update", "raise_"}
@@ -65,7 +66,7 @@ class WidgetAttributeTests(unittest.TestCase):
     def test_the_known_offender_is_renamed(self):
         """self.metric brak de applicatie zodra de stylesheet werd toegepast."""
         self.assertNotIn("self.metric = QComboBox()", SOURCE)
-        self.assertIn("self.metric_choice = QComboBox()", SOURCE)
+        self.assertIn("self.metric_choice = ScrollSafeComboBox()", SOURCE)
 
     def test_metric_really_is_a_qt_method(self):
         """Zonder deze controle zou de test hierboven niets bewijzen."""

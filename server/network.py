@@ -130,9 +130,12 @@ def find_free_port(preferred: int = 8080) -> int:
 
 class HubDiscoveryResponder(threading.Thread):
     """Small UDP responder; it advertises no personal data or session code."""
-    def __init__(self, http_port: int, event_name: str):
+    def __init__(self, http_port: int, event_name: str, event_date: str = "",
+                 source_event_id: str = ""):
         super().__init__(daemon=True)
         self.http_port, self.event_name = http_port, event_name
+        self.event_date = str(event_date or "")
+        self.source_event_id = str(source_event_id or "")
         self._stop_event = threading.Event()
         self._socket = None
 
@@ -147,8 +150,11 @@ class HubDiscoveryResponder(threading.Thread):
                 except socket.timeout: continue
                 if data == DISCOVERY_REQUEST:
                     advertised_ip = local_ip_for_peer(address[0])
-                    payload = json.dumps({"product":"EventHub","name":self.event_name,
-                                          "url":f"http://{advertised_ip}:{self.http_port}"}).encode()
+                    payload = json.dumps({
+                        "product": "EventHub", "name": self.event_name,
+                        "date": self.event_date, "source_event_id": self.source_event_id,
+                        "url": f"http://{advertised_ip}:{self.http_port}",
+                    }).encode()
                     sock.sendto(payload, address)
         except OSError:
             pass

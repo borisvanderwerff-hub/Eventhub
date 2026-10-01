@@ -7,6 +7,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from PySide6.QtCore import QDate, QTime
@@ -17,7 +18,7 @@ from PySide6.QtWidgets import (
 import bezoekerslijst_app
 from bezoekerslijst_app import with_date_picker, with_time_picker
 
-SOURCE = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+SOURCE = desktop_source(ROOT)
 
 
 class _PopupCatcher:

@@ -1,5 +1,5 @@
 #define MyAppName "EventHub"
-#define MyAppVersion "0.1.4 Beta"
+#define MyAppVersion "0.2.1 Beta"
 #define MyAppPublisher "Cohentra Digital"
 #define MyAppExeName "EventHub.exe"
 
@@ -27,8 +27,10 @@ Name: "desktopicon"; Description: "Snelkoppeling op het bureaublad maken"; Group
 
 [Files]
 Source: "dist\EventHub\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+Source: "eventhub_logo.png"; DestDir: "{app}"; Flags: ignoreversion
+Source: "eventhub.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "settings_gear.png"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\EventHub Server\*"; DestDir: "{app}\Server"; Flags: recursesubdirs ignoreversion
-Source: "browser_extension\*"; DestDir: "{app}\Browserassistent"; Flags: recursesubdirs ignoreversion
 
 [Icons]
 Name: "{group}\EventHub"; Filename: "{app}\{#MyAppExeName}"

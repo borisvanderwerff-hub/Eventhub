@@ -5,9 +5,21 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 sys.path.insert(0, str(ROOT))
 
 from bezoekerslijst_app import TrendChart
+
+
+def _application():
+    """Lettertypemetingen hebben een applicatie nodig."""
+    from PySide6.QtWidgets import QApplication
+
+    return QApplication.instance() or QApplication([])
+
+# Het tekenen is verhuisd naar een gedeelde renderer, zodat het scherm, het
+# exportvoorbeeld, de PDF, Excel en een losse PNG dezelfde grafiek opleveren.
+CHART_SOURCE = (ROOT / "emt_charts.py").read_text(encoding="utf-8")
 
 
 class AxisTests(unittest.TestCase):
@@ -34,20 +46,18 @@ class ThemeTests(unittest.TestCase):
     """De grafiek tekent zelf en volgt de stylesheet niet."""
 
     def setUp(self):
-        self.source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        self.source = desktop_source(ROOT)
 
     def _paint_block(self):
-        start = self.source.index("    def paintEvent(self, event):\n        del event\n        surface")
-        return self.source[start:self.source.index("\nclass ", start)]
+        return CHART_SOURCE[CHART_SOURCE.index("def paint_trend_chart("):]
 
     def test_chart_has_a_dark_mode_switch(self):
         self.assertTrue(hasattr(TrendChart, "set_dark_mode"))
         self.assertTrue(TrendChart.dark, "donker is de standaard van de app")
 
     def test_background_is_not_hardcoded_white(self):
-        block = self._paint_block()
-        self.assertIn('QColor("#111827" if self.dark else "#ffffff")', block)
-        self.assertNotIn('painter.fillRect(self.rect(), QColor("#ffffff"))', block)
+        self.assertIn('QColor("#111827" if dark else "#ffffff")', CHART_SOURCE)
+        self.assertIn('kleuren["surface"]', self._paint_block())
 
     def test_applying_the_theme_updates_both_charts(self):
         start = self.source.index("def _apply_style(self):")
@@ -59,23 +69,79 @@ class ThemeTests(unittest.TestCase):
 
 class ReadabilityTests(unittest.TestCase):
     def setUp(self):
-        self.source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
-        start = self.source.index("    def paintEvent(self, event):\n        del event\n        surface")
-        self.block = self.source[start:self.source.index("\nclass ", start)]
+        self.source = desktop_source(ROOT)
+        self.block = CHART_SOURCE[CHART_SOURCE.index("def paint_trend_chart("):]
 
     def test_values_are_printed_next_to_the_points(self):
-        """Zonder deze labels moet je de tabel eronder lezen om iets af te lezen."""
-        self.assertIn("self._formatted(value)", self.block)
+        """De laatste waarde blijft als rustig anker zichtbaar."""
+        self.assertIn("tekst(value)", self.block)
+
+    def test_the_screen_and_the_export_share_one_renderer(self):
+        """Twee tekenimplementaties naast elkaar lopen onvermijdelijk uiteen."""
+        self.assertIn("paint_trend_chart(", self.source)
+        self.assertNotIn("def paintEvent(self, event):\n        del event\n        surface", self.source)
+        self.assertIn("def render_trend_image(", CHART_SOURCE)
+
+    def test_intermediate_values_use_a_hover_tooltip(self):
+        self.assertIn("def mouseMoveEvent(self, event):", self.source)
+        self.assertIn("QToolTip.showText", self.source)
+        self.assertIn("distance <= 12 ** 2", self.source)
+
+    def test_only_the_last_value_is_permanently_labelled(self):
+        self.assertIn('value = points[-1]["values"].get(group, 0.0)', self.block)
 
     def test_labels_are_clamped_inside_the_widget(self):
-        self.assertIn("min(max(2, int(x) - 34), self.width() - 70)", self.block)
-        self.assertIn("min(max(2, int(x) - 60), self.width() - 122)", self.block)
+        self.assertIn("min(max(2, int(x) - 34), int(width) - 70)", self.block)
+        self.assertIn("min(max(2, int(x) - 60), int(width) - 122)", self.block)
 
     def test_legend_height_is_reserved_before_drawing(self):
-        self.assertIn("bottom = 34 + legend_rows * 20", self.block)
+        self.assertIn("bottom = 34 + legend_rows * LEGEND_ROW_HEIGHT", self.block)
+        self.assertLess(self.block.index("bottom = 34 + legend_rows"),
+                        self.block.index("plot_height = max("))
+
+    def test_even_a_single_series_has_a_colour_legend(self):
+        from PySide6.QtGui import QFont, QFontMetricsF
+
+        from emt_charts import legend_layout
+
+        _app = _application()
+        _kolommen, rijen = legend_layout(["Totaal"], QFontMetricsF(QFont("Segoe UI", 9)), 800)
+
+        # Ook bij één reeks staat de betekenis van de kleur er expliciet bij.
+        self.assertEqual(rijen, 1)
+        self.assertEqual(legend_layout([], QFontMetricsF(QFont("Segoe UI", 9)), 800), (0, 0))
+
+    def test_long_group_names_get_wider_columns(self):
+        """Opleidingsniveaus en profielen pasten niet in vier vaste kolommen."""
+        from PySide6.QtGui import QFont, QFontMetricsF
+
+        from emt_charts import legend_layout
+
+        _app = _application()
+        metrics = QFontMetricsF(QFont("Segoe UI", 9))
+        kort = legend_layout(["Mbo", "Hbo", "Wo", "Vmbo"], metrics, 800)
+        lang = legend_layout(
+            ["Mbo niveau 4 techniek", "Hbo bedrijfskunde en logistiek",
+             "Wetenschappelijk onderwijs", "Vmbo basisberoepsgerichte leerweg"],
+            metrics, 800,
+        )
+
+        self.assertEqual(kort[0], 4)
+        self.assertLess(lang[0], kort[0], "lange namen horen bredere kolommen te krijgen")
+        self.assertGreater(lang[1], kort[1])
+
+    def test_names_are_elided_instead_of_chopped(self):
+        """Afkappen op twintig tekens sneed woorden middendoor."""
+        self.assertIn("elidedText(str(group), Qt.TextElideMode.ElideRight", self.block)
+        self.assertNotIn("str(group)[:20]", self.block)
 
     def test_chart_area_is_large_enough_to_read(self):
-        self.assertIn("self.setMinimumHeight(360)", self.source)
+        self.assertIn("self.setMinimumHeight(180)", self.source)
+
+    def test_panel_resizes_charts_to_the_available_height(self):
+        self.assertIn("def resizeEvent(self, event):", self.source)
+        self.assertIn("tab_height = self.analysis_tabs.height()", self.source)
+        self.assertIn("self.table.setMaximumHeight", self.source)
 
 
 if __name__ == "__main__":

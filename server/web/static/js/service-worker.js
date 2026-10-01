@@ -1,4 +1,4 @@
-const CACHE = "eventhub-live-v21";
+const CACHE = "eventhub-live-v22";
 const ASSETS = ["/", "/static/css/style.css", "/static/js/app.js", "/static/js/connect.js",
   "/static/manifest.webmanifest", "/static/icons/eventhub-180.png", "/static/icons/eventhub-192.png",
   "/static/icons/eventhub-512.png", "/static/icons/eventhub-logo-transparent.png"];

@@ -3,11 +3,12 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+from server.tests.desktop_source import desktop_source
 
 
 class Version2152LayoutTests(unittest.TestCase):
     def test_sidebar_icons_are_cropped_and_centered_on_shared_canvas(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         self.assertIn("bounds = QRegion(source.mask()).boundingRect()", source)
         self.assertNotIn("source.mask().boundingRect()", source)
         self.assertIn("canvas_size = 44", source)
@@ -15,7 +16,7 @@ class Version2152LayoutTests(unittest.TestCase):
         self.assertIn("(pixel_canvas_size - glyph.height()) // 2", source)
 
     def test_compact_buttons_do_not_expand_horizontally(self):
-        source = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        source = desktop_source(ROOT)
         self.assertIn("QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed", source)
 
     def test_major_vertical_action_groups_use_compact_buttons(self):
@@ -26,7 +27,7 @@ class Version2152LayoutTests(unittest.TestCase):
         inmiddels menu's in plaats van knoppenrijen. Getoetst wordt nu dat het
         hulpmiddel bestaat en daadwerkelijk breed wordt toegepast.
         """
-        desktop = (ROOT / "bezoekerslijst_app.py").read_text(encoding="utf-8")
+        desktop = desktop_source(ROOT)
         self.assertIn("def _make_button_compact(", desktop)
         self.assertIn('_make_button_compact(QPushButton("5WH exporteren naar Word"))', desktop)
         self.assertGreaterEqual(

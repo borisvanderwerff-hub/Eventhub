@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-echo EventHub 2.20.1 bouwen en verpakken...
+echo EventHub bouwen en verpakken...
 call BUILD_EVENTHUB_WINDOWS.bat --no-start
 if errorlevel 1 exit /b 1
 
@@ -11,6 +11,7 @@ where ISCC.exe >nul 2>&1
 if not errorlevel 1 set "ISCC_PATH=ISCC.exe"
 if not defined ISCC_PATH if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC_PATH=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
 if not defined ISCC_PATH if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC_PATH=%ProgramFiles%\Inno Setup 6\ISCC.exe"
+if not defined ISCC_PATH if exist "%ProgramFiles%\Inno Setup 7\ISCC.exe" set "ISCC_PATH=%ProgramFiles%\Inno Setup 7\ISCC.exe"
 if not defined ISCC_PATH if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC_PATH=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 if not defined ISCC_PATH if exist "%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe" set "ISCC_PATH=%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe"
 
@@ -29,6 +30,6 @@ if errorlevel 1 (
 )
 
 echo.
-echo Klaar: installer\EventHub-Setup-v2.20.1.exe
+echo Klaar: de installer staat in de map installer.
 start "" "installer"
 pause

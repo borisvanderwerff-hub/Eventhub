@@ -14,14 +14,28 @@ from pathlib import Path
 
 APP_DATA_FOLDER_NAME = "EventHub Server"
 
+# Een expliciete uitwijk voor tests en beheerscripts. XDG_DATA_HOME werkt
+# alleen op Linux, waardoor testsessies op Windows gewoon in de echte map van
+# de gebruiker belandden: ruim drieduizend mappen en driehonderd megabyte
+# testrommel tussen de echte evenementen.
+DATA_ROOT_ENV = "EVENTHUB_SERVER_DATA"
+
 
 def application_data_root() -> Path:
     """Return (and create) the per-user application data root.
+
+    Staat EVENTHUB_SERVER_DATA gezet, dan geldt die map; dat is hoe de tests
+    zich buiten de gegevens van de gebruiker houden.
 
     Windows: %LOCALAPPDATA%\\EventHub Server
     macOS:   ~/Library/Application Support/EventHub Server
     Linux:   $XDG_DATA_HOME/EventHub Server or ~/.local/share/EventHub Server
     """
+    override = str(os.environ.get(DATA_ROOT_ENV, "") or "").strip()
+    if override:
+        root = Path(override)
+        root.mkdir(parents=True, exist_ok=True)
+        return root
     if sys.platform.startswith("win"):
         base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
         root = Path(base) / APP_DATA_FOLDER_NAME if base else Path.home() / APP_DATA_FOLDER_NAME

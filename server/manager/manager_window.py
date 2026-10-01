@@ -101,6 +101,7 @@ class ServerThread(threading.Thread):
 
 class ManagerWindow(QMainWindow):
     attendance_changed = Signal()
+    server_state_changed = Signal(bool)
 
     def __init__(self, session_result, parent=None):
         super().__init__(parent)
@@ -116,7 +117,7 @@ class ManagerWindow(QMainWindow):
         self._attendance_signature = None
         self.event_code = session_service.ensure_event_code(self.connection)
 
-        self.setWindowTitle("EventHub 2 • Event Control")
+        self.setWindowTitle("EventHub • Event Control")
         self.setMinimumSize(940, 680)
         self.resize(1120, 900)
         self.setStyleSheet(build_stylesheet(dark_mode=True))
@@ -216,7 +217,7 @@ class ManagerWindow(QMainWindow):
         connect_hint.setWordWrap(True)
         connect_text_layout.addWidget(connect_hint)
 
-        open_connect_button = _compact(QPushButton("Verbindpagina openen"))
+        open_connect_button = _compact(QPushButton("Verbinden als incheckpunt"))
         open_connect_button.setObjectName("secondaryButton")
         open_connect_button.clicked.connect(self.open_connect_page)
         connect_text_layout.addWidget(open_connect_button)
@@ -364,7 +365,7 @@ class ManagerWindow(QMainWindow):
         layout.addLayout(actions)
 
         footer = QHBoxLayout()
-        footer_version = QLabel("EventHub 2 • v2.24.2")
+        footer_version = QLabel("EventHub • 0.2.1 Beta")
         footer_version.setObjectName("footerLabel")
         footer.addWidget(footer_version)
         footer.addStretch(1)
@@ -638,10 +639,31 @@ class ManagerWindow(QMainWindow):
             self.statusBar().showMessage(message, 3000)
 
     # ---- server lifecycle -----------------------------------------------------
+    def _confirm_server_stop(self, closing: bool = False) -> bool:
+        online = client_service.online_client_count(self.connection, self.event_id) if self.connection else 0
+        action = "Serverbeheer afsluiten" if closing else "Server stoppen"
+        if online == 1:
+            detail = "Er is momenteel 1 verbonden apparaat. "
+        elif online > 1:
+            detail = f"Er zijn momenteel {online} verbonden apparaten. "
+        else:
+            detail = ""
+        message = (
+            f"{detail}Als je doorgaat worden alle verbonden clients afgemeld en moeten zij "
+            "opnieuw inloggen wanneer de server weer wordt gestart.\n\n"
+            f"Weet je zeker dat je wilt doorgaan met ‘{action}’?"
+        )
+        answer = QMessageBox.warning(
+            self, "Server stoppen?", message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def toggle_server(self):
         if self.server_thread is None:
             self.start_server()
-        else:
+        elif self._confirm_server_stop():
             self.stop_server()
 
     def start_server(self):
@@ -665,7 +687,12 @@ class ManagerWindow(QMainWindow):
         ip_address = network.local_ip_address()
         self.local_url = f"http://{ip_address}:{port}"
         session = session_service.get_session(self.connection) or {}
-        self.discovery_responder = network.HubDiscoveryResponder(port, session.get("name", "EventHub-sessie"))
+        self.discovery_responder = network.HubDiscoveryResponder(
+            port,
+            session.get("name", "EventHub-sessie"),
+            session.get("date", ""),
+            session.get("source_event_id", ""),
+        )
         self.discovery_responder.start()
         self.create_automatic_backup()
         self.connect_url_field.setText(self.local_url)
@@ -678,6 +705,7 @@ class ManagerWindow(QMainWindow):
             self.connect_url_field.setToolTip("Automatisch gekozen netwerkadres")
         self._render_qr(self.local_url)
         self.start_stop_button.setText("Server stoppen")
+        self.server_state_changed.emit(True)
         logger.info("Server gestart op %s", self.local_url)
         self.refresh_status()
 
@@ -697,6 +725,7 @@ class ManagerWindow(QMainWindow):
             self.server_thread.join(timeout=5)
             self.server_thread = None
         self.start_stop_button.setText("Server starten")
+        self.server_state_changed.emit(False)
         self.server_started_at = None
         # Expliciet wissen bij stoppen: een volgende start krijgt altijd een nieuwe timer.
         self.app.config["SERVER_STARTED_AT"] = None
@@ -707,6 +736,9 @@ class ManagerWindow(QMainWindow):
             self.refresh_status()
 
     def closeEvent(self, event):
+        if self.server_thread is not None and not self._confirm_server_stop(closing=True):
+            event.ignore()
+            return
         self._closing = True
         self.refresh_timer.stop()
         self.backup_timer.stop()
@@ -766,6 +798,7 @@ class ManagerWindow(QMainWindow):
 
     def export_participants(self):
         participants = participant_service.list_participants(self.connection, self.event_id, limit=5000)
+        participants = [p for p in participants if not p.get("temporary_walkin")]
         if not participants:
             QMessageBox.information(self, "Geen deelnemers", "Er zijn nog geen deelnemers om te exporteren.")
             return
@@ -893,7 +926,7 @@ class ConnectionsDialog(QDialog):
         layout = QVBoxLayout(self)
 
         self.table = QTableWidget()
-        headers = ["Naam", "Type", "IP", "Rol", "Status", "Laatste activiteit"]
+        headers = ["Naam", "Apparaat", "Rol", "Status", "Laatste activiteit"]
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -942,14 +975,14 @@ class ConnectionsDialog(QDialog):
         self.table.setRowCount(len(clients))
         for row_index, client in enumerate(clients):
             values = [
-                client["client_name"], client["client_type"] or "", client["ip_address"] or "",
+                client["client_name"], client["client_type"] or "Onbekend apparaat",
                 client["role"], "● online" if client["online"] else "○ offline", client["last_seen"],
             ]
             for column, value in enumerate(values):
                 item=QTableWidgetItem(str(value)); item.setData(Qt.ItemDataRole.UserRole,client["id"])
-                if column == 4 and client["online"]:
+                if column == 3 and client["online"]:
                     item.setBackground(QColor("#dcfce7")); item.setForeground(QColor("#166534"))
-                elif column == 4:
+                elif column == 3:
                     item.setBackground(QColor("#fee2e2")); item.setForeground(QColor("#991b1b"))
                 self.table.setItem(row_index,column,item)
             if client["id"] == selected_id:

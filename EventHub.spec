@@ -1,8 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_submodules
+import os
+import sys
+
+# Verzamel DLL's uit Python/Qt en Windows, niet uit toevallige tools op PATH.
+os.environ['PATH'] = os.pathsep.join([sys.base_prefix, os.path.join(os.environ['SystemRoot'], 'System32'), os.environ['SystemRoot']])
 
 hiddenimports = []
-hiddenimports += collect_submodules('server')
+hiddenimports += collect_submodules('server', filter=lambda name: name != 'server.tests' and not name.startswith('server.tests.'))
 
 
 a = Analysis(
@@ -14,7 +19,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['server.tests'],
     noarchive=False,
     optimize=0,
 )

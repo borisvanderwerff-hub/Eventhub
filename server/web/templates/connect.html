@@ -87,6 +87,14 @@
         <button id="connectButton" class="btn btn-primary">Verbinden</button>
     </section>
 
+
+    <section id="viewerWaitingCard" class="card viewer-waiting-card hidden" aria-live="polite">
+        <div class="viewer-waiting-icon" aria-hidden="true">⌛</div>
+        <h2>Wachten op rollentoewijzing</h2>
+        <p>Je bent verbonden met de live sessie.</p>
+        <p class="hint">Een beheerder of eventmanager wijst je eerst een rol toe. Zodra dat gebeurt, opent het juiste werkscherm automatisch.</p>
+    </section>
+
     <nav id="managerTabs" class="manager-tabs hidden" aria-label="Werkgebied kiezen">
         <button id="managementTabButton" class="manager-tab active" type="button" aria-selected="true">Sessiebeheer</button>
         <button id="participantsTabButton" class="manager-tab" type="button" aria-selected="false">Deelnemer zoeken</button>
@@ -95,7 +103,10 @@
     <section id="checkinCard" class="card hidden">
         <div id="freezeBanner" class="freeze-banner hidden">⏸ Inchecken tijdelijk gepauzeerd</div>
         <div id="stopBanner" class="stop-banner hidden">⛔ Inchecken is beëindigd door de beheerder</div>
-        <h2>Deelnemer zoeken</h2>
+        <div class="participant-heading">
+            <h2>Deelnemer zoeken</h2>
+            <button id="addWalkinButton" class="btn btn-secondary hidden" type="button">+ Niet-aangemelde deelnemer</button>
+        </div>
         <input id="searchInput" type="search" placeholder="Naam, geboortedatum of geboorteplaats" autocomplete="off">
         <div id="rosterShell" class="roster-shell hand-right">
             <ul id="resultsList" class="results-list"></ul>
@@ -156,6 +167,23 @@
         <input id="emergencySearch" type="search" placeholder="Zoeken op naam of geboortegegevens" autocomplete="off">
         <ul id="emergencyList" class="emergency-list"></ul>
     </section>
+
+
+    <div id="walkinModal" class="event-modal hidden" role="dialog" aria-modal="true" aria-labelledby="walkinModalTitle">
+        <div class="event-modal-card walkin-modal-card">
+            <h2 id="walkinModalTitle">Niet-aangemelde deelnemer</h2>
+            <p class="hint">Deze registratie is alleen voor de live sessie en wordt niet meegenomen in de normale deelnemers-export.</p>
+            <label for="walkinName">Naam</label>
+            <input id="walkinName" type="text" maxlength="160" autocomplete="off" placeholder="Voor- en achternaam">
+            <label for="walkinPhone">Telefoonnummer</label>
+            <input id="walkinPhone" type="text" maxlength="40" inputmode="tel" autocomplete="off" placeholder="06 ...">
+            <p id="walkinMessage" class="settings-message"></p>
+            <div class="walkin-actions">
+                <button id="walkinCancel" class="btn btn-secondary" type="button">Annuleren</button>
+                <button id="walkinSave" class="btn btn-primary" type="button">Toevoegen &amp; inchecken</button>
+            </div>
+        </div>
+    </div>
 
     <div id="stopModal" class="event-modal hidden" role="dialog" aria-modal="true" aria-labelledby="stopModalTitle">
         <div class="event-modal-card">

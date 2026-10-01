@@ -57,6 +57,8 @@ def export_participants_workbook(participants: list[dict], event: dict | None, o
 
     row_count = 0
     for participant in participants:
+        if participant.get("temporary_walkin"):
+            continue
         row_values = []
         for _, field, _ in columns:
             value = participant.get(field, "")
