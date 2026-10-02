@@ -13,8 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-GITHUB_RELEASES_API = "https://api.github.com/repos/borisvanderwerff-hub/Eventhub/releases?per_page=30"
-GITHUB_RELEASES_PAGE = "https://github.com/borisvanderwerff-hub/Eventhub/releases"
+GITHUB_RELEASES_API = "https://api.github.com/repos/borisvanderwerff-hub/eventhubrelease/releases?per_page=30"
+GITHUB_RELEASES_PAGE = "https://github.com/borisvanderwerff-hub/eventhubrelease/releases"
 MAX_INSTALLER_SIZE = 2 * 1024 * 1024 * 1024
 _VERSION_PATTERN = re.compile(
     r"^[vV]?(\d+(?:\.\d+)*)(?:[- ]?(alpha|beta|rc)(?:[. -]?(\d+))?)?$",

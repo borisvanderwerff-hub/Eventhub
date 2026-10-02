@@ -19,12 +19,13 @@ De versie en uitvoernaam staan in `EventHub_Installer.iss`.
 
 ## Updates via GitHub Releases
 
-- `emt_updater.py` controleert de openbare releases van `borisvanderwerff-hub/Eventhub`.
+- `emt_updater.py` controleert de openbare releases van `borisvanderwerff-hub/eventhubrelease`. Deze repository bevat alleen releasebestanden en geen EventHub-broncode.
 - Tijdens het opstartscherm wordt de controle uitgevoerd; een netwerkstoring houdt EventHub niet tegen. Een gevonden update wordt daar eerst aangeboden; na negeren verschijnt de kleine melding onderin EventHub.
 - Plaats per release één installer met een naam die begint met `EventHub-Setup` en eindigt op `.exe`. De versie in de GitHub-tag moet hoger zijn dan `APP_VERSION` in `emt_base.py`.
 - Voor de huidige bètaversie `0.2.4 Beta` hoort bijvoorbeeld de tag `v0.2.4-beta` bij de installer `EventHub-Setup-v0.2.4 Beta.exe`.
 - De updater toont alleen releases waarvan de GitHub API een SHA-256-digest voor de installer opgeeft. De download wordt volledig gecontroleerd vóór die kan worden gestart.
 - De gebruiker kiest tijdens het opstarten of de update direct wordt geïnstalleerd of genegeerd. Na negeren kan de update via de klikbare melding onderin worden gestart of verborgen; **Over EventHub** toont de beschikbare versie.
+- De eerste versie met deze updatebron moet ook als overgangsupdate in de oude openbare `Eventhub`-repository worden aangeboden, zodat bestaande installaties hem kunnen vinden. Zodra de testers zijn overgestapt, kunnen toekomstige releases alleen in `eventhubrelease` worden gepubliceerd.
 - Een update is alleen beschikbaar op Windows. De installatiemap blijft `{localappdata}\Programs\EventHub`; EventHub- en gebruikersbestanden staan daarbuiten.
 
 Voor een diagnostische serverbuild kan tijdelijk `EVENTHUB_BUILD_CONSOLE=1`
