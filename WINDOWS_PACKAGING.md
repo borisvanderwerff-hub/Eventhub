@@ -25,7 +25,7 @@ De versie en uitvoernaam staan in `EventHub_Installer.iss`.
 - Voor de huidige bètaversie `0.2.4 Beta` hoort bijvoorbeeld de tag `v0.2.4-beta` bij de installer `EventHub-Setup-v0.2.4 Beta.exe`.
 - De updater toont alleen releases waarvan de GitHub API een SHA-256-digest voor de installer opgeeft. De download wordt volledig gecontroleerd vóór die kan worden gestart.
 - De gebruiker kiest tijdens het opstarten of de update direct wordt geïnstalleerd of genegeerd. Na negeren kan de update via de klikbare melding onderin worden gestart of verborgen; **Over EventHub** toont de beschikbare versie.
-- De eerste versie met deze updatebron moet ook als overgangsupdate in de oude openbare `Eventhub`-repository worden aangeboden, zodat bestaande installaties hem kunnen vinden. Zodra de testers zijn overgestapt, kunnen toekomstige releases alleen in `eventhubrelease` worden gepubliceerd.
+- Bestaande installaties controleren nog de oude `Eventhub`-repository en vinden releases in `eventhubrelease` niet automatisch. Om geen broncode-release meer in de oude repository te publiceren, verspreid je de eerste installer uit `eventhubrelease` één keer handmatig onder de testers. Daarna controleren die installaties toekomstige updates via `eventhubrelease`.
 - Een update is alleen beschikbaar op Windows. De installatiemap blijft `{localappdata}\Programs\EventHub`; EventHub- en gebruikersbestanden staan daarbuiten.
 
 Voor een diagnostische serverbuild kan tijdelijk `EVENTHUB_BUILD_CONSOLE=1`
