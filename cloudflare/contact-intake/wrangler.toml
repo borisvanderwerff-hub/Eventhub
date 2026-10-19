@@ -1,0 +1,13 @@
+name = "cohentra-contact-intake"
+main = "worker.js"
+compatibility_date = "2026-10-02"
+workers_dev = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "eventhub-licenses"
+database_id = "68ffa97d-1965-4401-9ed4-89f34bb51629"
+
+[[routes]]
+pattern = "contact-api.cohentra.digital"
+custom_domain = true

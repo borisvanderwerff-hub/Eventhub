@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.v1.wrangler.com/config.schema.json",
+  "name": "eventhub-licenses",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-02",
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "triggers": { "crons": ["0 6 * * *"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "eventhub-licenses",
+      "database_id": "68ffa97d-1965-4401-9ed4-89f34bb51629"
+    }
+  ],
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": ["noreply@noreply.cohentra.digital"]
+    }
+  ]
+}
