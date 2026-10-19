@@ -1,0 +1,67 @@
+# EventHub licentievoorziening
+
+Deze Cloudflare Worker bevat de licentie-API en de Cohentra Admin-browseromgeving. D1 bewaart alleen een SHA-256-hash van licentiesleutels, optionele herkenningstekst, geldigheidsdata en intrekkingsdatum. De leesbare sleutel wordt uitsluitend getoond op het moment dat een licentie wordt aangemaakt.
+
+## Cloudflare-resources
+
+- Worker: `eventhub-licenses`
+- Beheerpagina: `https://eventhub-licenses.eventhub-license.workers.dev/`
+- Cohentra Admin: `https://admin.cohentra.digital/`
+- Klantenportaal: `https://customer.cohentra.digital/`
+- Support inbox: `https://support.cohentra.digital/` (Cohentra-supportaccount met MFA vereist)
+- Validatie-endpoint: `https://eventhub-licenses.eventhub-license.workers.dev/api/validate`
+- D1-database: `eventhub-licenses` (EU-jurisdiction)
+- Eenmalige installatiesleutel: Worker Secret `ADMIN_TOKEN`; alleen nodig om het eerste beheerdersaccount en de eerste authenticator in te stellen.
+- Versleuteling van authenticatorgeheimen: Worker Secret `MFA_ENCRYPTION_KEY`; stel een willekeurige sleutel van minimaal 32 tekens in en bewaar een veilige reservekopie. Verlies of vervanging van deze sleutel maakt opgeslagen authenticatorgeheimen onleesbaar.
+
+## Beheer
+
+Open de beheerpagina en stel de eerste Cohentra-beheerder eenmalig in met `ADMIN_TOKEN`, een gebruikersnaam, een wachtwoord en Google Authenticator. De koppeling toont een lokaal gegenereerde QR-code en een handmatige sleutel als alternatief. Daarna doorloop je twee aanmeldstappen: eerst gebruikersnaam en wachtwoord, dan de authenticatorcode of een herstelcode. De zes cijfers worden als `XXX-XXX` ingevoerd. Er zijn geen wachtwoordcomplexiteits- of minimumlengte-eisen. Sessies verlopen na 12 uur; na vijf mislukte pogingen wordt die account 15 minuten geblokkeerd. Herstelcodes werken één keer en worden alleen gehasht opgeslagen. De Worker-secret `MFA_ENCRYPTION_KEY` is nodig om authenticatorgeheimen versleuteld in D1 op te slaan.
+
+Wachtwoorden worden met PBKDF2-HMAC-SHA-256 en een unieke salt gehasht. De Worker gebruikt 100.000 iteraties omdat Cloudflare Workers Web Crypto hogere waarden weigert.
+
+Vanuit Cohentra Admin kun je klantaccounts aanmaken en beheren, per klant instellen hoeveel EventHub-licenties tegelijk geldig mogen zijn, en bepalen of `Gesloten beta` en/of `Beheerder` is toegestaan. Een klant kan worden gepauzeerd; gekoppelde klantlicenties valideren dan niet totdat de toegang wordt hervat.
+
+### Klantenportaal
+
+Het klantenportaal draait in dezelfde Worker op `customer.cohentra.digital`; Cohentra Admin blijft beschikbaar op `admin.cohentra.digital`. Bij het aanmaken van een klant kun je **Direct een klantenportaalaccount instellen** aanvinken, het klant-e-mailadres als gebruikersnaam gebruiken en een tijdelijk wachtwoord invullen. De gegevens worden na het opslaan eenmalig in Cohentra Admin getoond. Bij bestaande klanten kun je met **Portaalaccount maken** of **Toegang vernieuwen** later een tijdelijk wachtwoord instellen of vervangen. Het wachtwoord wordt gehasht opgeslagen; bij vernieuwen worden eerdere portaal-sessies ingetrokken. Deel het tijdelijke wachtwoord via een veilig kanaal; de klant kan het na de eerste aanmelding zelf wijzigen.
+
+Een klant kan alleen de eigen licenties inzien, aanmaken binnen de toegewezen quota en toegestane typen, intrekken, en het wachtwoord wijzigen. Volledige licentiesleutels worden alleen eenmalig na het aanmaken getoond. Sessies verlopen na 12 uur. Een gepauzeerde klant kan niet aanmelden en diens klantlicenties valideren niet. Het portaal gebruikt geen externe scripts of opslag in de browser buiten de tijdelijke sessietoken in `sessionStorage`.
+
+Het portaal bevat een ticketformulier. Na indienen maakt de Worker een supportticket aan en toont een referentie zoals `CH-2026-...`; de klant ziet het ticket en de actuele status onder **Mijn supportaanvragen**. Per klantaccount zijn maximaal tien tickets per 24 uur toegestaan. De beveiligde inbox op `support.cohentra.digital` is alleen toegankelijk voor Cohentra-eigenaar/supportaccounts en vereist de bestaande MFA-aanmelding. Support kan de status wijzigen naar `Nieuw`, `In behandeling`, `Wacht op klant` of `Afgerond`. Als de SMTP-geheimen zijn ingesteld, verstuurt de Worker via de STRATO-mailbox een melding naar `support@cohentra.digital` en een ontvangstbevestiging naar het e-mailadres van de klant. De bevestiging bevat het ticketreferentienummer; de supportmelding heeft de klant als reply-to. Ontbrekende SMTP-instellingen of een verzendfout voorkomen niet dat het ticket wordt opgeslagen.
+
+Voor ticketmeldingen gebruikt de Worker STRATO SMTP op `smtp.strato.de:465` met TLS. Stel in Worker Settings → Variables and Secrets de geheimen `STRATO_SMTP_USER` in op `noreply@cohentra.digital` en `STRATO_SMTP_PASSWORD` op het wachtwoord van die STRATO-mailbox. De `noreply@cohentra.digital`-mailbox moet bestaan en SMTP-toegang hebben. Zet wachtwoorden nooit in `wrangler.jsonc` of broncode. De ontvanger van de melding staat vast ingesteld op `support@cohentra.digital`; de ontvangstbevestiging gaat naar het e-mailadres van de klant.
+
+De klant kan deze URL gebruiken: `https://customer.cohentra.digital/`. In Cloudflare Worker Domains moeten `admin.cohentra.digital`, `customer.cohentra.digital` en `support.cohentra.digital` naar Worker `eventhub-licenses` wijzen. De D1-tabellen voor accounts en sessies staan in migratie `0008_customer_portal.sql`; tickets staan in `0009_support_tickets.sql`.
+
+De Cohentra-beheerder kan persoonlijke supportaccounts aanmaken en intrekken. Bij het aanmaken worden gebruikersnaam, een automatisch gegenereerd tijdelijk wachtwoord, TOTP-sleutel en herstelcodes eenmalig getoond. Na de normale MFA-aanmelding moet de supportmedewerker eerst het tijdelijke wachtwoord vervangen; tot dat lukt kan de medewerker de inbox/API niet gebruiken. Na het wijzigen wordt het tijdelijke wachtwoord ongeldig en worden andere sessies ingetrokken. Een supportmedewerker kan een later wachtwoord wijzigen via het tandwiel rechtsboven in de supportinbox; het formulier blijft verborgen tot **Instellingen** wordt geopend. Support kan klanten en licenties bekijken en namens een klant licenties aanmaken; support kan klantlimieten of supporttoegang niet wijzigen. Een verloren account wordt ingetrokken en opnieuw aangemaakt.
+
+Je kunt groepen aanmaken, bijvoorbeeld `Beheerders` en `Testgebruikers`, en bij het uitgeven van licenties een groep selecteren. Groepen kunnen later worden hernoemd of verwijderd; bij verwijderen blijven de licenties bestaan onder `Geen groep`. Het licentieoverzicht groepeert licenties in inklapbare secties. Selecteer één of meer licenties met de selectievakjes en kies boven de lijst de doelgroep om ze tegelijk te verplaatsen. Bestaande licenties blijven zonder groep totdat je ze indeelt. Je kunt maximaal 100 sleutels tegelijk aanmaken, met een optionele naam, begindatum en einddatum. De einddatum is inclusief. Beheerderslicenties zijn onbeperkt geldig. De volledige sleutels worden eenmalig getoond; kopieer ze meteen en deel ze alleen met de bedoelde gebruikers. Een licentie kan later worden ingetrokken.
+
+Bij de eerste controle koppelt EventHub een licentie aan één lokaal gebruikersprofiel. De activatiedatum en het laatste online gebruik staan in het overzicht. Omdat EventHub ook offline kan starten, wordt de laatste activiteitsdatum bijgewerkt zodra de app weer online controleert. Je kunt de herkenningsnaam van een actieve licentie later wijzigen. Bij overstap naar een ander profiel of een nieuwe installatie kan de beheerder via `Reset client` de activatie vrijmaken.
+
+De applicatie controleert de licentie online bij iedere start. Na een geslaagde controle bewaart EventHub maximaal 7 dagen een met Windows DPAPI versleutelde bevestiging voor hetzelfde Windows-account en EventHub-profiel. Die periode wordt begrensd door de licentie-einddatum. Een expliciete online afwijzing (bijvoorbeeld ingetrokken of verlopen) wist de offline bevestiging.
+
+## API
+
+- `POST /api/validate` met JSON `{ "license_key": "EH-...", "device_id": "<UUID>" }`; koppelt een nieuwe licentie aan het EventHub-profiel en retourneert type, geldigheid en servertijd. 0.3.0-clients zonder `device_id` blijven werken tot een licentie aan een nieuw profiel is gekoppeld.
+- `POST /api/auth/login` accepteert `{ "username", "password", "mfa_code" }` of een `recovery_code`; geeft een 12-uursessietoken terug.
+- `POST /api/auth/mfa/setup` en `/api/auth/mfa/confirm` zijn alleen voor de eenmalige inrichting van de Cohentra-beheerder met `ADMIN_TOKEN`.
+- `POST /api/auth/logout` trekt de huidige sessie in.
+- `GET /api/admin/licenses` vereist `Authorization: Bearer <sessietoken>`; geeft licentieoverzicht zonder sleutels terug.
+- `GET /api/admin/me` geeft de rol van de geauthenticeerde beheerder/supportmedewerker terug.
+- `GET /api/admin/customers`, `POST /api/admin/customers` en `PATCH /api/admin/customers/<id>` beheren klantgegevens en EventHub-productrechten. `POST /api/admin/customers/<id>/pause|resume` pauzeert of hervat klanttoegang.
+- `POST /api/admin/customers/<id>/portal-account` maakt een account met tijdelijk wachtwoord aan of vernieuwt de inloggegevens (alleen eigenaar; vereist een geldig klant-e-mailadres).
+- `POST /api/customer/auth/login|logout` meldt een klant aan of trekt diens sessie in. De overige `/api/customer/*`-routes vereisen een klantbearertoken en zijn automatisch beperkt tot de bijbehorende klant.
+- `GET /api/customer/me` en `GET /api/customer/licenses` geven klant- en licentiegegevens terug. `POST /api/customer/licenses` maakt één licentie aan en `POST /api/customer/licenses/<id>/revoke` trekt alleen een eigen licentie in.
+- `POST /api/customer/account/password` wijzigt het eigen wachtwoord; andere bestaande sessies worden ingetrokken.
+- `GET/POST /api/customer/tickets` lijst eigen tickets en maakt een ticket aan met een uniek referentienummer.
+- `GET /api/support/tickets` en `PATCH /api/support/tickets/<id>` vereisen een Cohentra-supportsessie en beheren de supportinbox/status.
+- `GET/POST /api/admin/staff` beheert persoonlijke supportaccounts. `POST /api/admin/staff/<id>/revoke` trekt een account en sessies in.
+- `POST /api/admin/licenses` accepteert ook `count` (1–100), `license_type` (`beta` of `admin`) en optioneel `customer_id`; klantquota en toegestane typen worden server-side gecontroleerd.
+- `POST /api/admin/groups` maakt een groep aan; `PATCH` en `DELETE /api/admin/groups/<id>` hernoemen of verwijderen een groep.
+- `POST /api/admin/licenses/<id>/group` wijzigt de groepsindeling van een bestaande licentie. Een lege `group_id` haalt de licentie uit de groep.
+- `POST /api/admin/licenses/<id>/revoke`; trekt een sleutel in.
+- `POST /api/admin/licenses/<id>/reset-activation`; maakt een licentie opnieuw beschikbaar voor een client.
+
+Migraties 0001–0009 zijn toegepast op de productie-D1-database. Pas voor de eerste publicatie met de tijdelijke wachtwoordflow ook migratie `0010_staff_temporary_passwords.sql` toe; deze voegt de vlag voor verplichte eerste wachtwoordwijziging en de beperkte wachtwoordsessie toe. Voor een volgende deploy stel je Worker Secrets in via Cloudflare Dashboard → Worker → Settings → Variables and Secrets, of met `npx wrangler secret put ADMIN_TOKEN` en `npx wrangler secret put MFA_ENCRYPTION_KEY`. Genereer voor `MFA_ENCRYPTION_KEY` een willekeurige waarde van minimaal 32 tekens en bewaar die veilig. `wrangler.jsonc` bevat alleen Worker- en databasebindingen.
