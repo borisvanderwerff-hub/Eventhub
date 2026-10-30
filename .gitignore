@@ -7,3 +7,6 @@ __pycache__/
 *.log
 *.db
 *.bvp
+
+# Lokale Wrangler-cache
+.wrangler/

@@ -3,6 +3,9 @@
   "name": "eventhub-licenses",
   "main": "worker.js",
   "compatibility_date": "2026-10-02",
+  // De licentiecontrole van EventHub gebruikt het workers.dev-adres; preview-URL's staan live uit.
+  "workers_dev": true,
+  "preview_urls": false,
   "observability": { "enabled": true, "head_sampling_rate": 1 },
   "triggers": { "crons": ["0 6 * * *"] },
   "d1_databases": [
@@ -17,6 +20,11 @@
       "binding": "STAFF_AVATARS",
       "bucket_name": "cohentra-staff-avatars"
     }
+  ],
+  // Shop, betalingen en downloads draaien in de aparte worker cohentra-shop (map ../shop-worker).
+  // RPC via deze binding is niet vanaf internet bereikbaar; deze worker geeft alleen gecontroleerde klanten/medewerkers door.
+  "services": [
+    { "binding": "SHOP", "service": "cohentra-shop", "entrypoint": "ShopService" }
   ],
   "send_email": [
     {

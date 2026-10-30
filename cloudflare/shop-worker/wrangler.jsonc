@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.v1.wrangler.com/config.schema.json",
+  "name": "cohentra-shop",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-02",
+  "workers_dev": false,
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "routes": [{ "pattern": "shop-api.cohentra.digital", "custom_domain": true }],
+  // Dezelfde D1-database als de licentie-worker: één klantadministratie.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "eventhub-licenses", "database_id": "68ffa97d-1965-4401-9ed4-89f34bb51629" }
+  ],
+  // Privé bucket: productafbeeldingen (via /shop-media) en downloadbestanden (alleen via tijdelijke links).
+  "r2_buckets": [{ "binding": "PRODUCT_FILES", "bucket_name": "cohentra-product-files" }],
+  "vars": {
+    "PUBLIC_CUSTOMER_URL": "https://customer.cohentra.digital",
+    "PUBLIC_SHOP_API_URL": "https://shop-api.cohentra.digital",
+    // Pas op true zetten als prijzen, voorwaarden en Stripe-instellingen zijn goedgekeurd.
+    "SHOP_CHECKOUT_ENABLED": "false",
+    "STRIPE_ALLOW_LIVE": "false"
+  }
+  // Secrets (niet in dit bestand): STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET; optioneel STRIPE_PORTAL_CONFIGURATION_ID.
+  // Open zakelijke keuzes als var: SHOP_GRACE_DAYS, SHOP_UPGRADE_PRORATION, SHOP_DOWNGRADE_TIMING, STRIPE_AUTOMATIC_TAX, STRIPE_REQUIRE_TERMS.
+}
