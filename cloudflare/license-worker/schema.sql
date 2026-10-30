@@ -86,7 +86,10 @@ CREATE TABLE IF NOT EXISTS staff_access_tokens (
   username TEXT COLLATE NOCASE,
   password_salt TEXT,
   password_hash TEXT,
-  must_change_password INTEGER NOT NULL DEFAULT 0 CHECK (must_change_password IN (0, 1))
+  email TEXT,
+  invitation_sent_at TEXT,
+  must_change_password INTEGER NOT NULL DEFAULT 0 CHECK (must_change_password IN (0, 1)),
+  avatar_key TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_staff_access_tokens_active ON staff_access_tokens(token_hash, revoked_at);
@@ -102,7 +105,8 @@ CREATE TABLE IF NOT EXISTS owner_mfa (
   enrolled_at TEXT,
   username TEXT COLLATE NOCASE UNIQUE,
   password_salt TEXT,
-  password_hash TEXT
+  password_hash TEXT,
+  avatar_key TEXT
 );
 
 CREATE TABLE IF NOT EXISTS staff_sessions (
@@ -199,7 +203,8 @@ CREATE TABLE IF NOT EXISTS support_ticket_messages (
   created_at TEXT NOT NULL,
   sent_at TEXT,
   external_message_id TEXT,
-  is_internal INTEGER NOT NULL DEFAULT 0
+  is_internal INTEGER NOT NULL DEFAULT 0,
+  author_staff_id TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_support_ticket_messages_external_id
   ON support_ticket_messages(external_message_id)
@@ -220,3 +225,16 @@ CREATE TABLE IF NOT EXISTS email_template_settings (
   updated_at TEXT NOT NULL,
   updated_by TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS support_mail_sync_issues (
+  id TEXT PRIMARY KEY,
+  mailbox TEXT NOT NULL,
+  uid_validity TEXT NOT NULL,
+  uid INTEGER NOT NULL,
+  subject TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT,
+  UNIQUE(mailbox, uid_validity, uid)
+);
+CREATE INDEX IF NOT EXISTS idx_support_mail_sync_issues_unresolved
+  ON support_mail_sync_issues(mailbox, resolved_at, created_at);

@@ -12,6 +12,12 @@
       "database_id": "68ffa97d-1965-4401-9ed4-89f34bb51629"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "STAFF_AVATARS",
+      "bucket_name": "cohentra-staff-avatars"
+    }
+  ],
   "send_email": [
     {
       "name": "EMAIL",

@@ -181,3 +181,64 @@
 @media(max-width:720px){.contact-card{padding:24px}.contact-dialog{padding:12px}.contact-dialog-panel{max-height:calc(100dvh - 24px);padding:23px 18px;border-radius:15px}.contact-dialog-head{gap:12px}.contact-dialog-head h2{font-size:clamp(35px,9vw,48px)}.contact-dialog .contact-form-grid{grid-template-columns:1fr;gap:15px}.contact-dialog .contact-field,.contact-dialog .contact-field-wide{grid-column:1}.contact-dialog .contact-field input,.contact-dialog .contact-field select,.contact-dialog .contact-field textarea{font-size:16px}.contact-dialog .contact-form-footer{align-items:flex-start;flex-direction:column;gap:14px}.contact-dialog .contact-form-footer .button{min-height:47px}}
 @media(max-height:700px){.contact-dialog-panel{max-height:calc(100dvh - 16px);padding-top:19px;padding-bottom:19px}.contact-dialog .contact-form{margin-top:17px}.contact-dialog .contact-form-grid{gap:12px 15px}.contact-dialog .contact-field input,.contact-dialog .contact-field select{min-height:40px;padding-top:8px;padding-bottom:8px}.contact-dialog .contact-field textarea{min-height:85px}}
 @media(prefers-reduced-motion:reduce){.contact-dialog::backdrop,.contact-dialog-panel{animation:none}}
+
+/* Huisstijl 2026: licht, navy en blauw, zonder paars of cyaan. Overschrijft de oudere donkere stijl hierboven. */
+:root{color-scheme:light;--bg:#f6f8fc;--surface:#fff;--panel:#fff;--ink:#121e36;--muted:#5f6b78;--soft:#8994a3;--line:#dbe3ee;--navy:#121e36;--blue:#2d64d4;--blue-deep:#2252b5;--tint:#eaf0fb;--grad:linear-gradient(100deg,#1b3378 0%,#2d64d4 55%,#4f86f0 100%)}
+body{background:var(--bg);color:var(--ink)}
+.brand-logo{display:block;height:40px;width:auto}.footer-brand .brand-logo{height:30px}
+.topbar nav{color:var(--muted)}.topbar nav a:hover{color:var(--ink)}.nav-contact{border-color:var(--line);background:rgba(255,255,255,.7);color:var(--ink)!important}.nav-contact span{color:var(--blue)}
+.hero{background:radial-gradient(ellipse at 74% 48%,rgba(45,100,212,.11),transparent 42%),linear-gradient(180deg,#f8faff 0%,#f3f6fc 100%)}.hero:after{opacity:.55;background-image:radial-gradient(rgba(45,100,212,.32) .7px,transparent .7px)}
+.eyebrow{color:#3a4860}.eyebrow-dot{background:var(--blue);box-shadow:0 0 0 4px rgba(45,100,212,.14)}
+.hero h1 span,.section h2 em,.eventhub-hero h1 span{background:var(--grad);color:transparent;-webkit-background-clip:text;background-clip:text}
+.hero-intro{color:var(--muted)}
+.button-primary{background:var(--blue);color:#fff;box-shadow:0 10px 28px rgba(45,100,212,.25)}.button-primary:hover{background:var(--blue-deep)}
+.text-link{color:var(--ink)}.text-link span,.product-detail-link span{color:var(--blue)}
+/* Beeldmerk zonder kader, met een rustige zeshoek eromheen. */
+.hero-art:before{width:70%;height:70%;background:radial-gradient(circle,rgba(45,100,212,.2),rgba(45,100,212,.06) 45%,transparent 70%);filter:blur(30px);transform:none}
+.hero-hex{position:absolute;width:min(92%,560px);height:auto;overflow:visible}.hero-hex polygon{fill:none;stroke:rgba(45,100,212,.2);stroke-width:1}.hero-hex .hex-outer{stroke:rgba(18,30,54,.1);stroke-dasharray:3 7}
+.hero-mark{position:relative;z-index:2;width:min(58%,330px);height:auto;filter:drop-shadow(0 28px 40px rgba(27,51,120,.22));animation:mark-float 7s ease-in-out infinite}
+@keyframes mark-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+.art-caption{color:var(--soft)}.art-caption i{background:linear-gradient(90deg,rgba(45,100,212,.5),rgba(45,100,212,.08))}
+.scroll-cue{color:var(--soft)}.scroll-line{background:#b9c4d6}.scroll-arrow,.chapter-next span{color:var(--blue)}
+.section-kicker{color:var(--soft)}.section-kicker span:first-child{color:var(--blue)}.section-kicker i{background:var(--blue);opacity:.45}
+.intro{background:#fff}.eyebrow.muted{color:#66727e}.intro-text,.intro-foot{color:var(--muted)}.thin-rule{background:linear-gradient(90deg,rgba(45,100,212,.04),rgba(45,100,212,.55),rgba(45,100,212,.04))}.foot-index{color:var(--soft)}
+.product-section{background:var(--bg)}.product-heading>p:last-child,.product-scene-copy>p:last-child{color:var(--muted)}.product-scene-copy h3 em,.product-workflow-intro h3 em{color:var(--blue)}
+.product-screen,.eventhub-hero-screen,.feature-screen,.chapter-mobile-screen{border:1px solid #cfd8e6;background:#fff;box-shadow:0 24px 60px rgba(18,30,54,.14),0 2px 6px rgba(18,30,54,.06)}
+.product-screen figcaption,.eventhub-hero-screen figcaption,.feature-screen figcaption,.chapter-mobile-screen figcaption{background:#fff;color:var(--muted);border-top:1px solid var(--line)}
+.product-foot{color:var(--muted)}.product-foot strong{color:var(--ink)}.round-link{border-color:var(--line);background:#fff}.round-link span{background:none;color:var(--blue)}
+.websites-section{background:#fff}.websites-intro,.websites-benefits small,.websites-actions>span{color:var(--muted)}.websites-benefits li>span{color:var(--blue)}.websites-benefits strong{color:var(--ink)}
+.websites-glow{background:radial-gradient(ellipse,rgba(45,100,212,.16),rgba(45,100,212,.05) 46%,transparent 72%)}
+.web-browser{border-color:#cfd8e6;background:#fff;box-shadow:0 30px 70px rgba(18,30,54,.16)}.web-browser-bar{background:#f1f4f9;border-bottom-color:var(--line)}.web-browser-bar>span,.web-browser-bar>span:nth-child(2),.web-browser-bar>span:nth-child(3){background:#cdd6e3}.web-browser-bar i{border-color:var(--line);background:#fff;color:var(--soft)}.web-browser-bar b{color:var(--soft)}
+.web-browser-content{background:radial-gradient(ellipse at 74% 60%,rgba(45,100,212,.12),transparent 50%),linear-gradient(130deg,#fff,#f3f6fc)}.web-browser-nav{color:var(--muted)}.web-browser-nav strong,.web-phone-brand{color:var(--ink)}.web-browser-hero small,.web-phone>small{color:var(--blue)}.web-browser-hero>i,.web-phone>i{color:var(--muted)}
+.web-browser-hero em,.web-phone em{background:var(--grad);color:transparent;-webkit-background-clip:text;background-clip:text}.web-browser-hero>span,.web-phone>span{background:var(--blue);color:#fff}.web-browser-foot{color:var(--soft)}.web-browser-foot i{background:var(--blue);opacity:.5}
+.web-phone{border-color:#1d2a45;background:radial-gradient(ellipse at 70% 60%,rgba(45,100,212,.12),transparent 55%),#fff;box-shadow:0 22px 50px rgba(18,30,54,.22)}.web-phone-camera{background:#1d2a45}.web-phone-brand span{color:var(--blue)}
+.websites-caption{color:var(--muted)}.websites-caption span{background:var(--blue);box-shadow:0 0 0 4px rgba(45,100,212,.14)}
+.approach{background:var(--bg)}.approach-step>span{color:var(--blue)}.approach-step p{color:var(--muted)}.approach-step>i{color:var(--soft)}
+/* Maatwerk: licht met een zachte blauwe tint, zodat het blok zich onderscheidt zonder donker te worden. */
+.future-section{background:radial-gradient(ellipse at 72% 55%,rgba(45,100,212,.16),transparent 48%),linear-gradient(180deg,#eef3fc,#e5ecf9);color:var(--ink)}.future-glow{background:radial-gradient(ellipse,rgba(79,134,240,.2),rgba(45,100,212,.06) 46%,transparent 70%)}
+.future-content .eyebrow{color:#3a4860}.future-content>p:not(.eyebrow){color:var(--muted)}
+.button-light{background:var(--blue);color:#fff;box-shadow:0 10px 28px rgba(45,100,212,.25)}.button-light:hover{background:var(--blue-deep)}.button-light span{color:#fff}
+.future-mark{border-color:rgba(45,100,212,.22);color:var(--muted)}.future-mark:before{border-color:rgba(45,100,212,.13)}.future-mark:after{border-color:rgba(45,100,212,.08)}.future-mark small{color:var(--soft)}
+.contact,.eventhub-contact{background:var(--bg)}.contact-intro,.contact-direct,.contact-bottom{color:var(--muted)}.contact-direct a,.contact-email{color:var(--ink);border-bottom-color:rgba(45,100,212,.45)}.contact-direct a span,.contact-email span,.to-top span{color:var(--blue)}.contact-bottom{border-top-color:var(--line)}.to-top{color:var(--ink)}
+.contact-card,.contact-form{border-color:var(--line);background:#fff;box-shadow:0 22px 60px rgba(18,30,54,.08)}.contact-card h3{color:var(--ink)}.contact-card>p:not(.eyebrow){color:var(--muted)}
+.footer{color:var(--muted);border-top-color:var(--line)}.footer>div a:hover{color:var(--ink)}.footer>div span{color:var(--soft)}
+.home-rail{background:rgba(255,255,255,.82);border:1px solid var(--line);box-shadow:0 8px 24px rgba(18,30,54,.08)}.home-rail-track{background:rgba(18,30,54,.12)}.home-rail-track i{background:var(--blue);box-shadow:none}.home-rail-track b{background:var(--blue);box-shadow:0 0 0 4px rgba(45,100,212,.18)}.home-rail a{color:var(--soft)}.home-rail a.is-active .rail-number{color:var(--ink)}.rail-label{background:#fff;border-color:var(--line);color:var(--ink);box-shadow:0 6px 18px rgba(18,30,54,.1)}
+/* EventHub-productpagina */
+.eventhub-hero{background:radial-gradient(ellipse at 76% 45%,rgba(45,100,212,.12),transparent 45%),linear-gradient(180deg,#f8faff,#f3f6fc)}.eventhub-hero-glow{background:radial-gradient(ellipse,rgba(45,100,212,.16),rgba(45,100,212,.05) 45%,transparent 72%)}.eventhub-hero .eventhub-scroll-cue .scroll-line{background:var(--blue)}
+.eventhub-disclaimer{border-color:rgba(45,100,212,.25);background:#fff;box-shadow:0 18px 45px rgba(18,30,54,.08)}.disclaimer-symbol{border-color:rgba(45,100,212,.45);color:var(--blue)}.eventhub-disclaimer p{color:var(--muted)}.eventhub-disclaimer strong{color:var(--ink)}
+.feature-alt{background:#fff}.feature-heading>p:last-child,.eventhub-chapter>p:not(.eyebrow){color:var(--muted)}.chapter-next{color:var(--muted)}
+.eventhub-story{background:var(--bg)}.eventhub-sticky-visual{border-color:var(--line);background:#fff;box-shadow:0 24px 60px rgba(18,30,54,.12)}.sticky-visual-heading,.sticky-visual-footer{color:var(--soft)}.sticky-stage-count b{color:var(--blue)}.sticky-screen-frame{background:var(--navy)}.sticky-current-label{color:var(--ink)}.sticky-progress{background:#e2e8f1}.sticky-progress i{background:var(--blue)}.sticky-dot{background:var(--blue);box-shadow:0 0 0 4px rgba(45,100,212,.16)}
+@media(max-width:720px){.eventhub-story .eventhub-sticky-visual{background:rgba(255,255,255,.95)}.home-rail{background:rgba(255,255,255,.94)}.home-rail a{background:#fff}.hero .scroll-cue,.eventhub-hero .eventhub-scroll-cue{border-color:var(--line);background:rgba(255,255,255,.9)}.brand-logo{height:32px}.footer-brand .brand-logo{height:26px}.hero-mark{width:min(60%,250px)}}
+@media(max-width:380px){.brand-logo{height:27px}}
+/* Contactvenster en formulier */
+.contact-dialog{color:var(--ink)}.contact-dialog::backdrop{background:rgba(18,30,54,.42)}.contact-dialog-panel{border-color:var(--line);background:#fff;box-shadow:0 35px 100px rgba(18,30,54,.3)}.contact-dialog-intro{color:var(--muted)}
+.contact-dialog-close{border-color:var(--line);background:var(--bg);color:var(--ink)}.contact-dialog-close:hover{border-color:rgba(45,100,212,.5);background:var(--tint)}
+.contact-dialog-close:focus-visible,.contact-dialog a:focus-visible,.contact-dialog button:focus-visible,.contact-dialog input:focus-visible,.contact-dialog select:focus-visible,.contact-dialog textarea:focus-visible{outline-color:var(--blue)}
+.contact-field{color:var(--ink)}.contact-field i{color:var(--blue)}.contact-field small{color:var(--soft)}
+.contact-field input,.contact-field select,.contact-field textarea{border-color:#cdd6e4;background:#fff;color:var(--ink)}.contact-field input::placeholder,.contact-field textarea::placeholder{color:#8f99a8}
+.contact-field input:focus,.contact-field select:focus,.contact-field textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(45,100,212,.15)}
+.contact-field select{background-image:linear-gradient(45deg,transparent 50%,#5f6b78 50%),linear-gradient(135deg,#5f6b78 50%,transparent 50%)}.contact-field option{background:#fff;color:var(--ink)}
+.contact-form-footer>p{color:var(--muted)}.contact-status{color:#138a66}.contact-status.is-error{color:#be4054}
+.contact-dialog .contact-status:not(:empty){border-color:rgba(19,138,102,.25);background:#e5f5ee}.contact-dialog .contact-status.is-error:not(:empty){border-color:rgba(190,64,84,.25);background:#fdecee}
+@keyframes contact-backdrop-in{from{background-color:rgba(18,30,54,0);backdrop-filter:blur(0)}to{background-color:rgba(18,30,54,.42);backdrop-filter:blur(6px)}}
+@media(prefers-reduced-motion:reduce){.hero-mark{animation:none}}
